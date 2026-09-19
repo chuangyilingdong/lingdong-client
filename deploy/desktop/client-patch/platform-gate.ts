@@ -164,6 +164,28 @@ function writeGatewayCredential(home: string, key: string): void {
   } catch (error) { console.error('灵动ai：写入凭据失败', error) }
 }
 
+/**
+ * 只读地把登录门拿到的课堂上下文交给渲染进程（预设提示词与剩余次数）。
+ * 这里**不返回网关密钥**：渲染层不需要，也不该看见。文件不存在或还没写时返回空上下文，
+ * 让预设 slot 自己渲染成空，不影响创作环境启动。
+ */
+function readClassroomContext(): LingdongContext {
+  try {
+    const raw = readFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), 'utf8')
+    const parsed = JSON.parse(raw) as Partial<LingdongContext>
+    return {
+      classroom: parsed.classroom ?? null,
+      presets: Array.isArray(parsed.presets) ? parsed.presets : [],
+      sends: parsed.sends ?? null,
+    }
+  } catch {
+    return { classroom: null, presets: [], sends: null }
+  }
+}
+
+// 预设在创作区渲染时要读它；handler 常驻应用生命周期，门本身不把它移除。
+ipcMain.handle('lingdong:classroom-context', () => readClassroomContext())
+
 /** 铺好网关密钥与补丁层。**只有这节课真的在进行时**才会走到这里。 */
 function applyGateway(context: LingdongContext): void {
   const key = context.gateway?.key

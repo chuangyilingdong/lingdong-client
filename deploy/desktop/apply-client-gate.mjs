@@ -5,13 +5,14 @@
  * 为什么是构建期打补丁：我们维护的是**一份钉住版本的上游检出**，改动集中在少数几处，
  * 上游升级时重跑这个脚本即可，冲突一眼可见。与 `deploy/dsh-student/rebrand.mjs` 同一套思路。
  *
- * 改了五处（都能在执行输出里看到是否命中）：
+ * 改了七处（都能在执行输出里看到是否命中）：
  *   ① apps/desktop/resources/gate/ ← 我们的三个页面 + 补丁层 YAML（随包分发）
- *   ② apps/desktop/src/platform-gate.ts ← 登录门主进程逻辑（新文件）
- *   ③ apps/desktop/src/preload-app.ts ← 暴露 window.lingdong.gate（登录/刷新/退出）
+ *   ② apps/desktop/src/platform-gate.ts ← 登录门主进程逻辑（新文件，含只读课堂上下文 IPC）
+ *   ③ apps/desktop/src/preload-app.ts ← 暴露 window.lingdong.gate() 与 context()
  *   ④ apps/desktop/src/main.ts ← 在 `reconcileBackend()` **之前**插登录门
  *   ⑤ apps/desktop/scripts/electron-builder-config.mjs ← 把 gate/ 打进 extraResources
  *   ⑥ apps/desktop-host/src/index.ts ← `patchFiles` 挂上我们的补丁层
+ *   ⑦ packages/client/ui-conversation ← 原生 `conversation.input.dock` 上显示课堂预设块
  *      （⚠️ 桌面宿主显式传的是空数组，所以 profile 里的 cordis.patch.yml 永远不会被读 ——
  *        根因见 platform-gate.ts 文件头）
  *
@@ -64,7 +65,15 @@ if (!dryRun) mkdirSync(join(checkout, 'apps/desktop/src'), { recursive: true })
 if (!dryRun) copyFileSync(join(patchDir, 'platform-gate.ts'), join(checkout, 'apps/desktop/src/platform-gate.ts'))
 report.push('✓  apps/desktop/src/platform-gate.ts：已放入')
 
-// ③ preload：给页面一个 lingdong.gate()
+// ②b 对话输入卡上方的课堂预设块（上游原生 slot，不写 profile 配置）
+const presetDockTarget = join(checkout, 'packages/client/ui-conversation/src/client/LingdongPresetDock.tsx')
+if (!dryRun) {
+  mkdirSync(dirname(presetDockTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'LingdongPresetDock.tsx'), presetDockTarget)
+}
+report.push('✓  packages/client/ui-conversation/src/client/LingdongPresetDock.tsx：已放入')
+
+// ③ preload：给页面一个 lingdong.gate() + 只读课堂上下文
 patch('apps/desktop/src/preload-app.ts',
   "contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' ? product : { protocolVersion: 1 })",
   `contextBridge.exposeInMainWorld('dshDesktop', location.protocol === \`\${SCHEME}:\` && location.hostname === 'app' ? product : { protocolVersion: 1 })
@@ -73,6 +82,30 @@ contextBridge.exposeInMainWorld('lingdong', {
   gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
 })`,
   '暴露 window.lingdong.gate')
+
+// ③b 课堂上下文桥：已有旧版 gate-only 块时原地升级，不重复 expose。
+patch('apps/desktop/src/preload-app.ts',
+  `contextBridge.exposeInMainWorld('lingdong', {
+  gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
+})`,
+  `contextBridge.exposeInMainWorld('lingdong', {
+  gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
+  context: () => ipcRenderer.invoke('lingdong:classroom-context') as Promise<unknown>,
+})`,
+  '窗口 lingdong.context 只读课堂上下文', 'lingdong:classroom-context')
+
+// ③c ui-conversation：把预设块挂到原生输入 dock
+patch('packages/client/ui-conversation/src/client/apply.ts',
+  "import { queueDockEntry } from './queue/QueueDock.tsx'",
+  "import { queueDockEntry } from './queue/QueueDock.tsx'\nimport { lingdongPresetDockEntry } from './LingdongPresetDock.tsx'",
+  '引入灵动ai课堂预设 dock', 'lingdongPresetDockEntry')
+patch('packages/client/ui-conversation/src/client/apply.ts',
+  '  ctx.plugin(todoDockEntry)\n  ctx.plugin(queueDockEntry)',
+  `  ctx.plugin(todoDockEntry)
+  ctx.plugin(queueDockEntry)
+  // 灵动ai 课堂预设：平台下发的提示词由这里渲染成可点块，点击只写草稿、不自动发送。
+  ctx.plugin(lingdongPresetDockEntry)`,
+  '挂载灵动ai课堂预设 dock', 'ctx.plugin(lingdongPresetDockEntry)')
 
 // ④ main.ts：在启动后端之前过登录门 + 注册深链协议
 // 先去重（两类，都实测踩过）：
