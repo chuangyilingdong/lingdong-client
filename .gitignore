@@ -1,0 +1,11 @@
+# 上游检出与构建缓存：体积大（数 GB），是"本机不用联网就能出包"的关键，但**不进 git**
+/upstream/
+
+# 打包/构建产物
+node_modules/
+.desktop-build*/
+*.log
+
+# 本地验证用的临时件
+.tmp/
+.tmp-*
