@@ -149,6 +149,14 @@ for (const name of ['brand.png', 'brand-2x.png', 'brand-dark.png', 'brand-dark-2
   if (!dryRun) fs.copyFileSync(source, target);
   changes.push([`installer/assets/${name}`, `已换成灵动ai图片（${after.length} 字节）`]);
 }
+// ⑤c 修正 NSIS 查找安装器资源的构建根。
+//    配置层的 `beforeBuild` 把 BMP/DLL 写到 `$LINGDONG_BUILD_ROOT`（本项目约定 `.desktop-build2`），
+//    但上游 `installer.nsh` 默认还指向 `.desktop-build`，导致安装器明明生成了新图却嵌入旧缓存。
+edit('apps/desktop/scripts/installer.nsh', (text) =>
+  text.replace(
+    '${__FILEDIR__}\\..\\.desktop-build\\targets\\win-x64\\installer-ui',
+    '${__FILEDIR__}\\..\\.desktop-build2\\targets\\win-x64\\installer-ui',
+  ));
 // ⑥ dsh 界面里的字标：**字符串替换改不动** —— 上游那幅字标是矢量稿，
 //    "deepseek" 那几个字母是 SVG path 而不是文本节点（上一轮就是卡在这：扫了 4470 个文件、
 //    命中 150 个，学生打开客户端看到的还是上游字标）。所以直接换"字标产地"：
