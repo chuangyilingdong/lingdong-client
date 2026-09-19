@@ -136,6 +136,19 @@ for (const name of ['icon-windows.png', 'icon-macos.png', 'icon.png']) {
   changes.push([`resources/${name}`, `已换成灵动ai图标（${after.length} 字节）`]);
 }
 
+// ⑤b 安装器资源：NSIS 的欢迎页图标、字标、卸载器侧栏。
+//    上游这五张图原来还写死 DeepSeek 鲸鱼/HARNESS；只换应用图标不够，安装器第一眼仍是上游品牌。
+const installerBrandSource = path.join(here, 'assets', 'installer');
+for (const name of ['brand.png', 'brand-2x.png', 'brand-dark.png', 'brand-dark-2x.png', 'uninstaller-sidebar.png']) {
+  const source = path.join(installerBrandSource, name);
+  const target = path.join(checkout, 'apps/desktop/installer/assets', name);
+  if (!fs.existsSync(target)) { changes.push([`installer/assets/${name}`, '目录不存在，跳过']); continue; }
+  const before = fs.existsSync(target) ? fs.readFileSync(target) : null;
+  const after = fs.readFileSync(source);
+  if (before !== null && before.equals(after)) { changes.push([`installer/assets/${name}`, '已是灵动ai图片（跳过）']); continue; }
+  if (!dryRun) fs.copyFileSync(source, target);
+  changes.push([`installer/assets/${name}`, `已换成灵动ai图片（${after.length} 字节）`]);
+}
 // ⑥ dsh 界面里的字标：**字符串替换改不动** —— 上游那幅字标是矢量稿，
 //    "deepseek" 那几个字母是 SVG path 而不是文本节点（上一轮就是卡在这：扫了 4470 个文件、
 //    命中 150 个，学生打开客户端看到的还是上游字标）。所以直接换"字标产地"：
@@ -208,4 +221,4 @@ console.log(`品牌：${BRAND.productName}（英文 ${BRAND.productNameEn}）/ �
 for (const [file, result] of changes) console.log(`  · ${file} —— ${result}`);
 console.log('\n⚠️ 还要手工确认的：');
 console.log('   ① 关于/署名：请在 About 里保留一句「' + BRAND.attribution + '」');
-console.log('   ② 安装器侧栏图：apps/desktop/installer/assets/brand*.png 与 uninstaller-sidebar.png（本脚本不动安装器资源）');
+console.log('   ② 安装器图片：brand*.png 与 uninstaller-sidebar.png 已由本脚本自动替换。');
