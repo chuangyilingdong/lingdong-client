@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { app, ipcMain, type BrowserWindow } from 'electron'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 
 /**
@@ -40,11 +41,50 @@ interface LingdongContext {
   readonly classroom: { readonly id: string; readonly lessonId?: string; readonly title?: string } | null
   readonly gateway?: { readonly baseUrl?: string; readonly key?: string }
   readonly presets?: readonly { readonly title: string; readonly text: string }[]
-  readonly sends?: { readonly limit: number | null; readonly used: number; readonly remaining: number | null }
+  readonly sends?: { readonly limit: number | null; readonly used: number; readonly remaining: number | null } | null
   readonly message?: string
+}
+interface WorkFilePayload { readonly name: string; readonly content: string; readonly binary: boolean }
+interface WorkBatchItem {
+  readonly sessionId: string
+  readonly sessionTitle: string
+  readonly cwd: string
+  readonly path: string
+  readonly displayPath?: string
+}
+interface WorkAsset {
+  readonly absolute: string
+  readonly name: string
+  readonly binary: boolean
+  text?: string
+  content: string
+}
+interface PreparedWork {
+  readonly name: string
+  readonly files: readonly WorkFilePayload[]
+  readonly missing: readonly string[]
 }
 type GateAction = { action: 'login' } | { action: 'refresh' } | { action: 'logout' }
 type GateOutcome = { kind: 'enter' } | { kind: 'quit' }
+
+const MAX_WORK_FILES = 60
+const MAX_WORK_TOTAL_BYTES = 16 * 1024 * 1024
+const MAX_WORK_REQUEST_BYTES = 24 * 1024 * 1024
+const TEXT_WORK_EXTENSIONS = new Set([
+  '.css', '.csv', '.htm', '.html', '.js', '.json', '.jsx', '.md', '.mjs', '.cjs', '.svg', '.text',
+  '.ts', '.tsx', '.txt', '.webmanifest', '.xml', '.yaml', '.yml',
+])
+const SCANNABLE_WORK_EXTENSIONS = new Set(['.css', '.htm', '.html', '.svg'])
+/** 平台错误要保留业务 code；界面上仍展示平台原始 message。 */
+class PlatformRequestError extends Error {
+  readonly code: string | undefined
+
+  constructor(message: string, code?: string) {
+    super(message)
+    this.name = 'PlatformRequestError'
+    this.code = code
+  }
+}
 
 /**
  * 深链 `lingdong://open` 的落点（官网点「进入课堂 / 打开客户端」时由系统拉起）。
@@ -100,7 +140,13 @@ async function call(path: string, { method = 'GET', body, token }: { method?: st
   if (body !== undefined) init.body = JSON.stringify(body)
   const response = await fetch(`${API_BASE}${path}`, init)
   const payload = await response.json().catch(() => ({}))
-  if (!response.ok) throw new Error(String(payload?.error?.message || payload?.message || `平台请求失败（HTTP ${response.status}）`))
+  if (!response.ok) {
+    const code = typeof payload?.error?.code === 'string' ? payload.error.code : undefined
+    throw new PlatformRequestError(
+      String(payload?.error?.message || payload?.message || `平台请求失败（HTTP ${response.status}）`),
+      code,
+    )
+  }
   return payload?.data ?? payload
 }
 
@@ -149,13 +195,23 @@ function writeGatewayCredential(home: string, key: string): void {
   let text = ''
   try { text = existsSync(file) ? readFileSync(file, 'utf8') : '' } catch { text = '' }
   const entry = `  PLATFORM_GATEWAY_KEY: ${key}`
-  let next: string
-  if (/^refs:\s*$/mu.test(text)) {
-    next = /^ {2}PLATFORM_GATEWAY_KEY:.*$/mu.test(text)
-      ? text.replace(/^ {2}PLATFORM_GATEWAY_KEY:.*$/mu, entry)
-      : text.replace(/^refs:\s*$/mu, `refs:\n${entry}`)
-  } else {
-    next = `version: 1\nrefs:\n${entry}\n${text}`
+  // `refs: {}` 也是一个合法文档。先把它展开，否则旧逻辑会以为没有 refs，
+  // 再把第二个 `version/refs` 前缀拼上去，凭据插件会因 DUPLICATE_KEY 拒启。
+  let next = text
+  if (/^refs:\s*\{\}\s*$/mu.test(next)) {
+    next = next.replace(/^refs:\s*\{\}\s*$/mu, 'refs:')
+  }
+  if (!/^refs:\s*/mu.test(next)) {
+    next = /^version:\s*.*$/mu.test(next)
+      ? next.replace(/^version:\s*.*$/mu, matched => `${matched}\nrefs:`)
+      : `version: 1\nrefs:\n${next}`
+  }
+  if (/^ {2}PLATFORM_GATEWAY_KEY:.*$/mu.test(next)) {
+    next = next.replace(/^ {2}PLATFORM_GATEWAY_KEY:.*$/mu, entry)
+  } else if (/^refs:\s*$/mu.test(next)) {
+    next = next.replace(/^refs:\s*$/mu, `refs:\n${entry}`)
+  } else if (/^refs:\s*\{.*\}\s*$/mu.test(next)) {
+    next = next.replace(/^refs:\s*\{.*\}\s*$/mu, `refs:\n${entry}`)
   }
   try {
     const backup = `${file}.lingdong-backup`
@@ -163,12 +219,6 @@ function writeGatewayCredential(home: string, key: string): void {
     writeFileSync(file, next)
   } catch (error) { console.error('灵动ai：写入凭据失败', error) }
 }
-
-/**
- * 只读地把登录门拿到的课堂上下文交给渲染进程（预设提示词与剩余次数）。
- * 这里**不返回网关密钥**：渲染层不需要，也不该看见。文件不存在或还没写时返回空上下文，
- * 让预设 slot 自己渲染成空，不影响创作环境启动。
- */
 function readClassroomContext(): LingdongContext {
   try {
     const raw = readFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), 'utf8')
@@ -183,9 +233,339 @@ function readClassroomContext(): LingdongContext {
   }
 }
 
-// 预设在创作区渲染时要读它；handler 常驻应用生命周期，门本身不把它移除。
+
+interface WorkFailure { readonly ok: false; readonly cancelled?: boolean; readonly code?: string; readonly message: string }
+interface WorkBatchSuccess {
+  readonly item: WorkBatchItem
+  readonly data: unknown
+  readonly warnings: readonly string[]
+  readonly missing: readonly string[]
+}
+interface WorkBatchFailure {
+  readonly item: WorkBatchItem
+  readonly code?: string
+  readonly message: string
+}
+
+function workFailure(message: string, options: { code?: string; cancelled?: boolean } = {}): WorkFailure {
+  const result: { ok: false; cancelled?: boolean; code?: string; message: string } = { ok: false, message }
+  if (options.code !== undefined) result.code = options.code
+  if (options.cancelled === true) result.cancelled = true
+  return result
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function asString(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map(item => typeof item === 'string' ? item : String(item ?? '').trim())
+    .filter(item => item.length > 0)
+}
+
+function normalizeBatchItem(value: unknown): WorkBatchItem | null {
+  const raw = asRecord(value)
+  if (raw === null) return null
+  const sessionId = asString(raw.sessionId)
+  const sessionTitle = asString(raw.sessionTitle)
+  const cwd = asString(raw.cwd)
+  const path = asString(raw.path)
+  const displayPath = asString(raw.displayPath)
+  if (sessionId === '' || cwd === '' || path === '') return null
+  return {
+    sessionId,
+    sessionTitle,
+    cwd,
+    path,
+    ...(displayPath === '' ? {} : { displayPath }),
+  }
+}
+
+function isInside(root: string, target: string): boolean {
+  const rel = relative(root, target)
+  return rel !== '' && rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
+}
+
+async function resolveInside(root: string, input: string): Promise<string> {
+  const candidate = isAbsolute(input) ? resolve(input) : resolve(root, input)
+  const real = await realpath(candidate)
+  if (!isInside(root, real)) throw new PlatformRequestError('文件不在当前会话工作区里，已拒绝读取。')
+  const info = await stat(real)
+  if (!info.isFile()) throw new PlatformRequestError(`只能提交文件：${basename(real)}`)
+  return real
+}
+
+function safeFlatName(input: string): string {
+  let name = basename(String(input || '')).trim()
+  name = name.replace(/[\\/\0]/g, '_').replace(/\.\./g, '_').replace(/^\.+/u, '')
+  if (name === '') name = 'asset'
+  if (name.length > 100) {
+    const extension = extname(name)
+    const head = extension === '' ? name : name.slice(0, -extension.length)
+    name = `${head.slice(0, Math.max(1, 100 - extension.length))}${extension}`
+  }
+  return name
+}
+
+function uniqueFlatName(input: string, reserved: Set<string>): string {
+  const base = safeFlatName(input)
+  const extension = extname(base)
+  const stem = extension === '' ? base : base.slice(0, -extension.length)
+  for (let index = 0; index < 1000; index += 1) {
+    const suffix = index === 0 ? '' : `-${index + 1}`
+    const next = `${stem.slice(0, Math.max(1, 100 - extension.length - suffix.length))}${suffix}${extension}`
+    const key = next.toLocaleLowerCase('en-US')
+    if (!reserved.has(key)) {
+      reserved.add(key)
+      return next
+    }
+  }
+  throw new PlatformRequestError('作品里的文件名重复太多，无法自动整理。')
+}
+
+function ignoredLocalReference(value: string): boolean {
+  const raw = value.trim()
+  return raw === '' || raw.startsWith('#') || raw.startsWith('//') || raw.startsWith('/')
+    || /^[a-z][a-z0-9+.-]*:/iu.test(raw)
+}
+
+function splitReference(value: string): { readonly path: string; readonly suffix: string } {
+  const match = /^([^?#]*)([\s\S]*)$/u.exec(value.trim())
+  const path = match?.[1] ?? value.trim()
+  const suffix = match?.[2] ?? ''
+  try {
+    return { path: decodeURIComponent(path), suffix }
+  } catch {
+    return { path, suffix }
+  }
+}
+
+async function localReference(root: string, referrer: string, raw: string): Promise<{ readonly absolute: string; readonly suffix: string } | null> {
+  if (ignoredLocalReference(raw)) return null
+  const parts = splitReference(raw)
+  if (parts.path === '') return null
+  const candidate = resolve(dirname(referrer), parts.path)
+  try {
+    const real = await realpath(candidate)
+    if (!isInside(root, real)) return null
+    const info = await stat(real)
+    if (!info.isFile()) return null
+    return { absolute: real, suffix: parts.suffix }
+  } catch {
+    return null
+  }
+}
+
+function collectReferenceValues(content: string, extension: string): string[] {
+  const values = new Set<string>()
+  if (extension === '.html' || extension === '.htm' || extension === '.svg') {
+    for (const match of content.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/giu)) {
+      const value = match[1]
+      if (value !== undefined) values.add(value)
+    }
+  }
+  if (extension === '.html' || extension === '.htm' || extension === '.css' || extension === '.svg') {
+    for (const match of content.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/giu)) {
+      const value = match[1]
+      if (value !== undefined) values.add(value)
+    }
+    for (const match of content.matchAll(/@import\s+["']([^"']+)["']/giu)) {
+      const value = match[1]
+      if (value !== undefined) values.add(value)
+    }
+  }
+  return [...values]
+}
+
+function rewriteReferenceValues(content: string, extension: string, replacement: (value: string) => string | undefined): string {
+  let next = content
+  if (extension === '.html' || extension === '.htm' || extension === '.svg') {
+    next = next.replace(/(\b(?:src|href)\s*=\s*)(["'])([^"']+)(\2)/giu, (_whole, head: string, quote: string, value: string) =>
+      `${head}${quote}${replacement(value) ?? value}${quote}`)
+  }
+  if (extension === '.html' || extension === '.htm' || extension === '.css' || extension === '.svg') {
+    next = next.replace(/(url\(\s*)(["']?)([^"')]+)(\2\s*\))/giu, (_whole, head: string, quote: string, value: string) =>
+      `${head}${quote}${replacement(value) ?? value}${quote})`)
+    next = next.replace(/(@import\s+)(["'])([^"']+)(\2)/giu, (_whole, head: string, quote: string, value: string) =>
+      `${head}${quote}${replacement(value) ?? value}${quote}`)
+  }
+  return next
+}
+
+async function prepareWork(item: WorkBatchItem): Promise<PreparedWork> {
+  const root = await realpath(resolve(item.cwd))
+  const rootInfo = await stat(root)
+  if (!rootInfo.isDirectory()) throw new PlatformRequestError('会话工作区不是目录。')
+  const entryPath = await resolveInside(root, item.path)
+  const entryExtension = extname(entryPath).toLocaleLowerCase('en-US')
+  if (entryExtension !== '.html' && entryExtension !== '.htm') {
+    throw new PlatformRequestError('交作品入口只提交网页 HTML 文件。')
+  }
+
+  const assets = new Map<string, WorkAsset>()
+  const reserved = new Set<string>()
+  const queue: WorkAsset[] = []
+  const missing = new Set<string>()
+  let totalBytes = 0
+
+  const addAsset = async (absolutePath: string, preferredName: string): Promise<WorkAsset> => {
+    const real = await resolveInside(root, absolutePath)
+    const existing = assets.get(real)
+    if (existing !== undefined) return existing
+    const info = await stat(real)
+    if (totalBytes + info.size > MAX_WORK_TOTAL_BYTES) {
+      throw new PlatformRequestError('这个作品太大了（单次最多 16MB）。')
+    }
+    if (assets.size + 1 > MAX_WORK_FILES) {
+      throw new PlatformRequestError(`这个作品引用了太多文件（单次最多 ${MAX_WORK_FILES} 个）。`)
+    }
+    totalBytes += info.size
+    const extension = extname(real).toLocaleLowerCase('en-US')
+    const binary = !TEXT_WORK_EXTENSIONS.has(extension)
+    const bytes = await readFile(real)
+    const content = binary ? bytes.toString('base64') : bytes.toString('utf8')
+    const asset: WorkAsset = {
+      absolute: real,
+      name: uniqueFlatName(preferredName, reserved),
+      binary,
+      content,
+      ...(binary ? {} : { text: content }),
+    }
+    assets.set(real, asset)
+    queue.push(asset)
+    return asset
+  }
+
+  const entry = await addAsset(entryPath, basename(entryPath))
+  while (queue.length > 0) {
+    const asset = queue.shift()
+    if (asset === undefined || asset.binary || asset.text === undefined) continue
+    const extension = extname(asset.absolute).toLocaleLowerCase('en-US')
+    if (!SCANNABLE_WORK_EXTENSIONS.has(extension)) continue
+    const replacements = new Map<string, string>()
+    for (const raw of collectReferenceValues(asset.text, extension)) {
+      const target = await localReference(root, asset.absolute, raw)
+      if (target === null) {
+        if (!ignoredLocalReference(raw)) missing.add(raw)
+        continue
+      }
+      const referenced = assets.get(target.absolute) ?? await addAsset(target.absolute, basename(target.absolute))
+      replacements.set(raw, `${referenced.name}${target.suffix}`)
+    }
+    if (replacements.size > 0) {
+      asset.text = rewriteReferenceValues(asset.text, extension, value => replacements.get(value))
+      asset.content = asset.text
+    }
+  }
+
+  return {
+    name: entry.name,
+    files: [...assets.values()].map(asset => ({ name: asset.name, content: asset.content, binary: asset.binary })),
+    missing: [...missing],
+  }
+}
+
+function titleForWork(item: WorkBatchItem): string {
+  const title = item.sessionTitle.trim()
+  return (title === '' ? basename(item.path) : `${title} · ${basename(item.path)}`).slice(0, 60)
+}
+
+async function submitWork(token: string, item: WorkBatchItem): Promise<WorkBatchSuccess> {
+  const prepared = await prepareWork(item)
+  const body = {
+    name: prepared.name,
+    title: titleForWork(item),
+    copyrightConfirmed: true as const,
+    files: prepared.files,
+  }
+  if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_WORK_REQUEST_BYTES) {
+    throw new PlatformRequestError('这个作品编码后太大了，请减少素材后再交。')
+  }
+  const data = await call('/api/student/runtime/submit-upload', { method: 'POST', token, body })
+  const record = asRecord(data)
+  return {
+    item,
+    data,
+    warnings: stringArray(record?.warnings),
+    missing: [...new Set([...prepared.missing, ...stringArray(record?.missing)])],
+  }
+}
+
+function pushUnique(target: string[], values: readonly string[]): void {
+  for (const value of values) {
+    if (!target.includes(value)) target.push(value)
+  }
+}
+
+// 预设在侧栏面板渲染时读它；handler 常驻应用生命周期。
 ipcMain.handle('lingdong:classroom-context', () => readClassroomContext())
 
+/** 作品相关 IPC：只从主进程读磁盘、拿 session token，不把 token 交给页面。 */
+ipcMain.handle('lingdong:list-works', async () => {
+  const session = readSession()
+  if (session === null) return workFailure('登录已失效，请重新登录客户端。')
+  try {
+    const works = await call('/api/student/works?page=1&limit=20', { token: session.token })
+    return { ok: true, works }
+  } catch (error) {
+    return workFailure(
+      error instanceof Error ? error.message : String(error),
+      error instanceof PlatformRequestError && error.code !== undefined ? { code: error.code } : {},
+    )
+  }
+})
+
+ipcMain.handle('lingdong:submit-work-batch', async (_event, payload: unknown) => {
+  const request = asRecord(payload)
+  if (request?.copyrightConfirmed !== true) {
+    return workFailure('提交前请确认作品版权与展示授权', { code: 'WORK_COPYRIGHT_CONFIRMATION_REQUIRED' })
+  }
+  const rawItems = Array.isArray(request.items) ? request.items : []
+  const items = rawItems.map(normalizeBatchItem)
+  if (items.length === 0 || items.some(item => item === null)) {
+    return workFailure('没有收到要提交的 HTML 作品，请重新勾选。')
+  }
+  const session = readSession()
+  if (session === null) return workFailure('登录已失效，请重新登录客户端。')
+
+  const submitted: WorkBatchSuccess[] = []
+  const failures: WorkBatchFailure[] = []
+  const warnings: string[] = []
+  const missing: string[] = []
+  for (const item of items as WorkBatchItem[]) {
+    try {
+      const result = await submitWork(session.token, item)
+      submitted.push(result)
+      pushUnique(warnings, result.warnings)
+      pushUnique(missing, result.missing)
+    } catch (error) {
+      const failure: { item: WorkBatchItem; code?: string; message: string } = {
+        item,
+        message: error instanceof Error ? error.message : String(error),
+      }
+      if (error instanceof PlatformRequestError && error.code !== undefined) failure.code = error.code
+      failures.push(failure)
+    }
+  }
+
+  // 无论上面成功几份，批量动作结束后只查一次「我交过什么」。
+  let works: unknown = null
+  let worksError: string | null = null
+  try {
+    works = await call('/api/student/works?page=1&limit=20', { token: session.token })
+  } catch (error) {
+    worksError = error instanceof Error ? error.message : String(error)
+  }
+  return { ok: true, submitted, failures, warnings, missing, works, worksError }
+})
 /** 铺好网关密钥与补丁层。**只有这节课真的在进行时**才会走到这里。 */
 function applyGateway(context: LingdongContext): void {
   const key = context.gateway?.key

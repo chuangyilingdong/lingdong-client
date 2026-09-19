@@ -5,7 +5,7 @@
  * 为什么是构建期打补丁：我们维护的是**一份钉住版本的上游检出**，改动集中在少数几处，
  * 上游升级时重跑这个脚本即可，冲突一眼可见。与 `deploy/dsh-student/rebrand.mjs` 同一套思路。
  *
- * 改了七处（都能在执行输出里看到是否命中）：
+ * 改了八处（都能在执行输出里看到是否命中）：
  *   ① apps/desktop/resources/gate/ ← 我们的三个页面 + 补丁层 YAML（随包分发）
  *   ② apps/desktop/src/platform-gate.ts ← 登录门主进程逻辑（新文件，含只读课堂上下文 IPC）
  *   ③ apps/desktop/src/preload-app.ts ← 暴露 window.lingdong.gate() 与 context()
@@ -13,12 +13,13 @@
  *   ⑤ apps/desktop/scripts/electron-builder-config.mjs ← 把 gate/ 打进 extraResources
  *   ⑥ apps/desktop-host/src/index.ts ← `patchFiles` 挂上我们的补丁层
  *   ⑦ packages/client/ui-conversation ← 原生 `conversation.input.dock` 上显示课堂预设块
+ *   ⑧ packages/client/ui-conversation ← 原生 `conversation.input.dock` 上显示作品提交与作品回显
  *      （⚠️ 桌面宿主显式传的是空数组，所以 profile 里的 cordis.patch.yml 永远不会被读 ——
  *        根因见 platform-gate.ts 文件头）
  *
  * 用法：node deploy/desktop/apply-client-gate.mjs --checkout .tmp/dsh-harness [--dry-run]
  */
-import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, readdirSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -65,48 +66,196 @@ if (!dryRun) mkdirSync(join(checkout, 'apps/desktop/src'), { recursive: true })
 if (!dryRun) copyFileSync(join(patchDir, 'platform-gate.ts'), join(checkout, 'apps/desktop/src/platform-gate.ts'))
 report.push('✓  apps/desktop/src/platform-gate.ts：已放入')
 
-// ②b 对话输入卡上方的课堂预设块（上游原生 slot，不写 profile 配置）
-const presetDockTarget = join(checkout, 'packages/client/ui-conversation/src/client/LingdongPresetDock.tsx')
-if (!dryRun) {
-  mkdirSync(dirname(presetDockTarget), { recursive: true })
-  copyFileSync(join(patchDir, 'LingdongPresetDock.tsx'), presetDockTarget)
+// ②b UI：侧栏预设/作品面板 + 会话输入隐藏桥。
+// 旧版本把两个面板挂在输入框 dock 上；这里先原地清掉旧 import/plugin/文件，再写新结构。
+const workspaceClientDir = join(checkout, 'packages/client/ui-workspace/src/client')
+const conversationClientDir = join(checkout, 'packages/client/ui-conversation/src/client')
+for (const name of ['LingdongPresetPanel.tsx', 'LingdongWorkPanel.tsx']) {
+  const target = join(workspaceClientDir, name)
+  if (!dryRun) {
+    mkdirSync(dirname(target), { recursive: true })
+    copyFileSync(join(patchDir, name), target)
+  }
+  report.push(`✓  packages/client/ui-workspace/src/client/${name}：已放入`)
 }
-report.push('✓  packages/client/ui-conversation/src/client/LingdongPresetDock.tsx：已放入')
+const presetBridgeTarget = join(conversationClientDir, 'LingdongPresetBridge.tsx')
+if (!dryRun) {
+  mkdirSync(dirname(presetBridgeTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'LingdongPresetBridge.tsx'), presetBridgeTarget)
+}
+report.push('✓  packages/client/ui-conversation/src/client/LingdongPresetBridge.tsx：已放入')
+for (const oldName of ['LingdongPresetDock.tsx', 'LingdongWorkDock.tsx']) {
+  const oldPath = join(conversationClientDir, oldName)
+  if (existsSync(oldPath) && !dryRun) rmSync(oldPath, { force: true })
+  if (existsSync(oldPath)) report.push(`✓  packages/client/ui-conversation/src/client/${oldName}：旧文件已清掉`)
+}
 
-// ③ preload：给页面一个 lingdong.gate() + 只读课堂上下文
-patch('apps/desktop/src/preload-app.ts',
-  "contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' ? product : { protocolVersion: 1 })",
-  `contextBridge.exposeInMainWorld('dshDesktop', location.protocol === \`\${SCHEME}:\` && location.hostname === 'app' ? product : { protocolVersion: 1 })
-// 灵动ai 登录门：登录 / 刷新 / 退出（主进程侧见 src/platform-gate.ts）
-contextBridge.exposeInMainWorld('lingdong', {
-  gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
-})`,
-  '暴露 window.lingdong.gate')
+const updateTextFile = (file, transform, note) => {
+  const full = join(checkout, file)
+  if (!existsSync(full)) { report.push(`!! ${file}：文件不存在`); return }
+  const before = readFileSync(full, 'utf8')
+  const after = transform(before)
+  if (after === before) { report.push(`·  ${file}：已是最新（跳过）`); return }
+  write(file, after)
+  report.push(`✓  ${file}：${note}`)
+}
 
-// ③b 课堂上下文桥：已有旧版 gate-only 块时原地升级，不重复 expose。
-patch('apps/desktop/src/preload-app.ts',
-  `contextBridge.exposeInMainWorld('lingdong', {
-  gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
-})`,
-  `contextBridge.exposeInMainWorld('lingdong', {
+// ③ preload：用一份确定的 window.lingdong 取代旧 gate/context/submitWork 的组合块。
+updateTextFile('apps/desktop/src/preload-app.ts', (before) => {
+  const block = `contextBridge.exposeInMainWorld('lingdong', {
   gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
   context: () => ipcRenderer.invoke('lingdong:classroom-context') as Promise<unknown>,
-})`,
-  '窗口 lingdong.context 只读课堂上下文', 'lingdong:classroom-context')
+  submitWorkBatch: (payload: unknown) => ipcRenderer.invoke('lingdong:submit-work-batch', payload) as Promise<unknown>,
+  listWorks: () => ipcRenderer.invoke('lingdong:list-works') as Promise<unknown>,
+})`
+  if (before.includes(block)) return before
+  const start = before.indexOf("contextBridge.exposeInMainWorld('lingdong', {")
+  if (start >= 0) {
+    const end = before.indexOf('\n})', start)
+    if (end < 0) return before
+    return `${before.slice(0, start)}${block}${before.slice(end + 3)}`
+  }
+  const anchor = "contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' ? product : { protocolVersion: 1 })"
+  if (!before.includes(anchor)) return before
+  return before.replace(anchor, `${anchor}\n${block}`)
+}, '合并为 gate / context / submitWorkBatch / listWorks 桥')
 
-// ③c ui-conversation：把预设块挂到原生输入 dock
-patch('packages/client/ui-conversation/src/client/apply.ts',
-  "import { queueDockEntry } from './queue/QueueDock.tsx'",
-  "import { queueDockEntry } from './queue/QueueDock.tsx'\nimport { lingdongPresetDockEntry } from './LingdongPresetDock.tsx'",
-  '引入灵动ai课堂预设 dock', 'lingdongPresetDockEntry')
-patch('packages/client/ui-conversation/src/client/apply.ts',
-  '  ctx.plugin(todoDockEntry)\n  ctx.plugin(queueDockEntry)',
-  `  ctx.plugin(todoDockEntry)
-  ctx.plugin(queueDockEntry)
-  // 灵动ai 课堂预设：平台下发的提示词由这里渲染成可点块，点击只写草稿、不自动发送。
-  ctx.plugin(lingdongPresetDockEntry)`,
-  '挂载灵动ai课堂预设 dock', 'ctx.plugin(lingdongPresetDockEntry)')
+// ③b ui-workspace 契约：新增两个 sidebar 子 slot 与它们的 owner 数据。
+updateTextFile('packages/client/ui-workspace/src/client/contract/slots.ts', (before) => {
+  let text = before
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  if (!text.includes('ISessions, SessionListState, SessionSearchResultItem')) {
+    text = text.replace(
+      "import type { SessionSearchResultItem } from '@deepseek-ai/dsh-api-session-controller/client'",
+      "import type { ISessions, SessionListState, SessionSearchResultItem } from '@deepseek-ai/dsh-api-session-controller/client'",
+    )
+  }
+  if (!text.includes('interface LingdongSidebarOwnerProps')) {
+    const owner = `${eol}/** 灵动ai 侧栏插件需要的只读会话数据；面板只消费，不接管会话导航。 */${eol}export interface LingdongSidebarOwnerProps {${eol}  readonly sessionId: SessionId | undefined${eol}  readonly sessions: ISessions${eol}  readonly sessionList: SessionListState${eol}}${eol}`
+    text = text.replace('/** The two directory-flow holes;', `${owner}${eol}/** The two directory-flow holes;`)
+  }
+  const directoryLine = "    'sidebar.workspaces.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }"
+  const presetLine = "    /** 灵动ai 平台下发的课堂预设标题区。 */"
+  const presetSlot = "    'sidebar.workspaces.lingdongPresets': { kind: 'single'; scope: 'root'; owner: LingdongSidebarOwnerProps }"
+  const workLine = "    /** 灵动ai 从有效会话历史里勾选 HTML 的交作品区。 */"
+  const workSlot = "    'sidebar.workspaces.lingdongWork': { kind: 'single'; scope: 'root'; owner: LingdongSidebarOwnerProps }"
+  const addon = `${presetLine}${eol}${presetSlot}${eol}${workLine}${eol}${workSlot}`
+  // 修掉上一版重复执行留下的重复槽位，再按需补一次。
+  let duplicated = `${directoryLine}${eol}${addon}${eol}${addon}`
+  const single = `${directoryLine}${eol}${addon}`
+  while (text.includes(duplicated)) text = text.replace(duplicated, single)
+  if (!text.includes("'sidebar.workspaces.lingdongPresets'")) {
+    text = text.replace(directoryLine, single)
+  }
+  if (!text.includes("PropsRenderSlots<'sidebar.workspaces.lingdongPresets'")) {
+    text = text.replace(
+      "  & PropsRenderSlots<'sidebar.workspaces.directoryFlow'>",
+      "  & PropsRenderSlots<'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.lingdongPresets' | 'sidebar.workspaces.lingdongWork'>",
+    )
+  }
+  if (!/  sessions: ISessions\r?\n/u.test(text)) {
+    text = text.replace(
+      /export type WorkspaceBrowserInjected = \{\r?\n/u,
+      (match) => `${match}  /** Session service passed to the Lingdong sidebar panels (root-scope slots cannot read it from a hook). */${eol}  sessions: ISessions${eol}`,
+    )
+  }
+  return text
+}, '新增 Lingdong sidebar slots / owner / injected sessions')
+// ③c ui-workspace：把两个面板挂到新 slot，child 声明与 renderSlot 的 slot 名保持一致。
+updateTextFile('packages/client/ui-workspace/src/client/index.ts', (before) => {
+  let text = before
+  if (!text.includes('lingdongPresetPanelEntry')) {
+    text = text.replace(
+      "import { WorkspacePicker } from './WorkspacePicker.tsx'",
+      "import { WorkspacePicker } from './WorkspacePicker.tsx'\nimport { lingdongPresetPanelEntry } from './LingdongPresetPanel.tsx'\nimport { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'",
+    )
+  }
+  if (!text.includes('sessions,\n    // Explicit group actions')) {
+    text = text.replace(
+      '  const browserInjected = (): WorkspaceBrowserInjected => ({\n',
+      '  const browserInjected = (): WorkspaceBrowserInjected => ({\n    sessions,\n',
+    )
+  }
+  text = text.replace(
+    "      children: { 'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' } },",
+    `      children: {
+        'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' },
+        'sidebar.workspaces.lingdongPresets': { kind: 'single', scope: 'root' },
+        'sidebar.workspaces.lingdongWork': { kind: 'single', scope: 'root' },
+      },`,
+  )
+  if (!text.includes('ctx.plugin(lingdongPresetPanelEntry)')) {
+    text = text.replace(
+      '  ctx.slots.inject(\'conversation.hero.workspace\', () => ctx.slots.register(',
+      `  ctx.plugin(lingdongPresetPanelEntry)
+  ctx.plugin(lingdongWorkPanelEntry)
+  ctx.slots.inject('conversation.hero.workspace', () => ctx.slots.register(`,
+    )
+  }
+  return text
+}, '挂载 Lingdong 侧栏面板并声明子 slot')
 
+// ③d WorkspaceBrowser：把 owner 数据传给两个面板；renderSlot 必须在工作区列表之前。
+updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx', (before) => {
+  let text = before
+  // 修掉上一版误把 sessions 插进 SearchResults 的残留。
+  const searchStart = text.indexOf('function SearchResults({')
+  const searchEnd = text.indexOf('}: Pick<WorkspaceBrowserProps', searchStart)
+  if (searchStart >= 0 && searchEnd > searchStart) {
+    const searchSignature = text.slice(searchStart, searchEnd)
+    const cleaned = searchSignature.replace(/^  sessions,\r?\n/mu, '')
+    text = `${text.slice(0, searchStart)}${cleaned}${text.slice(searchEnd)}`
+  }
+  const start = text.indexOf('export function WorkspaceBrowser({')
+  const end = text.indexOf('}: WorkspaceBrowserProps)', start)
+  if (start >= 0 && end > start) {
+    const signature = text.slice(start, end)
+    if (!/\bsessions,\r?\n/u.test(signature)) {
+      const next = signature.replace(/  useSessions,\r?\n/u, (match) => `${match}  sessions,${match.endsWith('\r\n') ? '\r\n' : '\n'}`)
+      text = `${text.slice(0, start)}${next}${text.slice(end)}`
+    }
+  }
+  if (!text.includes('const sidebarOwner = {')) {
+    text = text.replace(
+      '  const currentBlank = mainSessionId !== undefined',
+      `  const sidebarOwner = { sessionId: mainSessionId, sessions, sessionList: list }
+  const currentBlank = mainSessionId !== undefined`,
+    )
+  }
+  if (!text.includes("renderSlot('sidebar.workspaces.lingdongPresets', sidebarOwner)")) {
+    text = text.replace(
+      '      <div className={css.listArea}>\n        {wide && (',
+      `      <div className={css.listArea}>
+        {wide && renderSlot('sidebar.workspaces.lingdongPresets', sidebarOwner)}
+        {wide && renderSlot('sidebar.workspaces.lingdongWork', sidebarOwner)}
+        {wide && (`,
+    )
+  }
+  return text
+}, '传入 session/sessionList 并渲染两个侧栏面板')
+// ③e ui-conversation：只保留隐藏桥；清掉旧输入 dock 面板的 import / plugin。
+updateTextFile('packages/client/ui-conversation/src/client/apply.ts', (before) => {
+  let text = before
+  text = text.replace(/\nimport \{ lingdongPresetDockEntry \} from '\.\/LingdongPresetDock\.tsx'/g, '')
+  text = text.replace(/\nimport \{ lingdongWorkDockEntry \} from '\.\/LingdongWorkDock\.tsx'/g, '')
+  text = text.replace(/\n  \/\/ 灵动ai 课堂预设[\s\S]*?ctx\.plugin\(lingdongPresetDockEntry\)/g, '')
+  text = text.replace(/\n  \/\/ 灵动ai 作品[\s\S]*?ctx\.plugin\(lingdongWorkDockEntry\)/g, '')
+  if (!text.includes('lingdongPresetBridgeEntry')) {
+    text = text.replace(
+      "import { queueDockEntry } from './queue/QueueDock.tsx'",
+      "import { queueDockEntry } from './queue/QueueDock.tsx'\nimport { lingdongPresetBridgeEntry } from './LingdongPresetBridge.tsx'",
+    )
+  }
+  if (!text.includes('ctx.plugin(lingdongPresetBridgeEntry)')) {
+    text = text.replace(
+      '  ctx.plugin(queueDockEntry)',
+      `  ctx.plugin(queueDockEntry)
+  // 灵动ai 隐藏桥：侧栏预设标题点击后写入当前会话输入框，不自动发送。
+  ctx.plugin(lingdongPresetBridgeEntry)`,
+    )
+  }
+  return text
+}, '切换为隐藏输入桥，清理旧 dock')
 // ④ main.ts：在启动后端之前过登录门 + 注册深链协议
 // 先去重（两类，都实测踩过）：
 //   (a) 早期版本只插过 `import { runLingdongGate }`，加 deepLink 后会与新的那条并存；
