@@ -66,6 +66,32 @@ node scripts/p116-client-gate-ui.mjs      # 门三页：图片真解码 / 表单
 
 （平台侧的守卫 —— 网关、发送次数、作品上传 —— 在平台仓库里，它们的口径见契约文档。）
 
+⚠️ 守卫要 `playwright-core`（无依赖，纯 JS）与 Chrome。**本机 npm registry 打不通**，
+所以 `node_modules/` 是从平台仓库拷来的一份（已在 `.gitignore` 里）：
+`cp -r "E:/学习平台正常/node_modules/playwright-core" node_modules/`。
+能上 registry 时用 `pnpm add -D playwright-core` 更干净。
+
+## 把这个仓库推上 GitHub
+
+远端已经配好了（用平台仓库同一把账号级 key，走 443，见 `~/.ssh/config` 的别名）：
+
+```
+origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
+```
+
+**还差"在 GitHub 上建出这个空仓库"这一步**（我没做：`gh` 没登录，也没有 token）。两种办法：
+
+1. 网页：<https://github.com/new> → 名字 `lingdong-client` → **Private** → **不要**勾
+   "Add a README"（我们已经有提交了）。
+2. 或者 `gh auth login` 之后：
+   `gh repo create chuangyilingdong/lingdong-client --private --source=. --push`
+
+建好之后：
+
+```bash
+git push -u origin main
+```
+
 ## 现在到哪一步了
 
 见 [`docs/交接-客户端-20260919.md`](docs/交接-客户端-20260919.md)：已经在本地验证台**跑通**
