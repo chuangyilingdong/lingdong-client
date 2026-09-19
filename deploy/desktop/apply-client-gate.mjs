@@ -238,6 +238,13 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
   }
   return text
 }, '传入 session/sessionList 并渲染两个侧栏面板')
+// ③f ui-settings-models：学生端移除上游「内测声明」欢迎弹层。
+const welcomeNoticeTarget = join(checkout, 'packages/client/ui-settings-models/src/client/WelcomeNotice.tsx')
+if (!dryRun) {
+  mkdirSync(dirname(welcomeNoticeTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'LingdongWelcomeNotice.tsx'), welcomeNoticeTarget)
+}
+report.push('✓  packages/client/ui-settings-models/src/client/WelcomeNotice.tsx：已替换为无内测声明版本')
 // ③e ui-conversation：只保留隐藏桥；清掉旧输入 dock 面板的 import / plugin。
 updateTextFile('packages/client/ui-conversation/src/client/apply.ts', (before) => {
   let text = before
