@@ -360,6 +360,10 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
   useEffect(() => () => { aborter.current?.abort() }, [])
 
   const scan = useCallback(async () => {
+    if (sessions === undefined) {
+      setError('会话服务还没有就绪，请稍后重试。')
+      return
+    }
     aborter.current?.abort()
     const controller = new AbortController()
     aborter.current = controller

@@ -130,8 +130,9 @@ updateTextFile('packages/client/ui-workspace/src/client/contract/slots.ts', (bef
       "import type { ISessions, SessionListState, SessionSearchResultItem } from '@deepseek-ai/dsh-api-session-controller/client'",
     )
   }
+  text = text.replace(/  readonly sessions\??: ISessions(?: \| undefined)?/u, '  readonly sessions: ISessions | undefined')
   if (!text.includes('interface LingdongSidebarOwnerProps')) {
-    const owner = `${eol}/** 灵动ai 侧栏插件需要的只读会话数据；面板只消费，不接管会话导航。 */${eol}export interface LingdongSidebarOwnerProps {${eol}  readonly sessionId: SessionId | undefined${eol}  readonly sessions: ISessions${eol}  readonly sessionList: SessionListState${eol}}${eol}`
+    const owner = `${eol}/** 灵动ai 侧栏插件需要的只读会话数据；面板只消费，不接管会话导航。 */${eol}export interface LingdongSidebarOwnerProps {${eol}  readonly sessionId: SessionId | undefined${eol}  readonly sessions: ISessions | undefined${eol}  readonly sessionList: SessionListState${eol}}${eol}`
     text = text.replace('/** The two directory-flow holes;', `${owner}${eol}/** The two directory-flow holes;`)
   }
   const directoryLine = "    'sidebar.workspaces.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }"
@@ -153,11 +154,15 @@ updateTextFile('packages/client/ui-workspace/src/client/contract/slots.ts', (bef
       "  & PropsRenderSlots<'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.lingdongPresets' | 'sidebar.workspaces.lingdongWork'>",
     )
   }
-  if (!/  sessions: ISessions\r?\n/u.test(text)) {
-    text = text.replace(
-      /export type WorkspaceBrowserInjected = \{\r?\n/u,
-      (match) => `${match}  /** Session service passed to the Lingdong sidebar panels (root-scope slots cannot read it from a hook). */${eol}  sessions: ISessions${eol}`,
-    )
+  if (!/  sessions\?: ISessions \| undefined\r?\n/u.test(text)) {
+    if (/  sessions\??: ISessions(?: \| undefined)?\r?\n/u.test(text)) {
+      text = text.replace(/  sessions\??: ISessions(?: \| undefined)?\r?\n/u, '  sessions?: ISessions | undefined\n')
+    } else {
+      text = text.replace(
+        /export type WorkspaceBrowserInjected = \{\r?\n/u,
+        (match) => `${match}  /** Session service passed to the Lingdong sidebar panels (root-scope slots cannot read it from a hook). */${eol}  sessions?: ISessions | undefined${eol}`,
+      )
+    }
   }
   return text
 }, '新增 Lingdong sidebar slots / owner / injected sessions')
