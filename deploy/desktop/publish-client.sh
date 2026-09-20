@@ -40,12 +40,17 @@ STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST" "cd '$REMOTE_DIR' && cp manifest.json manifest.json.bak-$STAMP && cat > manifest.json <<JSON
 {
   \"version\": \"$VERSION\",
-  \"channel\": \"internal-beta\",
+  \"channel\": \"stable\",
+  \"enabled\": true,
+  \"mandatory\": false,
+  \"minVersion\": \"\",
+  \"publishedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
   \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-  \"note\": \"客户端内测：登录门、课堂门禁与网关调用已在本机验证台跑通（消息成功、用量进平台账）。\",
+  \"note\": \"灵动ai创作客户端新版本已发布。\",
   \"files\": { \"win-x64\": { \"name\": \"$NAME\", \"size\": $SIZE, \"sha256\": \"$SHA\" }, \"mac-arm64\": null }
 }
 JSON
+chown ai-kids-prod:ai-kids-prod manifest.json
 cat manifest.json"
 
 echo "=== ④ 核验公网真能下 ==="

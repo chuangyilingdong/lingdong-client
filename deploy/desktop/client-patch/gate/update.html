@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';" />
+<title>正在更新 · 灵动ai创作客户端</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: radial-gradient(120% 100% at 42% 28%, #7e1123, #4d0a15); color: #fff; font: 14px/1.6 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif; }
+  main { width: 100%; padding: 32px 38px; text-align: center; }
+  .logo { width: 148px; margin-bottom: 18px; }
+  h1 { margin: 0 0 8px; font-size: 20px; }
+  p { margin: 0; color: rgba(255,255,255,.72); font-size: 13px; white-space: pre-wrap; }
+  .track { height: 8px; margin-top: 24px; overflow: hidden; border-radius: 99px; background: rgba(255,255,255,.14); }
+  .bar { width: 0; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #ff8b67, #ff4d67); transition: width .16s ease; }
+  small { display: block; margin-top: 12px; color: rgba(255,255,255,.42); font-size: 11px; }
+</style>
+</head>
+<body>
+<main>
+  <img class="logo" src="logo.png" alt="灵动ai" />
+  <h1>正在更新客户端</h1>
+  <p id="message">正在准备更新…</p>
+  <div class="track" aria-hidden="true"><div class="bar" id="bar"></div></div>
+  <small>下载完成并校验通过后，客户端会自动安装并重新启动。</small>
+</main>
+<script>
+  window.__lingdongUpdate = function (state) {
+    const percent = Math.max(0, Math.min(100, Number(state && state.percent) || 0))
+    document.getElementById('bar').style.width = percent + '%'
+    if (state && typeof state.message === 'string' && state.message) document.getElementById('message').textContent = state.message
+  }
+</script>
+</body>
+</html>

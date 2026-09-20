@@ -67,6 +67,8 @@ report.push(`✓  apps/desktop/resources/gate/：${dryRun ? '（--dry-run 未写
 if (!dryRun) mkdirSync(join(checkout, 'apps/desktop/src'), { recursive: true })
 if (!dryRun) copyFileSync(join(patchDir, 'platform-gate.ts'), join(checkout, 'apps/desktop/src/platform-gate.ts'))
 report.push('✓  apps/desktop/src/platform-gate.ts：已放入')
+if (!dryRun) copyFileSync(join(patchDir, 'LingdongUpdater.ts'), join(checkout, 'apps/desktop/src/LingdongUpdater.ts'))
+report.push('✓  apps/desktop/src/LingdongUpdater.ts：已放入')
 
 // ②b UI：侧栏预设/作品面板 + 会话输入隐藏桥。
 // 旧版本把两个面板挂在输入框 dock 上；这里先原地清掉旧 import/plugin/文件，再写新结构。
@@ -441,6 +443,20 @@ patch('apps/desktop/src/main.ts',
   '  focusPrimaryWindow = () => {\n    if (quitting) return\n',
   '  focusPrimaryWindow = () => {\n    if (quitting) return\n    // 深链/第二次启动都走到这里：让等待页立刻重问一次「现在有没有课」\n    lingdongDeepLink()\n',
   '深链落到 focusPrimaryWindow', '深链/第二次启动都走到这里')
+
+// ④a 客户端启动更新：在登录门前检查平台清单；用户确认后下载、校验、静默安装并重启。
+updateTextFile('apps/desktop/src/main.ts', (before) => {
+  let current = before
+  const gateImport = "import { lingdongDeepLink, runLingdongGate } from './platform-gate.ts'"
+  if (!current.includes("from './LingdongUpdater.ts'")) {
+    current = current.replace(gateImport, gateImport + "\nimport { runLingdongUpdater } from './LingdongUpdater.ts'")
+  }
+  const gateCall = "  if ((await runLingdongGate(() => currentMainWindow() ?? createMainWindow(), isQuitting, () => backend.stop())).kind === 'quit') { app.quit(); return }"
+  if (!current.includes('await runLingdongUpdater()') && current.includes(gateCall)) {
+    current = current.replace(gateCall, "  if (await runLingdongUpdater()) { app.quit(); return }\n" + gateCall)
+  }
+  return current
+}, '接入启动更新检查')
 
 // ④b 打包：注册 lingdong:// 协议（安装器写进注册表，系统才知道怎么拉起客户端）
 patch('apps/desktop/scripts/electron-builder-config.mjs',
