@@ -72,7 +72,7 @@ report.push('✓  apps/desktop/src/platform-gate.ts：已放入')
 // 旧版本把两个面板挂在输入框 dock 上；这里先原地清掉旧 import/plugin/文件，再写新结构。
 const workspaceClientDir = join(checkout, 'packages/client/ui-workspace/src/client')
 const conversationClientDir = join(checkout, 'packages/client/ui-conversation/src/client')
-for (const name of ['LingdongPresetPanel.tsx', 'LingdongWorkPanel.tsx']) {
+for (const name of ['LingdongPresetPanel.tsx', 'LingdongWorkPanel.tsx', 'LingdongAccountPanel.tsx']) {
   const target = join(workspaceClientDir, name)
   if (!dryRun) {
     mkdirSync(dirname(target), { recursive: true })
@@ -138,6 +138,8 @@ updateTextFile('apps/desktop/src/preload-app.ts', (before) => {
   submitWorkBatch: (payload: unknown) => ipcRenderer.invoke('lingdong:submit-work-batch', payload) as Promise<unknown>,
   listWorks: () => ipcRenderer.invoke('lingdong:list-works') as Promise<unknown>,
   showInFolder: (path: string) => ipcRenderer.invoke('lingdong:show-in-folder', path) as Promise<{ ok: boolean; message?: string }>,
+  account: () => ipcRenderer.invoke('lingdong:account') as Promise<unknown>,
+  logout: () => ipcRenderer.invoke('lingdong:logout') as Promise<{ ok: boolean }>,
 })`
   if (before.includes(block)) return before
   const start = before.indexOf("contextBridge.exposeInMainWorld('lingdong', {")
@@ -206,6 +208,12 @@ updateTextFile('packages/client/ui-workspace/src/client/index.ts', (before) => {
       "import { WorkspacePicker } from './WorkspacePicker.tsx'\nimport { lingdongPresetPanelEntry } from './LingdongPresetPanel.tsx'\nimport { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'",
     )
   }
+  if (!text.includes('lingdongAccountPanelEntry')) {
+    text = text.replace(
+      "import { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'",
+      "import { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'\nimport { lingdongAccountPanelEntry } from './LingdongAccountPanel.tsx'",
+    )
+  }
   if (!text.includes('sessions,\n    // Explicit group actions')) {
     text = text.replace(
       '  const browserInjected = (): WorkspaceBrowserInjected => ({\n',
@@ -220,6 +228,13 @@ updateTextFile('packages/client/ui-workspace/src/client/index.ts', (before) => {
         'sidebar.workspaces.lingdongWork': { kind: 'single', scope: 'root' },
       },`,
   )
+  if (!text.includes('ctx.plugin(lingdongAccountPanelEntry)')) {
+    text = text.replace(
+      '  ctx.plugin(lingdongWorkPanelEntry)',
+      `  ctx.plugin(lingdongWorkPanelEntry)
+  ctx.plugin(lingdongAccountPanelEntry)`,
+    )
+  }
   if (!text.includes('ctx.plugin(lingdongPresetPanelEntry)')) {
     text = text.replace(
       '  ctx.slots.inject(\'conversation.hero.workspace\', () => ctx.slots.register(',

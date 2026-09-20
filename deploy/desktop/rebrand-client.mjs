@@ -264,7 +264,7 @@ import type { SidebarBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-side
 
 const WORDMARK_DATA_URI = '${brandLogoDataUri}'
 
-/** 侧栏品牌字标：宽度按原图约 2.1:1 比例随 size 缩放。 */
+/** 侧栏品牌字标：保持原图约 2.1:1 的比例，避免被宽容器 object-fit 二次缩小。 */
 export function OfficialBrandMark({ size }: SidebarBrandMarkOwnerProps) {
   return (
     <img
@@ -273,7 +273,7 @@ export function OfficialBrandMark({ size }: SidebarBrandMarkOwnerProps) {
       aria-hidden='true'
       role='presentation'
       data-lingdong-wordmark
-      style={{ display: 'block', width: size * 4.7, height: size * 1.18, maxWidth: '100%', objectFit: 'contain' }}
+      style={{ display: 'block', width: Number((size * 2.1).toFixed(1)), height: size, maxWidth: '100%', objectFit: 'contain' }}
     />
   )
 }
@@ -284,11 +284,23 @@ export function OfficialBrandName() {
 }
 `);
 
-// ⑥a 收起侧栏只有 36px 宽：完整横向字标交给应用图标和展开态，轨道里裁切显示即可。
+// ⑥a 展开态把品牌字标真正放大，并在侧栏可用宽度中居中；收起轨道仍裁切为图标位。
 edit('packages/client/ui-sidebar/src/client/SidebarRoot.module.css', (text) => {
-  const marker = '/* 灵动ai：收起轨道裁切横向字标，避免溢出 36px 按钮。 */'
-  if (text.includes(marker)) return text
-  return `${text.trimEnd()}\n\n${marker}\n.railMark { width: 36px; overflow: hidden; justify-content: flex-start; }\n.root:not(.collapsed) .brand { justify-content: center; padding-left: 0 !important; }\n.root:not(.collapsed) .brandIdentity { width: 100%; justify-content: center; height: 28px; }\n.root:not(.collapsed) .brandMark { height: 28px; }\n`
+  const marker = '/* 灵动ai：放大并居中侧栏品牌字标。 */'
+  const current = `.root:not(.collapsed) .brand { justify-content: center; padding-left: 0 !important; }\n.root:not(.collapsed) .brandIdentity { width: 100%; justify-content: center; height: 36px; }\n.root:not(.collapsed) .brandMark { display: flex; height: 36px; align-items: center; justify-content: center; }`
+  if (text.includes(current)) return text
+  const previous = `${marker}\n.root:not(.collapsed) .brand { justify-content: center; padding-left: 0 !important; }\n.root:not(.collapsed) .brandIdentity { width: 100%; justify-content: center; height: 30px; }\n.root:not(.collapsed) .brandMark { display: flex; height: 30px; align-items: center; justify-content: center; }`
+  if (text.includes(previous)) return text.replace(previous, `${marker}\n${current}`)
+  return `${text.trimEnd()}\n\n${marker}\n${current}\n`
+});
+
+// ⑥ab 展开态把传给字标的高度从 24 提到 34；收起态仍保持 24。
+edit('packages/client/ui-sidebar/src/client/SidebarRoot.tsx', (text) => {
+  const before = `<span className={css.brandMark}>
+                {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <FishLogo size={24} /> })}`
+  const after = `<span className={css.brandMark}>
+                {renderSlot('sidebar.brand.mark', { size: 34 }, { fallback: <FishLogo size={34} /> })}`
+  return text.includes(after) ? text : text.replace(before, after)
 });
 
 overwrite('packages/client/ui-primitives/src/BrandWordmark.tsx', `/**
@@ -425,13 +437,20 @@ edit('packages/client/ui-brand-official/tests/browser-plugin.client.spec.tsx', (
     const mark = render(<OfficialBrandMark size={34} />)
     const image = mark.container.querySelector('img')
     expect(image?.getAttribute('src')?.startsWith('data:image/png;base64,')).toBe(true)
-    expect(image?.style.width).toBe('136px')
+    expect(image?.style.width).toBe('71.4px')
     mark.rerender(<OfficialBrandMark size={24} />)
-    expect(mark.container.querySelector('img')?.style.width).toBe('96px')
+    expect(mark.container.querySelector('img')?.style.width).toBe('50.4px')
   })`
-  if (text.includes(current)) return text
-  return text.includes(legacy) ? text.replace(legacy, current) : text
+  const migrated = text
+    .split("expect(image?.style.width).toBe('136px')").join("expect(image?.style.width).toBe('71.4px')")
+    .split("expect(mark.container.querySelector('img')?.style.width).toBe('96px')").join("expect(mark.container.querySelector('img')?.style.width).toBe('50.4px')")
+  if (migrated.includes(current)) return migrated
+  return migrated.includes(legacy) ? migrated.replace(legacy, current) : migrated
 });
+
+// ⑥a 上游侧栏测试里的回退品牌名也要跟我们的品牌一致。
+edit('packages/client/ui-sidebar/tests/sidebar-root.client.spec.tsx', (text) =>
+  text.split('DSH Local Build').join('LingdongAI'));
 
 // ⑥a 安装器：首次打开就直接展开安装路径，别让学生先点一次“选择安装位置”。
 edit('apps/desktop/installer/lifecycle.nsh', (text) => {

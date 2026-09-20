@@ -306,6 +306,43 @@ async function refreshClassroomContext(): Promise<LingdongContext> {
   }
 }
 
+function clearLoginState(): void {
+  writeSession(null)
+  writeClassroomContext({ classroom: null, classrooms: [], reason: null, upcoming: null, presets: [], sends: null, message: '', sessionId: '' })
+}
+
+function restartAtLogin(): void {
+  clearLoginState()
+  setImmediate(() => { app.relaunch(); app.quit() })
+}
+
+/**
+ * 课堂结束/账号被顶时强制回到登录页。只在平台明确说“没有可进课堂”或密钥身份失效时触发，
+ * 网络抖动不会把学生踢出去。
+ */
+function watchClassroom(sessionId: string): void {
+  let stopped = false
+  const tick = async (): Promise<void> => {
+    if (stopped) return
+    const session = readSession()
+    if (session === null) return
+    try {
+      const context = await call(contextPath(sessionId), { token: session.token }) as Partial<LingdongContext>
+      if (!context.classroom) { stopped = true; restartAtLogin(); return }
+    } catch (error) {
+      const code = error instanceof PlatformRequestError ? error.code : undefined
+      if (code === 'SESSION_SUPERSEDED' || code === 'RUNTIME_KEY_INVALID' || code === 'RUNTIME_KEY_EXPIRED'
+        || code === 'RUNTIME_NO_ACTIVE_CLASSROOM') {
+        stopped = true
+        restartAtLogin()
+        return
+      }
+    }
+    setTimeout(() => { void tick() }, 5000).unref()
+  }
+  void tick()
+}
+
 interface WorkFailure { readonly ok: false; readonly cancelled?: boolean; readonly code?: string; readonly message: string }
 interface WorkBatchSuccess {
   readonly item: WorkBatchItem
@@ -584,6 +621,14 @@ ipcMain.handle('lingdong:classroom-context', async (_event, payload: unknown) =>
   const wantsRefresh = payload !== null && typeof payload === 'object' && (payload as { refresh?: unknown }).refresh === true
   return wantsRefresh ? await refreshClassroomContext() : readClassroomContext()
 })
+ipcMain.handle('lingdong:account', () => readSession()?.user ?? null)
+ipcMain.handle('lingdong:logout', async () => {
+  const session = readSession()
+  // 本地先不删，确保平台能按这台设备当前 token 注销；平台失败也不把学生卡在应用里。
+  if (session) await call('/api/auth/logout', { method: 'POST', token: session.token }).catch(() => undefined)
+  restartAtLogin()
+  return { ok: true }
+})
 ipcMain.handle('lingdong:show-in-folder', async (_event, payload: unknown) => {
   const filePath = typeof payload === 'string' ? payload.trim() : ''
   if (filePath === '') return { ok: false, message: '文件路径为空。' }
@@ -775,7 +820,9 @@ export async function runLingdongGate(
         if (action.action === 'logout') { writeSession(null); continue }
         continue // refresh：回循环顶部重新问一次「现在有没有课」
       }
-      applyGateway({ ...context, sessionId: selectedSessionId || context.classroom.id })
+      const activeSessionId = selectedSessionId || context.classroom.id
+      applyGateway({ ...context, sessionId: activeSessionId })
+      watchClassroom(activeSessionId)
       // 到这一步密钥已经写进 process.env 与凭据文件，但**宿主可能已经用旧环境起来了** ——
       // 停掉它，让下面那条 reconcileBackend() 用新环境重起（见本函数 @param resetHost）。
       // 失败不拦人：真起不来时 reconcileBackend 自己会报错，这里只留一行日志。
