@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
@@ -55,6 +55,8 @@ interface LingdongContext {
   readonly presets: readonly { readonly title: string; readonly text: string }[]
   readonly sends: { readonly limit: number | null; readonly used: number; readonly remaining: number | null } | null
   readonly message: string
+  /** Classroom workspace prepared before the DSH host comes up. */
+  readonly workspacePath?: string
   /** Historical/exception libraries can expose more than one active classroom; this is the chosen query key. */
   readonly sessionId: string
 }
@@ -92,6 +94,7 @@ const TEXT_WORK_EXTENSIONS = new Set([
   '.css', '.csv', '.htm', '.html', '.js', '.json', '.jsx', '.md', '.mjs', '.cjs', '.svg', '.text',
   '.ts', '.tsx', '.txt', '.webmanifest', '.xml', '.yaml', '.yml',
 ])
+const SUBMITTABLE_WORK_EXTENSIONS = new Set(['.htm', '.html', '.docx', '.xlsx', '.pptx'])
 const SCANNABLE_WORK_EXTENSIONS = new Set(['.css', '.htm', '.html', '.svg'])
 /** 平台错误要保留业务 code；界面上仍展示平台原始 message。 */
 class PlatformRequestError extends Error {
@@ -252,6 +255,7 @@ function writeClassroomContext(context: LingdongContext, sessionId?: string): vo
       presets: context.presets ?? [],
       sends: context.sends ?? null,
       message: context.message ?? '',
+      workspacePath: context.workspacePath ?? '',
       sessionId: selected,
       updatedAt: new Date().toISOString(),
     }, null, 2))
@@ -270,6 +274,7 @@ function readClassroomContext(): LingdongContext {
       presets: Array.isArray(parsed.presets) ? parsed.presets : [],
       sends: parsed.sends ?? null,
       message: typeof parsed.message === 'string' ? parsed.message : '',
+      workspacePath: typeof parsed.workspacePath === 'string' ? parsed.workspacePath : '',
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : '',
     }
   } catch {
@@ -297,6 +302,7 @@ async function refreshClassroomContext(): Promise<LingdongContext> {
       presets: Array.isArray(fresh.presets) ? fresh.presets : cached.presets,
       sends: fresh.sends ?? null,
       message: typeof fresh.message === 'string' ? fresh.message : '',
+      workspacePath: cached.workspacePath || '',
       sessionId: cached.sessionId || fresh.classroom?.id || '',
     }
     writeClassroomContext(next)
@@ -515,8 +521,8 @@ async function prepareWork(item: WorkBatchItem): Promise<PreparedWork> {
   if (!rootInfo.isDirectory()) throw new PlatformRequestError('会话工作区不是目录。')
   const entryPath = await resolveInside(root, item.path)
   const entryExtension = extname(entryPath).toLocaleLowerCase('en-US')
-  if (entryExtension !== '.html' && entryExtension !== '.htm') {
-    throw new PlatformRequestError('交作品入口只提交网页 HTML 文件。')
+  if (!SUBMITTABLE_WORK_EXTENSIONS.has(entryExtension)) {
+    throw new PlatformRequestError('交作品目前支持 HTML、Word、Excel 和 PPT。')
   }
 
   const assets = new Map<string, WorkAsset>()
@@ -665,7 +671,7 @@ ipcMain.handle('lingdong:submit-work-batch', async (_event, payload: unknown) =>
   const rawItems = Array.isArray(request.items) ? request.items : []
   const items = rawItems.map(normalizeBatchItem)
   if (items.length === 0 || items.some(item => item === null)) {
-    return workFailure('没有收到要提交的 HTML 作品，请重新勾选。')
+    return workFailure('没有收到要提交的作品，请重新勾选。')
   }
   const session = readSession()
   if (session === null) return workFailure('登录已失效，请重新登录客户端。')
@@ -700,8 +706,34 @@ ipcMain.handle('lingdong:submit-work-batch', async (_event, payload: unknown) =>
   }
   return { ok: true, submitted, failures, warnings, missing, works, worksError }
 })
+function safeWorkspaceSegment(value: unknown, fallback: string, maxChars: number): string {
+  const cleaned = String(value ?? '')
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/gu, ' ')
+    .replace(/\s+/gu, ' ')
+    .replace(/[. ]+$/gu, '')
+    .trim()
+  const source = cleaned || fallback
+  return Array.from(source).slice(0, maxChars).join('') || fallback
+}
+
+/** One physical workspace per classroom, named from the student and lesson. */
+function ensureClassroomWorkspace(context: LingdongContext, user?: LingdongUser): string | undefined {
+  if (!context.classroom) return undefined
+  try {
+    const student = safeWorkspaceSegment(user?.displayName || user?.login, '学生', 24)
+    const lesson = safeWorkspaceSegment(context.classroom.lessonTitle || context.classroom.title, '课堂', 28)
+    const root = join(app.getPath('documents'), '灵动ai创作')
+    const workspacePath = join(root, `${student}-${lesson}`)
+    mkdirSync(workspacePath, { recursive: true })
+    return workspacePath
+  } catch (error) {
+    console.error('灵动ai：创建课堂工作区失败（继续使用原工作区）', error)
+    return undefined
+  }
+}
+
 /** 铺好网关密钥与补丁层。**只有这节课真的在进行时**才会走到这里。 */
-function applyGateway(context: LingdongContext): void {
+function applyGateway(context: LingdongContext, user?: LingdongUser): void {
   const key = context.gateway?.key
   const baseUrl = context.gateway?.baseUrl
   if (!key || !baseUrl) throw new Error('平台没有下发网关密钥，无法启动创作环境')
@@ -714,7 +746,8 @@ function applyGateway(context: LingdongContext): void {
   }
   writeGatewayCredential(home, String(key))
   pointDefaultModelToGateway(home)
-  writeClassroomContext(context)
+  const workspacePath = ensureClassroomWorkspace(context, user)
+  writeClassroomContext(workspacePath === undefined ? context : { ...context, workspacePath })
 }
 
 /**
@@ -821,7 +854,7 @@ export async function runLingdongGate(
         continue // refresh：回循环顶部重新问一次「现在有没有课」
       }
       const activeSessionId = selectedSessionId || context.classroom.id
-      applyGateway({ ...context, sessionId: activeSessionId })
+      applyGateway({ ...context, sessionId: activeSessionId }, session.user)
       watchClassroom(activeSessionId)
       // 到这一步密钥已经写进 process.env 与凭据文件，但**宿主可能已经用旧环境起来了** ——
       // 停掉它，让下面那条 reconcileBackend() 用新环境重起（见本函数 @param resetHost）。

@@ -72,7 +72,7 @@ report.push('✓  apps/desktop/src/platform-gate.ts：已放入')
 // 旧版本把两个面板挂在输入框 dock 上；这里先原地清掉旧 import/plugin/文件，再写新结构。
 const workspaceClientDir = join(checkout, 'packages/client/ui-workspace/src/client')
 const conversationClientDir = join(checkout, 'packages/client/ui-conversation/src/client')
-for (const name of ['LingdongPresetPanel.tsx', 'LingdongWorkPanel.tsx', 'LingdongAccountPanel.tsx']) {
+for (const name of ['LingdongPresetPanel.tsx', 'LingdongWorkPanel.tsx', 'LingdongAccountPanel.tsx', 'LingdongClassroomWorkspace.ts']) {
   const target = join(workspaceClientDir, name)
   if (!dryRun) {
     mkdirSync(dirname(target), { recursive: true })
@@ -129,6 +129,13 @@ if (!dryRun) {
   copyFileSync(join(patchDir, 'PresentedFileCard.tsx'), presentedFileCardTarget)
 }
 report.push('✓  packages/client/ui-deliverables/src/client/PresentedFileCard.tsx：已接桌面文件管理器 IPC')
+// ③a3 Office 预览：刚写完的文件偶发转换/版本竞争时自动重试一次，学生仍可手动重试。
+const officePreviewTarget = join(checkout, 'packages/client/ui-sidebar-documentpreview/src/client/office/index.ts')
+if (!dryRun) {
+  mkdirSync(dirname(officePreviewTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'OfficePreview.ts'), officePreviewTarget)
+}
+report.push('✓  packages/client/ui-sidebar-documentpreview/src/client/office/index.ts：已加重试')
 
 // ③ preload：用一份确定的 window.lingdong 取代旧 gate/context/submitWork 的组合块。
 updateTextFile('apps/desktop/src/preload-app.ts', (before) => {
@@ -205,13 +212,19 @@ updateTextFile('packages/client/ui-workspace/src/client/index.ts', (before) => {
   if (!text.includes('lingdongPresetPanelEntry')) {
     text = text.replace(
       "import { WorkspacePicker } from './WorkspacePicker.tsx'",
-      "import { WorkspacePicker } from './WorkspacePicker.tsx'\nimport { lingdongPresetPanelEntry } from './LingdongPresetPanel.tsx'\nimport { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'",
+      "import { WorkspacePicker } from './WorkspacePicker.tsx'\nimport { lingdongPresetPanelEntry } from './LingdongPresetPanel.tsx'\nimport { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'\nimport { lingdongAccountPanelEntry } from './LingdongAccountPanel.tsx'\nimport { lingdongClassroomWorkspaceEntry } from './LingdongClassroomWorkspace.ts'",
     )
   }
   if (!text.includes('lingdongAccountPanelEntry')) {
     text = text.replace(
       "import { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'",
       "import { lingdongWorkPanelEntry } from './LingdongWorkPanel.tsx'\nimport { lingdongAccountPanelEntry } from './LingdongAccountPanel.tsx'",
+    )
+  }
+  if (!text.includes("from './LingdongClassroomWorkspace.ts'")) {
+    text = text.replace(
+      "import { lingdongAccountPanelEntry } from './LingdongAccountPanel.tsx'",
+      "import { lingdongAccountPanelEntry } from './LingdongAccountPanel.tsx'\nimport { lingdongClassroomWorkspaceEntry } from './LingdongClassroomWorkspace.ts'",
     )
   }
   if (!text.includes('sessions,\n    // Explicit group actions')) {
@@ -233,6 +246,13 @@ updateTextFile('packages/client/ui-workspace/src/client/index.ts', (before) => {
       '  ctx.plugin(lingdongWorkPanelEntry)',
       `  ctx.plugin(lingdongWorkPanelEntry)
   ctx.plugin(lingdongAccountPanelEntry)`,
+    )
+  }
+  if (!text.includes('ctx.plugin(lingdongClassroomWorkspaceEntry)')) {
+    text = text.replace(
+      '  ctx.plugin(lingdongAccountPanelEntry)',
+      `  ctx.plugin(lingdongAccountPanelEntry)
+  ctx.plugin(lingdongClassroomWorkspaceEntry)`,
     )
   }
   if (!text.includes('ctx.plugin(lingdongPresetPanelEntry)')) {

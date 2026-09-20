@@ -2,13 +2,13 @@
  * 灵动ai 侧栏「交作品」面板。
  *
  * 交付方式（2026-09-19 定稿）：
- *   · 点击展开后，扫描本机客户端**有效会话**历史里出现过的 HTML；
+ *   · 点击展开后，扫描本机客户端**有效会话**交付过的作品文件；
  *   · 不弹原生文件选择器，逐项勾选、支持全选；
- *   · 勾选后串行提交，每个 HTML 连同它引用的本地 CSS/图片等资源一起交给主进程；
+ *   · 勾选后串行提交，每个作品连同它引用的本地资源一起交给主进程；
  *   · 全部提交完成后只查一次 GET /api/student/works，回显平台原始 warnings/missing/作品列表。
  *
- * 平台契约没有「课堂/课时 ↔ dsh session」映射，所以界面只如实写“本机客户端有效会话产生过的 HTML”，
- * 不假装它严格等于本节课。
+ * 平台契约没有「课堂/课时 ↔ dsh session」映射，所以界面只如实写“本机客户端有效会话交付过的作品文件”，
+ * 并用平台作品列表里已有的课时与入口文件识别“这份是不是已经交过”。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
@@ -19,7 +19,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 
 type LingdongWorkPanelProps = PropsRuntime<'sidebar.workspaces.lingdongWork'>
 
-interface HtmlCandidate {
+interface WorkCandidate {
   readonly key: string
   readonly sessionId: string
   readonly sessionTitle: string
@@ -43,6 +43,10 @@ interface WorkItemView {
 interface WorksView {
   readonly items: readonly WorkItemView[]
   readonly total: number
+}
+
+interface ClassroomView {
+  readonly lessonTitle: string
 }
 
 interface BatchBridgeItem {
@@ -69,6 +73,8 @@ interface LingdongDesktopBridge {
     readonly copyrightConfirmed: true
     readonly items: readonly BatchBridgeItem[]
   }) => Promise<BatchResponse | undefined>
+  readonly listWorks?: () => Promise<unknown>
+  readonly context?: () => Promise<unknown>
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -152,8 +158,8 @@ function pathBasename(raw: string): string {
   return parts[parts.length - 1] || normalized
 }
 
-function isHtmlPath(raw: string): boolean {
-  return /\.(?:html?|HTML?)$/u.test(raw)
+function isSubmittableWorkPath(raw: string): boolean {
+  return /\.(?:html?|docx|xlsx|pptx)$/iu.test(raw)
 }
 
 function displayPathFor(cwd: string, raw: string): string {
@@ -165,13 +171,13 @@ function displayPathFor(cwd: string, raw: string): string {
   return normalizedRaw.startsWith('/') || /^[a-z]:\//iu.test(normalizedRaw) ? pathBasename(raw) : normalizedRaw
 }
 
-function extractSessionHtml(entries: readonly SessionEventLikeEntry[], summary: SessionSummary): HtmlCandidate[] {
+function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary: SessionSummary): WorkCandidate[] {
   const calls = new Map<string, string | null>()
-  const found = new Map<string, HtmlCandidate>()
+  const found = new Map<string, WorkCandidate>()
   const cwd = summary.cwd?.trim() ?? ''
   if (cwd === '') return []
   const add = (rawPath: string): void => {
-    if (!isHtmlPath(rawPath)) return
+    if (!isSubmittableWorkPath(rawPath)) return
     const normalized = normalizedPath(rawPath)
     if (normalized === '') return
     const key = `${summary.id}\u0000${normalized}`
@@ -222,15 +228,15 @@ function extractSessionHtml(entries: readonly SessionEventLikeEntry[], summary: 
   return [...found.values()]
 }
 
-async function scanHtmlCandidates(
+async function scanWorkCandidates(
   sessions: ISessions,
   list: SessionListState,
   signal: AbortSignal,
-): Promise<HtmlCandidate[]> {
+): Promise<WorkCandidate[]> {
   const summaries = Object.values(list.byId)
     .filter(summary => summary.blank !== true && summary.origin !== 'subagent' && (summary.cwd?.trim() ?? '') !== '')
     .sort((left, right) => right.updatedAt - left.updatedAt)
-  const found = new Map<string, HtmlCandidate>()
+  const found = new Map<string, WorkCandidate>()
 
   for (const summary of summaries) {
     if (signal.aborted) throw new DOMException('aborted', 'AbortError')
@@ -248,7 +254,7 @@ async function scanHtmlCandidates(
           window = next
           guard += 1
         }
-        for (const candidate of extractSessionHtml(window.entries, summary)) found.set(candidate.key, candidate)
+        for (const candidate of extractSessionWorks(window.entries, summary)) found.set(candidate.key, candidate)
       })
     } catch (error) {
       if (signal.aborted) throw error
@@ -277,6 +283,25 @@ function normalizeWorks(value: unknown): WorksView {
     }
   }).filter(item => item.id !== '')
   return { items: normalized, total: typeof summary?.total === 'number' ? summary.total : normalized.length }
+}
+
+function normalizedEntryName(raw: string): string {
+  return pathBasename(normalizedPath(raw)).toLocaleLowerCase('en-US')
+}
+
+function submittedKeysFor(
+  candidates: readonly WorkCandidate[],
+  works: readonly WorkItemView[],
+  lessonTitle: string,
+): ReadonlySet<string> {
+  const submittedNames = new Set(
+    works
+      .filter(work => work.source.toUpperCase() === 'VIBECODING')
+      .filter(work => lessonTitle === '' || work.lessonTitle === '' || work.lessonTitle === lessonTitle)
+      .map(work => normalizedEntryName(work.entryFile))
+      .filter(Boolean),
+  )
+  return new Set(candidates.filter(item => submittedNames.has(normalizedEntryName(item.path))).map(item => item.key))
 }
 
 const STATUS_TEXT: Readonly<Record<string, string>> = {
@@ -341,7 +366,7 @@ const styles = {
   resultItem: { padding: '6px 7px', border: '1px solid rgba(127, 127, 127, 0.16)', borderRadius: '7px', overflowWrap: 'anywhere' },
 } as const
 
-function selectedItems(items: readonly HtmlCandidate[], selected: ReadonlySet<string>): HtmlCandidate[] {
+function selectedItems(items: readonly WorkCandidate[], selected: ReadonlySet<string>): WorkCandidate[] {
   return items.filter(item => selected.has(item.key))
 }
 
@@ -349,8 +374,9 @@ function selectedItems(items: readonly HtmlCandidate[], selected: ReadonlySet<st
 export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<'idle' | 'scanning' | 'submitting'>('idle')
-  const [items, setItems] = useState<readonly HtmlCandidate[]>([])
+  const [items, setItems] = useState<readonly WorkCandidate[]>([])
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
+  const [submittedKeys, setSubmittedKeys] = useState<ReadonlySet<string>>(new Set())
   const [error, setError] = useState('')
   const [result, setResult] = useState<BatchResponse | null>(null)
   const aborter = useRef<AbortController | null>(null)
@@ -369,10 +395,26 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
     setError('')
     setResult(null)
     try {
-      const next = await scanHtmlCandidates(sessions, sessionList, controller.signal)
+      const next = await scanWorkCandidates(sessions, sessionList, controller.signal)
       if (controller.signal.aborted) return
+      const bridge = (window as Window & { readonly lingdong?: LingdongDesktopBridge }).lingdong
+      let platformWorks = normalizeWorks(null)
+      let classroom: ClassroomView = { lessonTitle: '' }
+      if (bridge?.listWorks !== undefined) {
+        const [worksResponse, contextResponse] = await Promise.all([
+          bridge.listWorks().catch(() => null),
+          bridge.context?.().catch(() => null) ?? Promise.resolve(null),
+        ])
+        const worksRecord = asRecord(worksResponse)
+        if (worksRecord?.ok === true) platformWorks = normalizeWorks(worksRecord.works)
+        const classroomRecord = asRecord(asRecord(contextResponse)?.classroom)
+        classroom = { lessonTitle: asString(classroomRecord?.lessonTitle) }
+      }
+      if (controller.signal.aborted) return
+      const submitted = submittedKeysFor(next, platformWorks.items, classroom.lessonTitle)
       setItems(next)
-      setSelected(new Set(next.map(item => item.key)))
+      setSubmittedKeys(submitted)
+      setSelected(new Set(next.filter(item => !submitted.has(item.key)).map(item => item.key)))
     } catch (scanError) {
       if (controller.signal.aborted) return
       setError(scanError instanceof Error ? scanError.message : String(scanError))
@@ -387,8 +429,9 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
     if (next) void scan()
   }
 
-  const allSelected = items.length > 0 && items.every(item => selected.has(item.key))
-  const chosen = useMemo(() => selectedItems(items, selected), [items, selected])
+  const selectable = useMemo(() => items.filter(item => !submittedKeys.has(item.key)), [items, submittedKeys])
+  const allSelected = selectable.length > 0 && selectable.every(item => selected.has(item.key))
+  const chosen = useMemo(() => selectedItems(items, selected).filter(item => !submittedKeys.has(item.key)), [items, selected, submittedKeys])
   const works = useMemo(() => result === null ? null : normalizeWorks(result.works), [result])
   const submitted = useMemo(() => {
     if (!Array.isArray(result?.submitted)) return []
@@ -450,7 +493,10 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
           succeeded.add(key)
         }
       }
-      if (succeeded.size > 0) setSelected(current => new Set([...current].filter(key => !succeeded.has(key))))
+      if (succeeded.size > 0) {
+        setSubmittedKeys(current => new Set([...current, ...succeeded]))
+        setSelected(current => new Set([...current].filter(key => !succeeded.has(key))))
+      }
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError))
     } finally {
@@ -467,17 +513,17 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
       {open && (
         <div style={styles.panel}>
           <div style={styles.intro}>
-            从本机客户端有效会话产生过的 HTML 里勾选。每项会连同它引用的本地 CSS、图片等一起交；可全选，提交时按勾选顺序串行进行。
+            扫描本机有效会话交付过的 HTML、Word、Excel 和 PPT。网页会连同本地 CSS、图片等资源一起交；已提交过的作品会自动标记，不重复提交。
           </div>
           <div style={styles.toolbar}>
             <label style={styles.selectionLine}>
               <input
                 type="checkbox"
                 checked={allSelected}
-                disabled={items.length === 0 || busy !== 'idle'}
-                onChange={event => setSelected(event.currentTarget.checked ? new Set(items.map(item => item.key)) : new Set())}
+                disabled={selectable.length === 0 || busy !== 'idle'}
+                onChange={event => setSelected(event.currentTarget.checked ? new Set(selectable.map(item => item.key)) : new Set())}
               />
-              全选 {items.length > 0 ? `（${chosen.length}/${items.length}）` : ''}
+              全选 {selectable.length > 0 ? `（${chosen.length}/${selectable.length}）` : ''}
             </label>
             <button type="button" style={styles.smallButton} disabled={busy !== 'idle'} onClick={() => { void scan() }}>
               {busy === 'scanning' ? '扫描中…' : '重新扫描'}
@@ -485,15 +531,18 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
           </div>
 
           {busy === 'scanning' && items.length === 0 && <div style={styles.state}>正在读取本机会话历史…</div>}
-          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>没有找到有效会话产生的 HTML。</div>}
+          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>没有找到有效会话交付的 HTML、Word、Excel 或 PPT。</div>}
+          {items.length > 0 && selectable.length === 0 && <div style={styles.state}>找到的作品都已经提交过，无需重复提交。</div>}
           {items.length > 0 && (
             <div style={styles.list}>
-              {items.map(item => (
+              {items.map(item => {
+                const isSubmitted = submittedKeys.has(item.key)
+                return (
                 <label key={item.key} style={styles.item}>
                   <input
                     type="checkbox"
-                    checked={selected.has(item.key)}
-                    disabled={busy !== 'idle'}
+                    checked={!isSubmitted && selected.has(item.key)}
+                    disabled={busy !== 'idle' || isSubmitted}
                     onChange={event => {
                       const checked = event.currentTarget.checked
                       setSelected(current => {
@@ -506,10 +555,11 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
                   />
                   <span style={styles.itemBody}>
                     <span style={styles.itemTitle}>{item.sessionTitle}</span>
-                    <span style={styles.itemMeta}>{item.displayPath}</span>
+                    <span style={styles.itemMeta}>{item.displayPath}{isSubmitted ? ' · 已提交，无需重复提交' : ''}</span>
                   </span>
                 </label>
-              ))}
+                )
+              })}
             </div>
           )}
 

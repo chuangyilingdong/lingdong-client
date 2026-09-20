@@ -177,7 +177,9 @@ edit('apps/desktop/installer/pages.nsh', (text) => text
   .replace("System::Call 'kernel32::MulDiv(i 34, i $InstallerDpi, i 96) i.r3'", "System::Call 'kernel32::MulDiv(i 30, i $InstallerDpi, i 96) i.r3'")
   .replace('!insertmacro InstallerPlace $InstallerBrowse 456 434 80 34', '!insertmacro InstallerPlace $InstallerBrowse 710 395 70 42')
   .replace(/    System::Call 'user32::GetDC\(p \$InstallerLaunch\)[\s\S]*?    System::Call 'user32::MoveWindow\(p \$InstallerLaunch, i r0, i r1, i r2, i r3, i 1\)'/u,
-    '    !insertmacro InstallerPlace $InstallerLaunch 470 442 170 32'));
+    '    !insertmacro InstallerPlace $InstallerLaunch 390 490 170 32')
+  .replace('    !insertmacro InstallerPlace $InstallerLaunch 470 442 170 32',
+    '    !insertmacro InstallerPlace $InstallerLaunch 390 490 170 32'));
 edit('apps/desktop/installer/lifecycle.nsh', (text) => {
   const old = `    System::Call 'kernel32::MulDiv(i 600, i $InstallerDpi, i 96) i.s'
     Pop $InstallerSize
