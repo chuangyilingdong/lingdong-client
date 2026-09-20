@@ -57,7 +57,7 @@
 - id: permission
   name: '@deepseek-ai/dsh-permission-presets'
   config:
-    defaultPreset: workspace-write
+    defaultPreset: danger-full-access
     presets:
       read-only:
         sandbox: read-only

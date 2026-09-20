@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 
 /**
@@ -230,6 +230,35 @@ function readClassroomContext(): LingdongContext {
     }
   } catch {
     return { classroom: null, presets: [], sends: null }
+  }
+}
+
+/**
+ * 重新向平台问一次课堂上下文（含**发送次数** `sends`），并更新本地缓存后返回。
+ *
+ * 为什么需要：上面那份是从盘上读的**登录那一刻的快照**，而学生每按一次发送，平台那边的
+ * `used` 就变了 —— 只读缓存的话输入区会一直显示旧数字（客户端**不自己计数**，口径见
+ * `docs/平台接口契约.md` 与 `LingdongSendQuota.tsx`）。问不到就退回缓存，绝不让界面报错。
+ */
+async function refreshClassroomContext(): Promise<LingdongContext> {
+  const session = readSession()
+  if (session === null) return readClassroomContext()
+  try {
+    const fresh = await call('/api/student/runtime/client-context', { token: session.token }) as Partial<LingdongContext>
+    const next: LingdongContext = {
+      classroom: fresh.classroom ?? null,
+      presets: Array.isArray(fresh.presets) ? fresh.presets : [],
+      sends: fresh.sends ?? null,
+    }
+    try {
+      writeFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), JSON.stringify({
+        classroom: next.classroom, presets: next.presets, sends: next.sends,
+        updatedAt: new Date().toISOString(),
+      }, null, 2))
+    } catch { /* 诊断用，写不下不影响使用 */ }
+    return next
+  } catch {
+    return readClassroomContext()
   }
 }
 
@@ -505,8 +534,24 @@ function pushUnique(target: string[], values: readonly string[]): void {
   }
 }
 
-// 预设在侧栏面板渲染时读它；handler 常驻应用生命周期。
-ipcMain.handle('lingdong:classroom-context', () => readClassroomContext())
+// 预设、发送次数在渲染时读它；handler 常驻应用生命周期。
+// ⚠️ 传 `{ refresh: true }` = **再去问一次平台**（发送次数得这么拿才准，见 refreshClassroomContext）。
+ipcMain.handle('lingdong:classroom-context', async (_event, payload: unknown) => {
+  const wantsRefresh = payload !== null && typeof payload === 'object' && (payload as { refresh?: unknown }).refresh === true
+  return wantsRefresh ? await refreshClassroomContext() : readClassroomContext()
+})
+ipcMain.handle('lingdong:show-in-folder', async (_event, payload: unknown) => {
+  const filePath = typeof payload === 'string' ? payload.trim() : ''
+  if (filePath === '') return { ok: false, message: '文件路径为空。' }
+  try {
+    const info = await stat(filePath)
+    if (!info.isFile()) return { ok: false, message: '目标不是文件。' }
+    shell.showItemInFolder(filePath)
+    return { ok: true }
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) }
+  }
+})
 
 /** 作品相关 IPC：只从主进程读磁盘、拿 session token，不把 token 交给页面。 */
 ipcMain.handle('lingdong:list-works', async () => {

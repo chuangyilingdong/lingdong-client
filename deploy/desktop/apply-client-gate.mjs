@@ -16,6 +16,8 @@
  *   ⑧ packages/client/ui-conversation ← 原生 `conversation.input.dock` 上显示作品提交与作品回显
  *      （⚠️ 桌面宿主显式传的是空数组，所以 profile 里的 cordis.patch.yml 永远不会被读 ——
  *        根因见 platform-gate.ts 文件头）
+ *   ⑨ packages/client/ui-conversation ← 原生 `conversation.input.right` 上显示**发送次数**（`0/20`）：
+ *      数字来自平台 `client-context.sends`，客户端只显示不自己计数（口径见 docs/平台接口契约.md）。
  *
  * 用法：node deploy/desktop/apply-client-gate.mjs --checkout .tmp/dsh-harness [--dry-run]
  */
@@ -84,6 +86,14 @@ if (!dryRun) {
   copyFileSync(join(patchDir, 'LingdongPresetBridge.tsx'), presetBridgeTarget)
 }
 report.push('✓  packages/client/ui-conversation/src/client/LingdongPresetBridge.tsx：已放入')
+// ③d' 发送次数计数条：挂在原生 `conversation.input.right`（契约里写的是
+//      「Compact controls before the composer submit action」，上游 InputBar 就在发送按钮前一行渲染它）。
+const sendQuotaTarget = join(conversationClientDir, 'LingdongSendQuota.tsx')
+if (!dryRun) {
+  mkdirSync(dirname(sendQuotaTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'LingdongSendQuota.tsx'), sendQuotaTarget)
+}
+report.push('✓  packages/client/ui-conversation/src/client/LingdongSendQuota.tsx：已放入')
 for (const oldName of ['LingdongPresetDock.tsx', 'LingdongWorkDock.tsx']) {
   const oldPath = join(conversationClientDir, oldName)
   if (existsSync(oldPath) && !dryRun) rmSync(oldPath, { force: true })
@@ -111,13 +121,23 @@ if (!dryRun) {
 }
 report.push('✓  packages/client/ui-sidebar-documentpreview/src/client/html/bootstrap.ts：已补沙箱内存 Storage')
 
+// ③a2 文件卡片：点击“在文件资源管理器中显示”优先直接走桌面 shell 的 reveal IPC。
+// 上游默认还要经过本地 Host 路由；这里绕开那条链，避免误触发编辑工具/连接状态导致报错。
+const presentedFileCardTarget = join(checkout, 'packages/client/ui-deliverables/src/client/PresentedFileCard.tsx')
+if (!dryRun) {
+  mkdirSync(dirname(presentedFileCardTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'PresentedFileCard.tsx'), presentedFileCardTarget)
+}
+report.push('✓  packages/client/ui-deliverables/src/client/PresentedFileCard.tsx：已接桌面文件管理器 IPC')
+
 // ③ preload：用一份确定的 window.lingdong 取代旧 gate/context/submitWork 的组合块。
 updateTextFile('apps/desktop/src/preload-app.ts', (before) => {
   const block = `contextBridge.exposeInMainWorld('lingdong', {
   gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
-  context: () => ipcRenderer.invoke('lingdong:classroom-context') as Promise<unknown>,
+  context: (options?: unknown) => ipcRenderer.invoke('lingdong:classroom-context', options) as Promise<unknown>,
   submitWorkBatch: (payload: unknown) => ipcRenderer.invoke('lingdong:submit-work-batch', payload) as Promise<unknown>,
   listWorks: () => ipcRenderer.invoke('lingdong:list-works') as Promise<unknown>,
+  showInFolder: (path: string) => ipcRenderer.invoke('lingdong:show-in-folder', path) as Promise<{ ok: boolean; message?: string }>,
 })`
   if (before.includes(block)) return before
   const start = before.indexOf("contextBridge.exposeInMainWorld('lingdong', {")
@@ -277,8 +297,22 @@ updateTextFile('packages/client/ui-conversation/src/client/apply.ts', (before) =
   ctx.plugin(lingdongPresetBridgeEntry)`,
     )
   }
+  if (!text.includes('lingdongSendQuotaEntry')) {
+    text = text.replace(
+      "import { lingdongPresetBridgeEntry } from './LingdongPresetBridge.tsx'",
+      "import { lingdongPresetBridgeEntry } from './LingdongPresetBridge.tsx'\nimport { lingdongSendQuotaEntry } from './LingdongSendQuota.tsx'",
+    )
+  }
+  if (!text.includes('ctx.plugin(lingdongSendQuotaEntry)')) {
+    text = text.replace(
+      '  ctx.plugin(lingdongPresetBridgeEntry)',
+      `  ctx.plugin(lingdongPresetBridgeEntry)
+  // 灵动ai 发送次数：输入区发送按钮前的「0/20」（数字来自平台 client-context，客户端不自己计数）。
+  ctx.plugin(lingdongSendQuotaEntry)`,
+    )
+  }
   return text
-}, '切换为隐藏输入桥，清理旧 dock')
+}, '切换为隐藏输入桥 + 发送次数计数条，清理旧 dock')
 // ④ main.ts：在启动后端之前过登录门 + 注册深链协议
 // 先去重（两类，都实测踩过）：
 //   (a) 早期版本只插过 `import { runLingdongGate }`，加 deepLink 后会与新的那条并存；

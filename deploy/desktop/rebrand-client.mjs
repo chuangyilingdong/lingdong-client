@@ -150,6 +150,22 @@ for (const name of ['brand.png', 'brand-2x.png', 'brand-dark.png', 'brand-dark-2
   if (!dryRun) fs.copyFileSync(source, target);
   changes.push([`installer/assets/${name}`, `已换成灵动ai图片（${after.length} 字节）`]);
 }
+// ⑤b2 安装器按参考图改成完整红底视觉：背景图 600×600、红/蓝/橙配色，不再跟随系统主题。
+overwrite('apps/desktop/installer/theme.nsh', fs.readFileSync(path.join(here, 'client-patch', 'installer-theme.nsh'), 'utf8'));
+edit('apps/desktop/scripts/prepare-windows-installer.ps1', (text) =>
+  text.replace(
+    "$background = if ($asset -like '*dark*') { [Drawing.Color]::FromArgb(21, 21, 23) } else { [Drawing.Color]::White }",
+    "$background = [Drawing.Color]::FromArgb(126, 17, 35)"));
+edit('apps/desktop/installer/window-frame.cpp', (text) => text
+  .replace('graphics.Clear(page->dark ? Color(255, 21, 21, 23) : Color(255, 255, 255, 255));',
+    'graphics.Clear(Color(255, 126, 17, 35));')
+  .replace('graphics.DrawImage(page->brand, Rect(0, 174, 600, 196));',
+    'graphics.DrawImage(page->brand, Rect(0, 0, 600, 600));')
+  .replace('SolidBrush track(page->dark ? Color(255, 97, 102, 107) : Color(255, 233, 236, 242));',
+    'SolidBrush track(Color(255, 255, 168, 182));')
+  .replace('SolidBrush ink(page->dark ? Color(255, 255, 255, 255) : Color(255, 15, 17, 21));',
+    'SolidBrush ink(Color(255, 255, 255, 255));'));
+
 // ⑤c 修正 NSIS 查找安装器资源的构建根。
 //    配置层的 `beforeBuild` 把 BMP/DLL 写到 `$LINGDONG_BUILD_ROOT`（本项目约定 `.desktop-build2`），
 //    但上游 `installer.nsh` 默认还指向 `.desktop-build`，导致安装器明明生成了新图却嵌入旧缓存。
@@ -211,6 +227,114 @@ edit('packages/client/ui-sidebar/src/client/SidebarRoot.module.css', (text) => {
   if (text.includes(marker)) return text
   return `${text.trimEnd()}\n\n${marker}\n.railMark { width: 36px; overflow: hidden; justify-content: flex-start; }\n`
 });
+
+overwrite('packages/client/ui-primitives/src/BrandWordmark.tsx', `/**
+ * 灵动ai full wordmark. \`includeMark\` is retained for upstream call compatibility;
+ * the supplied product mark already contains the complete name.
+ */
+import type { IconProps } from './icons/props.ts'
+
+const LINGDONG_WORDMARK = '${brandLogoDataUri}'
+
+export interface BrandWordmarkProps extends IconProps {
+  readonly includeMark?: boolean | undefined
+}
+
+export function BrandWordmark({ size = 24, className }: BrandWordmarkProps) {
+  return (
+    <img
+      src={LINGDONG_WORDMARK}
+      width={size * (720 / 342)}
+      height={size}
+      className={className}
+      alt=''
+      aria-hidden='true'
+      style={{ display: 'block', maxWidth: '100%', objectFit: 'contain' }}
+    />
+  )
+}
+`);
+edit('packages/client/ui-primitives/tests/icons.client.spec.tsx', (text) => {
+  const legacy = `  it('renders the fish path in currentColor at the native ratio', () => {
+    const { container } = render(<primitives.FishLogo />)
+    const svg = container.querySelector('svg')!
+    expect(svg.getAttribute('width')).toBe('24')
+    expect(Number(svg.getAttribute('height'))).toBeCloseTo(17.66, 1)
+    expect(svg.getAttribute('viewBox')).toBe('0 0 23.16 17.04')
+    expect(container.querySelectorAll('path')).toHaveLength(1)
+    expect(container.innerHTML).toContain('currentColor')
+    expect(container.innerHTML).not.toContain('M0 0L23.16')
+  })`
+  const current = `  it('renders the supplied wordmark image at the requested height', () => {
+    const { container } = render(<primitives.FishLogo />)
+    const image = container.querySelector('img')!
+    expect(Number(image.getAttribute('height'))).toBe(24)
+    expect(Number(image.getAttribute('width'))).toBeGreaterThan(48)
+    expect(image.getAttribute('src')?.startsWith('data:image/png;base64,')).toBe(true)
+    expect(container.querySelector('path')).toBeNull()
+  })`
+  return text.includes(current) ? text : text.replace(legacy, current)
+});
+edit('packages/client/ui-conversation/tests/skeleton.client.spec.tsx', (text) => text
+  .split("'Into the Unknown'").join("'VibeCoding with Lingdong'")
+  .split("'探索未至之境'").join("'小灵陪你一起 VibeCoding'")
+  .split(/\r?\n/u).filter(line =>
+    !line.includes("getByText('Preview')") && !line.includes("getByText('预览版')")).join('\n'));
+
+edit('packages/client/ui-primitives/tests/icons.client.spec.tsx', (text) => {
+  const legacy = `describe('BrandWordmark', () => {
+  it('can render the name artwork with or without its leading mark', () => {
+    const view = render(<primitives.BrandWordmark />)
+    const svg = view.container.querySelector('svg')!
+    expect(svg.getAttribute('width')).toBe('182')
+    expect(svg.getAttribute('viewBox')).toBe('0 0 182 24')
+
+    view.rerender(<primitives.BrandWordmark includeMark={false} />)
+    expect(svg.getAttribute('width')).toBe('156')
+    expect(svg.getAttribute('viewBox')).toBe('26 0 156 24')
+  })
+})`
+  const current = `describe('BrandWordmark', () => {
+  it('renders the supplied product wordmark image', () => {
+    const view = render(<primitives.BrandWordmark />)
+    const image = view.container.querySelector('img')!
+    expect(Number(image.getAttribute('height'))).toBe(24)
+    expect(Number(image.getAttribute('width'))).toBeGreaterThan(48)
+    expect(image.getAttribute('src')?.startsWith('data:image/png;base64,')).toBe(true)
+  })
+})`
+  return text.includes(current) ? text : text.replace(legacy, current)
+});
+// ⑥ab 会话空态与所有上游 fallback：鲸鱼整支换成灵动ai 字标，并去掉“预览版”。
+overwrite('packages/client/ui-primitives/src/FishLogo.tsx', `/**
+ * 灵动ai 品牌字标（上游 FishLogo 的兼容实现）。
+ * 保留原导出名，避免所有调用点逐一改签名；真正显示的是产品提供的蓝橙字标。
+ */
+import type { IconProps } from './icons/props.ts'
+
+export const FISH_LOGO_VIEWBOX = { width: 720, height: 342 }
+export const FISH_LOGO_PATH = 'lingdong-ai'
+const LINGDONG_WORDMARK = '${brandLogoDataUri}'
+
+/** Render the supplied LingdongAI wordmark at the caller's requested height. */
+export function FishLogo({ size = 24, className }: IconProps) {
+  return (
+    <img
+      src={LINGDONG_WORDMARK}
+      className={className}
+      width={size * (FISH_LOGO_VIEWBOX.width / FISH_LOGO_VIEWBOX.height)}
+      height={size}
+      alt=''
+      aria-hidden='true'
+      style={{ display: 'block', maxWidth: '100%', objectFit: 'contain' }}
+    />
+  )
+}
+`);
+overwrite('packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx', fs.readFileSync(path.join(here, 'client-patch', 'EmptyHero.tsx'), 'utf8'));
+edit('packages/client/ui-conversation/src/client/locales.ts', (text) => text
+  .replace("'hero.headline': '探索未至之境',", "'hero.headline': '小灵陪你一起 VibeCoding',")
+  .replace("'hero.headline': 'Into the Unknown',", "'hero.headline': 'VibeCoding with Lingdong',"));
 
 // ⑥a 品牌位测试跟着我们的实现走：名字 slot 不再重复渲染，字标由 mark slot 的图片承载。
 edit('packages/client/ui-brand-official/tests/browser-plugin.client.spec.tsx', (text) => {
