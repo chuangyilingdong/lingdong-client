@@ -7,6 +7,12 @@
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
+  /* 无边框窗口顶部是拖动区；不会覆盖表单与按钮。 */
+  body::before {
+    content: ""; position: fixed; inset: 0 0 auto 0; height: 48px;
+    -webkit-app-region: drag; z-index: 100;
+  }
+
   body {
     margin: 0; min-height: 100vh; display: grid; place-items: center;
     background: radial-gradient(120% 96% at 42% 34%, #7e1123 0%, #65101d 42%, #4d0a15 100%);

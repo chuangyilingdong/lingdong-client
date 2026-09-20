@@ -60,6 +60,11 @@ try {
 
   await check('登录页零控制台报错（file:// + CSP 下 img/script 被挡都会在这里现形）',
     () => assert.deepEqual(loginRun.errors, []));
+  await check('登录页顶部可拖动窗口（无边框标题区必须显式 -webkit-app-region: drag）',
+    async () => {
+      const region = await login.evaluate(() => getComputedStyle(document.body, '::before').getPropertyValue('-webkit-app-region'));
+      assert.equal(region, 'drag');
+    });
   await check('吉祥物与字标真的解码出来了（0 宽 = 被 CSP 挡了，而页面**不会**报错）',
     async () => {
       const images = await login.evaluate(() => [...document.images].map((img) => [img.getAttribute('src'), img.complete && img.naturalWidth > 0]));
@@ -118,7 +123,7 @@ try {
   await errorPage.close();
 
   const waiting = await browser.newPage({ viewport: { width: 1280, height: 840 } });
-  const waitingRun = await open(waiting, 'waiting', { name: '王小可', message: '老师还没有开始上课' });
+  const waitingRun = await open(waiting, 'waiting', { name: '王小可', message: '老师还没有开始上课', upcoming: { seriesTitle: '青少年 AI 课包', lessonTitle: '第二节 VibeCoding', teacherName: '李老师' } });
   await waiting.screenshot({ path: path.join(shotDir, 'waiting.png') });
   await check('等待页零控制台报错', () => assert.deepEqual(waitingRun.errors, []));
   await check('等待页把学生名字与「为什么在这等」都显示出来',
@@ -127,6 +132,8 @@ try {
       assert.ok(text.includes('王小可'), '缺学生名字');
       assert.ok(text.includes('老师还没有开始上课'), '缺原因');
     });
+  await check('等待页显示接下来要上的课包 › 课时',
+    async () => assert.equal(await waiting.textContent('#upcoming'), '接下来：青少年 AI 课包 › 第二节 VibeCoding · 李老师'));
   await waiting.click('#refresh');
   await waiting.waitForTimeout(120);
   await check('点刷新走 {action:"refresh"}（深链叫起来的客户端也走这一条）',
@@ -135,6 +142,23 @@ try {
   await waiting.waitForTimeout(120);
   await check('点退出走 {action:"logout"}', async () => assert.deepEqual(await waitingRun.lastCall(), { action: 'logout' }));
   await waiting.close();
+
+  const classroom = await browser.newPage({ viewport: { width: 1280, height: 840 } });
+  const classroomRun = await open(classroom, 'classroom', {
+    classrooms: [
+      { id: 'class-a', title: '上午班', seriesTitle: '青少年 AI 课包', lessonTitle: '第一节 VibeCoding', teacherName: '李老师' },
+      { id: 'class-b', title: '下午班', seriesTitle: '青少年 AI 课包', lessonTitle: '第二节 VibeCoding', teacherName: '王老师' },
+    ],
+  });
+  await classroom.screenshot({ path: path.join(shotDir, 'classroom.png') });
+  await check('历史异常账号有多节课时显示防御选择，并带回选中的 sessionId',
+    async () => {
+      assert.equal(await classroom.locator('.classroom').count(), 2);
+      await classroom.locator('.classroom').nth(1).click();
+      await classroom.waitForTimeout(120);
+      assert.deepEqual(await classroomRun.lastCall(), { action: 'select-classroom', sessionId: 'class-b' });
+    });
+  await classroom.close();
 
   const loading = await browser.newPage({ viewport: { width: 1280, height: 840 } });
   const loadingRun = await open(loading, 'loading', { name: '王小可' });

@@ -37,12 +37,26 @@ const API_BASE = String(process.env.LINGDONG_API_BASE || 'https://iicili.cyou').
 
 interface LingdongUser { readonly displayName?: string; readonly login?: string }
 interface LingdongSession { readonly token: string; readonly user?: LingdongUser }
+interface LingdongClassroom {
+  readonly id: string
+  readonly lessonId?: string
+  readonly title?: string
+  readonly seriesTitle?: string
+  readonly lessonTitle?: string
+  readonly teacherName?: string
+  readonly startedAt?: string
+}
 interface LingdongContext {
-  readonly classroom: { readonly id: string; readonly lessonId?: string; readonly title?: string } | null
+  readonly classroom: LingdongClassroom | null
+  readonly classrooms: readonly LingdongClassroom[]
+  readonly reason: string | null
+  readonly upcoming: LingdongClassroom | null
   readonly gateway?: { readonly baseUrl?: string; readonly key?: string }
-  readonly presets?: readonly { readonly title: string; readonly text: string }[]
-  readonly sends?: { readonly limit: number | null; readonly used: number; readonly remaining: number | null } | null
-  readonly message?: string
+  readonly presets: readonly { readonly title: string; readonly text: string }[]
+  readonly sends: { readonly limit: number | null; readonly used: number; readonly remaining: number | null } | null
+  readonly message: string
+  /** Historical/exception libraries can expose more than one active classroom; this is the chosen query key. */
+  readonly sessionId: string
 }
 interface WorkFilePayload { readonly name: string; readonly content: string; readonly binary: boolean }
 interface WorkBatchItem {
@@ -64,7 +78,11 @@ interface PreparedWork {
   readonly files: readonly WorkFilePayload[]
   readonly missing: readonly string[]
 }
-type GateAction = { action: 'login' } | { action: 'refresh' } | { action: 'logout' }
+type GateAction =
+  | { action: 'login' }
+  | { action: 'refresh' }
+  | { action: 'logout' }
+  | { action: 'select-classroom'; sessionId: string }
 type GateOutcome = { kind: 'enter' } | { kind: 'quit' }
 
 const MAX_WORK_FILES = 60
@@ -219,49 +237,74 @@ function writeGatewayCredential(home: string, key: string): void {
     writeFileSync(file, next)
   } catch (error) { console.error('灵动ai：写入凭据失败', error) }
 }
+function contextPath(sessionId = ''): string {
+  return `/api/student/runtime/client-context${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`
+}
+
+function writeClassroomContext(context: LingdongContext, sessionId?: string): void {
+  const selected = String(sessionId || context.sessionId || context.classroom?.id || '')
+  try {
+    writeFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), JSON.stringify({
+      classroom: context.classroom ?? null,
+      classrooms: Array.isArray(context.classrooms) ? context.classrooms : [],
+      reason: context.reason ?? null,
+      upcoming: context.upcoming ?? null,
+      presets: context.presets ?? [],
+      sends: context.sends ?? null,
+      message: context.message ?? '',
+      sessionId: selected,
+      updatedAt: new Date().toISOString(),
+    }, null, 2))
+  } catch { /* 诊断用，写不下不影响使用 */ }
+}
+
 function readClassroomContext(): LingdongContext {
   try {
     const raw = readFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), 'utf8')
     const parsed = JSON.parse(raw) as Partial<LingdongContext>
     return {
       classroom: parsed.classroom ?? null,
+      classrooms: Array.isArray(parsed.classrooms) ? parsed.classrooms : [],
+      reason: parsed.reason ?? null,
+      upcoming: parsed.upcoming ?? null,
       presets: Array.isArray(parsed.presets) ? parsed.presets : [],
       sends: parsed.sends ?? null,
+      message: typeof parsed.message === 'string' ? parsed.message : '',
+      sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : '',
     }
   } catch {
-    return { classroom: null, presets: [], sends: null }
+    return { classroom: null, classrooms: [], reason: null, upcoming: null, presets: [], sends: null, message: '', sessionId: '' }
   }
 }
 
 /**
- * 重新向平台问一次课堂上下文（含**发送次数** `sends`），并更新本地缓存后返回。
- *
- * 为什么需要：上面那份是从盘上读的**登录那一刻的快照**，而学生每按一次发送，平台那边的
- * `used` 就变了 —— 只读缓存的话输入区会一直显示旧数字（客户端**不自己计数**，口径见
- * `docs/平台接口契约.md` 与 `LingdongSendQuota.tsx`）。问不到就退回缓存，绝不让界面报错。
+ * 重新向平台问一次课堂上下文（含**发送次数** `sends` 和**当前课包/课时**），并更新本地缓存后返回。
+ * 只做展示刷新，不做本地计数；问不到就退回缓存。
  */
 async function refreshClassroomContext(): Promise<LingdongContext> {
+  const cached = readClassroomContext()
   const session = readSession()
-  if (session === null) return readClassroomContext()
+  if (session === null) return cached
   try {
-    const fresh = await call('/api/student/runtime/client-context', { token: session.token }) as Partial<LingdongContext>
+    const fresh = await call(contextPath(cached.sessionId), { token: session.token }) as Partial<LingdongContext>
+    const gateway = fresh.gateway ?? cached.gateway
     const next: LingdongContext = {
       classroom: fresh.classroom ?? null,
-      presets: Array.isArray(fresh.presets) ? fresh.presets : [],
+      classrooms: Array.isArray(fresh.classrooms) ? fresh.classrooms : cached.classrooms,
+      reason: fresh.reason ?? null,
+      upcoming: fresh.upcoming ?? null,
+      ...(gateway === undefined ? {} : { gateway }),
+      presets: Array.isArray(fresh.presets) ? fresh.presets : cached.presets,
       sends: fresh.sends ?? null,
+      message: typeof fresh.message === 'string' ? fresh.message : '',
+      sessionId: cached.sessionId || fresh.classroom?.id || '',
     }
-    try {
-      writeFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), JSON.stringify({
-        classroom: next.classroom, presets: next.presets, sends: next.sends,
-        updatedAt: new Date().toISOString(),
-      }, null, 2))
-    } catch { /* 诊断用，写不下不影响使用 */ }
+    writeClassroomContext(next)
     return next
   } catch {
-    return readClassroomContext()
+    return cached
   }
 }
-
 
 interface WorkFailure { readonly ok: false; readonly cancelled?: boolean; readonly code?: string; readonly message: string }
 interface WorkBatchSuccess {
@@ -518,7 +561,8 @@ async function submitWork(token: string, item: WorkBatchItem): Promise<WorkBatch
   if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_WORK_REQUEST_BYTES) {
     throw new PlatformRequestError('这个作品编码后太大了，请减少素材后再交。')
   }
-  const data = await call('/api/student/runtime/submit-upload', { method: 'POST', token, body })
+  const selectedSessionId = readClassroomContext().sessionId || ''
+  const data = await call(`/api/student/runtime/submit-upload${selectedSessionId ? `?sessionId=${encodeURIComponent(selectedSessionId)}` : ''}`, { method: 'POST', token, body })
   const record = asRecord(data)
   return {
     item,
@@ -625,12 +669,7 @@ function applyGateway(context: LingdongContext): void {
   }
   writeGatewayCredential(home, String(key))
   pointDefaultModelToGateway(home)
-  try {
-    writeFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), JSON.stringify({
-      classroom: context.classroom, presets: context.presets ?? [], sends: context.sends ?? null,
-      updatedAt: new Date().toISOString(),
-    }, null, 2))
-  } catch { /* 诊断用，写不下不影响使用 */ }
+  writeClassroomContext(context)
 }
 
 /**
@@ -652,11 +691,19 @@ export async function runLingdongGate(
   resetHost: () => Promise<void>,
 ): Promise<GateOutcome> {
   let waiting: ((action: GateAction) => void) | null = null
+  let selectedSessionId = readClassroomContext().sessionId || ''
   const nextAction = (): Promise<GateAction> => new Promise((resolve) => { waiting = resolve })
 
   ipcMain.handle('lingdong:gate', async (_event, payload: unknown) => {
-    const request = (payload ?? {}) as { action?: string; login?: string; password?: string }
+    const request = (payload ?? {}) as { action?: string; login?: string; password?: string; sessionId?: string }
     if (request.action === 'refresh' || request.action === 'logout') { waiting?.(request as GateAction); return { ok: true } }
+    if (request.action === 'select-classroom') {
+      const sessionId = String(request.sessionId || '').trim()
+      if (!sessionId) return { ok: false, message: '请选择要进入的课堂' }
+      selectedSessionId = sessionId
+      waiting?.({ action: 'select-classroom', sessionId })
+      return { ok: true }
+    }
     if (request.action !== 'login') return { ok: false, message: '未知操作' }
     const login = String(request.login || '').trim()
     const password = String(request.password || '')
@@ -664,6 +711,8 @@ export async function runLingdongGate(
     try {
       const session = await call('/api/auth/login', { method: 'POST', body: { login, password } })
       if (!session?.token) return { ok: false, message: '账号或密码不正确' }
+      selectedSessionId = ''
+      writeClassroomContext({ classroom: null, classrooms: [], reason: null, upcoming: null, presets: [], sends: null, message: '', sessionId: '' })
       writeSession({ token: session.token, user: session.user })
       waiting?.({ action: 'login' })
       return { ok: true }
@@ -695,22 +744,38 @@ export async function runLingdongGate(
       await show('loading.html', { name: session.user?.displayName || '' })
       let context: LingdongContext
       try {
-        context = await call('/api/student/runtime/client-context', { token: session.token })
+        context = await call(contextPath(selectedSessionId), { token: session.token })
       } catch (error) {
         const message = error instanceof Error ? error.message : '无法连接平台'
         writeSession(null)
+        selectedSessionId = ''
         const action = await show('login.html', { message }).then(nextAction)
         if (action.action === 'logout') return { kind: 'quit' }
         continue
       }
+      if (selectedSessionId === '' && Array.isArray(context.classrooms) && context.classrooms.length > 1) {
+        const action = await show('classroom.html', {
+          classrooms: context.classrooms,
+          name: session.user?.displayName || '',
+          message: context.message || '',
+        }).then(nextAction)
+        if (action.action === 'logout') { writeSession(null); continue }
+        if (action.action === 'select-classroom') selectedSessionId = action.sessionId
+        continue
+      }
       if (!context.classroom) {
+        if (context.reason === 'CLASSROOM_NOT_AVAILABLE') selectedSessionId = ''
         // 等老师开始上课：这里挂上深链回调 —— 官网拉起的客户端会立刻重问一次（学生不用自己点刷新）
         notifyDeepLink = () => waiting?.({ action: 'refresh' })
-        const action = await show('waiting.html', { message: context.message || '老师还没有开始上课', name: session.user?.displayName || '' }).then(nextAction)
+        const action = await show('waiting.html', {
+          message: context.message || '老师还没有开始上课',
+          name: session.user?.displayName || '',
+          upcoming: context.upcoming ?? null,
+        }).then(nextAction)
         if (action.action === 'logout') { writeSession(null); continue }
         continue // refresh：回循环顶部重新问一次「现在有没有课」
       }
-      applyGateway(context)
+      applyGateway({ ...context, sessionId: selectedSessionId || context.classroom.id })
       // 到这一步密钥已经写进 process.env 与凭据文件，但**宿主可能已经用旧环境起来了** ——
       // 停掉它，让下面那条 reconcileBackend() 用新环境重起（见本函数 @param resetHost）。
       // 失败不拦人：真起不来时 reconcileBackend 自己会报错，这里只留一行日志。
