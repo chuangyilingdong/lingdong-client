@@ -150,21 +150,84 @@ for (const name of ['brand.png', 'brand-2x.png', 'brand-dark.png', 'brand-dark-2
   if (!dryRun) fs.copyFileSync(source, target);
   changes.push([`installer/assets/${name}`, `已换成灵动ai图片（${after.length} 字节）`]);
 }
-// ⑤b2 安装器按参考图改成完整红底视觉：背景图 600×600、红/蓝/橙配色，不再跟随系统主题。
+// ⑤b2 安装器改成参考图的宽版左右分栏：左侧 330×560 品牌面，右侧干净操作区。
 overwrite('apps/desktop/installer/theme.nsh', fs.readFileSync(path.join(here, 'client-patch', 'installer-theme.nsh'), 'utf8'));
 edit('apps/desktop/scripts/prepare-windows-installer.ps1', (text) =>
   text.replace(
     "$background = if ($asset -like '*dark*') { [Drawing.Color]::FromArgb(21, 21, 23) } else { [Drawing.Color]::White }",
     "$background = [Drawing.Color]::FromArgb(126, 17, 35)"));
+edit('apps/desktop/installer/drawing.nsh', (text) => text
+  .replace("MulDiv(i 384, i $InstallerDpi, i 96) i.R7", "MulDiv(i 340, i $InstallerDpi, i 96) i.R7")
+  .replace("MulDiv(i 34, i $InstallerDpi, i 96) i.R8", "MulDiv(i 42, i $InstallerDpi, i 96) i.R8"));
+edit('apps/desktop/installer/pages.nsh', (text) => text
+  .replace('!insertmacro InstallerPlace $InstallerDialog 0 0 ${INSTALLER_WINDOW_SIZE} ${INSTALLER_WINDOW_SIZE}',
+    '!insertmacro InstallerPlace $InstallerDialog 0 0 ${INSTALLER_WINDOW_WIDTH} ${INSTALLER_WINDOW_HEIGHT}')
+  .replace('!insertmacro InstallerPlace $4 0 0 504 48', '!insertmacro InstallerPlace $4 0 0 ${INSTALLER_WINDOW_WIDTH} 48')
+  .replace('!insertmacro InstallerPlace $4 504 8 40 32', '!insertmacro InstallerPlace $4 724 8 40 32')
+  .replace('!insertmacro InstallerPlace $4 548 8 40 32', '!insertmacro InstallerPlace $4 772 8 40 32')
+  .replace('!insertmacro InstallerPlace $4 0 ${INSTALLER_BRAND_Y} ${INSTALLER_WINDOW_SIZE} ${INSTALLER_BRAND_HEIGHT}',
+    '!insertmacro InstallerPlace $4 ${INSTALLER_BRAND_X} ${INSTALLER_BRAND_Y} ${INSTALLER_BRAND_WIDTH} ${INSTALLER_BRAND_HEIGHT}')
+  .replace('!insertmacro InstallerPlace $InstallerStatus 48 ${INSTALLER_STATUS_Y} 504 ${INSTALLER_STATUS_HEIGHT}',
+    '!insertmacro InstallerPlace $InstallerStatus 360 ${INSTALLER_STATUS_Y} 400 ${INSTALLER_STATUS_HEIGHT}')
+  .replace('!insertmacro InstallerPlace $InstallerChoose 232 438 136 28', '!insertmacro InstallerPlace $InstallerChoose 455 390 290 42')
+  .replace('!insertmacro InstallerPlace $InstallerEditFrame 64 434 384 34', '!insertmacro InstallerPlace $InstallerEditFrame 360 395 340 42')
+  .replace("System::Call 'kernel32::MulDiv(i 76, i $InstallerDpi, i 96) i.r0'", "System::Call 'kernel32::MulDiv(i 376, i $InstallerDpi, i 96) i.r0'")
+  .replace("System::Call 'kernel32::MulDiv(i 434, i $InstallerDpi, i 96) i.r1'", "System::Call 'kernel32::MulDiv(i 401, i $InstallerDpi, i 96) i.r1'")
+  .replace("System::Call 'kernel32::MulDiv(i 360, i $InstallerDpi, i 96) i.r2'", "System::Call 'kernel32::MulDiv(i 316, i $InstallerDpi, i 96) i.r2'")
+  .replace("System::Call 'kernel32::MulDiv(i 34, i $InstallerDpi, i 96) i.r3'", "System::Call 'kernel32::MulDiv(i 30, i $InstallerDpi, i 96) i.r3'")
+  .replace('!insertmacro InstallerPlace $InstallerBrowse 456 434 80 34', '!insertmacro InstallerPlace $InstallerBrowse 710 395 70 42')
+  .replace(/    System::Call 'user32::GetDC\(p \$InstallerLaunch\)[\s\S]*?    System::Call 'user32::MoveWindow\(p \$InstallerLaunch, i r0, i r1, i r2, i r3, i 1\)'/u,
+    '    !insertmacro InstallerPlace $InstallerLaunch 470 442 170 32'));
+edit('apps/desktop/installer/lifecycle.nsh', (text) => {
+  const old = `    System::Call 'kernel32::MulDiv(i 600, i $InstallerDpi, i 96) i.s'
+    Pop $InstallerSize
+    System::Call 'user32::GetSystemMetrics(i 0) i.r0'
+    System::Call 'user32::GetSystemMetrics(i 1) i.r1'
+    IntOp $0 $0 - $InstallerSize
+    IntOp $0 $0 / 2
+    IntOp $1 $1 - $InstallerSize
+    IntOp $1 $1 / 2
+    System::Call 'user32::SetWindowPos(p $HWNDPARENT, p 0, i r0, i r1, i $InstallerSize, i $InstallerSize, i 0x34)'`;
+  const current = `    System::Call 'kernel32::MulDiv(i 820, i $InstallerDpi, i 96) i.s'
+    Pop $InstallerSize
+    System::Call 'kernel32::MulDiv(i 560, i $InstallerDpi, i 96) i.r2'
+    System::Call 'user32::GetSystemMetrics(i 0) i.r0'
+    System::Call 'user32::GetSystemMetrics(i 1) i.r1'
+    IntOp $0 $0 - $InstallerSize
+    IntOp $0 $0 / 2
+    IntOp $1 $1 - $2
+    IntOp $1 $1 / 2
+    System::Call 'user32::SetWindowPos(p $HWNDPARENT, p 0, i r0, i r1, i $InstallerSize, i r2, i 0x34)'`;
+  return text.includes(current) ? text : text.replace(old, current);
+});
 edit('apps/desktop/installer/window-frame.cpp', (text) => text
+  .replace('Bitmap buffer(MulDiv(600, page->dpi, 96), MulDiv(600, page->dpi, 96)',
+    'Bitmap buffer(MulDiv(820, page->dpi, 96), MulDiv(560, page->dpi, 96)')
   .replace('graphics.Clear(page->dark ? Color(255, 21, 21, 23) : Color(255, 255, 255, 255));',
     'graphics.Clear(Color(255, 126, 17, 35));')
   .replace('graphics.DrawImage(page->brand, Rect(0, 174, 600, 196));',
-    'graphics.DrawImage(page->brand, Rect(0, 0, 600, 600));')
+    'graphics.DrawImage(page->brand, Rect(0, 0, 330, 560));')
+  .replace('graphics.DrawImage(page->brand, Rect(0, 0, 600, 600));',
+    'graphics.DrawImage(page->brand, Rect(0, 0, 330, 560));')
+  .replace('if (x >= 548) PostMessageW(parent, WM_CLOSE, 0, 0);', 'if (x >= 772) PostMessageW(parent, WM_CLOSE, 0, 0);')
+  .replace('else if (x >= 504) ShowWindow(parent, SW_MINIMIZE);', 'else if (x >= 724) ShowWindow(parent, SW_MINIMIZE);')
   .replace('SolidBrush track(page->dark ? Color(255, 97, 102, 107) : Color(255, 233, 236, 242));',
     'SolidBrush track(Color(255, 255, 168, 182));')
   .replace('SolidBrush ink(page->dark ? Color(255, 255, 255, 255) : Color(255, 15, 17, 21));',
-    'SolidBrush ink(Color(255, 255, 255, 255));'));
+    'SolidBrush ink(Color(255, 255, 255, 255));')
+  .replace('FillProgress(graphics, track, 472.0f);', 'FillProgress(graphics, track, 400.0f);')
+  .replace('FillProgress(graphics, ink, 472.0f * static_cast<REAL>(page->progress.value) / 100);',
+    'FillProgress(graphics, ink, 400.0f * static_cast<REAL>(page->progress.value) / 100);')
+  .replace('RectF(48, 512, 504, 22)', 'RectF(360, 518, 400, 22)')
+  .replace('RectF(504, 8, 40, 32)', 'RectF(724, 8, 40, 32)')
+  .replace('RectF(548, 8, 40, 32)', 'RectF(772, 8, 40, 32)')
+  .replace('0, 0, MulDiv(600, dpi, 96), MulDiv(600, dpi, 96), parent',
+    '0, 0, MulDiv(820, dpi, 96), MulDiv(560, dpi, 96), parent')
+  .split('64.0f, 482.0f').join('360.0f, 500.0f')
+  .split('64.0f + width').join('360.0f + width')
+  .split('64.0f, 484.0f').join('360.0f, 502.0f')
+  .split('482.0f').join('500.0f')
+  .split('484.0f').join('502.0f'));
 
 // ⑤c 修正 NSIS 查找安装器资源的构建根。
 //    配置层的 `beforeBuild` 把 BMP/DLL 写到 `$LINGDONG_BUILD_ROOT`（本项目约定 `.desktop-build2`），
