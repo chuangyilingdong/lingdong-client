@@ -100,6 +100,17 @@ const updateTextFile = (file, transform, note) => {
   report.push(`✓  ${file}：${note}`)
 }
 
+// ③a HTML 预览引导层：opaque-origin 沙箱里补内存 localStorage/sessionStorage。
+// 上游的 sandbox="allow-scripts" 不能打开同源权限；但生成的网页常把 localStorage
+// 当启动前置条件（如打地鼠游戏），直接访问会抛 SecurityError 并让整个脚本白屏。
+// 这份覆盖保留原隔离边界，只在沙箱内部提供同形态的内存 Storage。
+const htmlPreviewBootstrapTarget = join(checkout, 'packages/client/ui-sidebar-documentpreview/src/client/html/bootstrap.ts')
+if (!dryRun) {
+  mkdirSync(dirname(htmlPreviewBootstrapTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'HtmlPreviewBootstrap.ts'), htmlPreviewBootstrapTarget)
+}
+report.push('✓  packages/client/ui-sidebar-documentpreview/src/client/html/bootstrap.ts：已补沙箱内存 Storage')
+
 // ③ preload：用一份确定的 window.lingdong 取代旧 gate/context/submitWork 的组合块。
 updateTextFile('apps/desktop/src/preload-app.ts', (before) => {
   const block = `contextBridge.exposeInMainWorld('lingdong', {

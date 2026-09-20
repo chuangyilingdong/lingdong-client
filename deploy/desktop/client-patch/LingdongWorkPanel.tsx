@@ -329,7 +329,6 @@ const styles = {
   itemBody: { minWidth: 0, flex: 1 },
   itemTitle: { fontWeight: 600, overflowWrap: 'anywhere' },
   itemMeta: { marginTop: '2px', opacity: 0.58, overflowWrap: 'anywhere' },
-  confirm: { display: 'flex', alignItems: 'flex-start', gap: '7px', fontSize: '11px', lineHeight: 1.45 },
   submit: {
     width: '100%', padding: '8px 10px', border: 0, borderRadius: '8px', background: '#b42318',
     color: '#fff', cursor: 'pointer', fontSize: '12px', fontWeight: 650,
@@ -352,7 +351,6 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
   const [busy, setBusy] = useState<'idle' | 'scanning' | 'submitting'>('idle')
   const [items, setItems] = useState<readonly HtmlCandidate[]>([])
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
-  const [copyrightConfirmed, setCopyrightConfirmed] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<BatchResponse | null>(null)
   const aborter = useRef<AbortController | null>(null)
@@ -420,7 +418,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
   }, [result])
 
   const submit = useCallback(async () => {
-    if (chosen.length === 0 || !copyrightConfirmed) return
+    if (chosen.length === 0) return
     const bridge = (window as Window & { readonly lingdong?: LingdongDesktopBridge }).lingdong
     if (bridge?.submitWorkBatch === undefined) {
       setError('客户端作品桥还没加载，请重启客户端后再试。')
@@ -458,7 +456,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
     } finally {
       setBusy('idle')
     }
-  }, [chosen, copyrightConfirmed])
+  }, [chosen])
 
   return (
     <section style={styles.root} aria-label="交作品">
@@ -515,19 +513,10 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
             </div>
           )}
 
-          <label style={styles.confirm}>
-            <input
-              type="checkbox"
-              checked={copyrightConfirmed}
-              disabled={busy !== 'idle'}
-              onChange={event => setCopyrightConfirmed(event.currentTarget.checked)}
-            />
-            <span>我确认这是自己完成的作品，并同意平台在作品广场展示。</span>
-          </label>
           <button
             type="button"
-            style={{ ...styles.submit, opacity: busy === 'idle' && copyrightConfirmed && chosen.length > 0 ? 1 : 0.45 }}
-            disabled={busy !== 'idle' || !copyrightConfirmed || chosen.length === 0}
+            style={{ ...styles.submit, opacity: busy === 'idle' && chosen.length > 0 ? 1 : 0.45 }}
+            disabled={busy !== 'idle' || chosen.length === 0}
             onClick={() => { void submit() }}
           >
             {busy === 'submitting' ? '正在按顺序提交…' : `提交已选 ${chosen.length} 份作品`}

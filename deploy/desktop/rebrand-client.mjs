@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 /** 本脚本所在目录（deploy/desktop）：⑤ 的图标源与 apply-client-gate.mjs 共用 client-patch/。 */
 const here = path.dirname(fileURLToPath(import.meta.url));
+const brandLogoDataUri = `data:image/png;base64,${fs.readFileSync(path.join(here, 'client-patch', 'gate', 'logo.png')).toString('base64')}`
 
 function arg(name, fallback = '') {
   const index = process.argv.indexOf(name);
@@ -174,41 +175,78 @@ edit('packages/client/locale/src/locales/zh.ts', (text) =>
 edit('packages/client/locale/src/locales/en.ts', (text) =>
   text.replace("'brand.localBuild': 'DSH Local Build',", "'brand.localBuild': 'LingdongAI',"));
 overwrite('packages/client/ui-brand-official/src/client/Brand.tsx', `/**
- * 灵动ai 的品牌位（2026-09-19 起由本仓库的 deploy/desktop/rebrand-client.mjs 整份覆盖）。
+ * 灵动ai 的品牌位（2026-09-20 起由本仓库的 deploy/desktop/rebrand-client.mjs 整份覆盖）。
  *
- * 为什么整份换掉：上游这份字标是**矢量稿** —— "deepseek" 那几个字母是 SVG path，
- * 不是文本节点，所以 \`DeepSeek Harness → 灵动ai\` 那种字符串替换一处也改不到。
- * 这里保持同名同签名，只换实现：调用方（同包 index.ts 的 slot 注册）一行都不用改。
+ * 这里直接使用产品提供的字标 PNG，避免用系统字体临摹后出现字重、字形和间距漂移。
+ * 图片内联为 data URI，不依赖上游是否有静态资源目录；side bar 的 mark/name 两个 slot
+ * 由一个字标承载，收起侧栏时仍作为同一个品牌入口。
  */
 import type { SidebarBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-sidebar/client'
 
-/**
- * 侧栏品牌图标：红底圆角方 + 橙色 Ai（与登录页、应用图标同一支红）。
- * 用内联 SVG 而不是图片资源：客户端里没有现成的静态资源目录可挂，且这个尺寸下
- * 矢量比位图稳。
- * @param props - 宿主给的尺寸（正方形，px）
- */
+const WORDMARK_DATA_URI = '${brandLogoDataUri}'
+
+/** 侧栏品牌字标：宽度按原图约 2.1:1 比例随 size 缩放。 */
 export function OfficialBrandMark({ size }: SidebarBrandMarkOwnerProps) {
   return (
-    <svg width={size} height={size} viewBox='0 0 32 32' aria-hidden='true' role='presentation'>
-      <rect width='32' height='32' rx='9' fill='#7e1123' />
-      <text x='16' y='22' textAnchor='middle' fontFamily='system-ui, sans-serif' fontSize='13' fontWeight='700' fill='#ff8a00'>Ai</text>
-    </svg>
+    <img
+      src={WORDMARK_DATA_URI}
+      alt=''
+      aria-hidden='true'
+      role='presentation'
+      data-lingdong-wordmark
+      style={{ display: 'block', width: size * 4, height: size, maxWidth: '100%', objectFit: 'contain' }}
+    />
   )
 }
 
-/**
- * 侧栏品牌名：我们的字标。中文字用 \`currentColor\` 跟着侧栏主题走（深色底上是白字），
- * 只有 \`ai\` 用品牌橙 —— 侧栏有深/浅两套主题，写死蓝色会在深色底上糊成一片。
- */
+/** 字标已包含完整品牌名，不再重复文本。 */
 export function OfficialBrandName() {
-  return (
-    <span style={{ fontWeight: 800, letterSpacing: '-.02em' }}>
-      灵动<span style={{ color: '#ff8a00' }}>ai</span>
-    </span>
-  )
+  return null
 }
 `);
+
+// ⑥a 收起侧栏只有 36px 宽：完整横向字标交给应用图标和展开态，轨道里裁切显示即可。
+edit('packages/client/ui-sidebar/src/client/SidebarRoot.module.css', (text) => {
+  const marker = '/* 灵动ai：收起轨道裁切横向字标，避免溢出 36px 按钮。 */'
+  if (text.includes(marker)) return text
+  return `${text.trimEnd()}\n\n${marker}\n.railMark { width: 36px; overflow: hidden; justify-content: flex-start; }\n`
+});
+
+// ⑥a 品牌位测试跟着我们的实现走：名字 slot 不再重复渲染，字标由 mark slot 的图片承载。
+edit('packages/client/ui-brand-official/tests/browser-plugin.client.spec.tsx', (text) => {
+  const legacy = `  it('renders the official name independently from both requested mark sizes', () => {
+    const name = render(<OfficialBrandName />)
+    expect(name.container.querySelector('svg')?.getAttribute('viewBox')).toBe('26 0 156 24')
+    name.unmount()
+
+    const mark = render(<OfficialBrandMark size={34} />)
+    expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('34')
+    mark.rerender(<OfficialBrandMark size={24} />)
+    expect(mark.container.querySelector('svg')?.getAttribute('width')).toBe('24')
+  })`
+  const current = `  it('renders the supplied wordmark once and scales it with the requested size', () => {
+    const name = render(<OfficialBrandName />)
+    expect(name.container.innerHTML).toBe('')
+    name.unmount()
+
+    const mark = render(<OfficialBrandMark size={34} />)
+    const image = mark.container.querySelector('img')
+    expect(image?.getAttribute('src')?.startsWith('data:image/png;base64,')).toBe(true)
+    expect(image?.style.width).toBe('136px')
+    mark.rerender(<OfficialBrandMark size={24} />)
+    expect(mark.container.querySelector('img')?.style.width).toBe('96px')
+  })`
+  if (text.includes(current)) return text
+  return text.includes(legacy) ? text.replace(legacy, current) : text
+});
+
+// ⑥a 安装器：首次打开就直接展开安装路径，别让学生先点一次“选择安装位置”。
+edit('apps/desktop/installer/lifecycle.nsh', (text) => {
+  const marker = '    StrCpy $InstallerPhase "welcome"'
+  if (!text.includes(marker) || text.includes('    StrCpy $InstallerExpanded 1')) return text
+  const eol = text.includes('\r\n') ? '\r\n' : '\n'
+  return text.replace(marker, `${marker}${eol}    StrCpy $InstallerExpanded 1`)
+});
 
 // ⑥b 窗口标题与 PWA 名：dsh 的**官方构建档**把标题钉在一个常量里，而且构建会**断言**这个值
 //     （`assertClientBuildEnvironment`），所以不能只在生成时传环境变量 —— 必须改常量本身，

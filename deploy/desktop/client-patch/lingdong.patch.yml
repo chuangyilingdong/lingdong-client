@@ -20,7 +20,7 @@
   config:
     providers:
       platform-gateway:
-        displayName: 平台网关
+        displayName: 灵动ai
         apiKeyEnv: PLATFORM_GATEWAY_KEY
         api: openai-completions
         baseURL: !!js process.env.PLATFORM_GATEWAY_BASE_URL
@@ -29,10 +29,10 @@
         maxRequestImageBytes: 8388608
         models:
           - id: deepseek-flash
-            name: 平台网关 · DeepSeek Flash
+            name: DeepSeek Flash
             input: [text, image]
           - id: deepseek-pro
-            name: 平台网关 · DeepSeek Pro
+            name: DeepSeek Pro
             input: [text, image]
 
 # 默认模型必须指到我们网关，并把官方那条直连路由关掉 —— 否则学生一发消息就 MISSING_CREDENTIAL
