@@ -71,29 +71,18 @@ node scripts/p116-client-gate-ui.mjs      # 门三页：图片真解码 / 表单
 `cp -r "E:/学习平台正常/node_modules/playwright-core" node_modules/`。
 能上 registry 时用 `pnpm add -D playwright-core` 更干净。
 
-## 把这个仓库推上 GitHub
+## GitHub
 
-远端已经配好了（用平台仓库同一把账号级 key，走 443，见 `~/.ssh/config` 的别名）：
+远端已经建好并推送，当前 `main` 与 `origin/main` 同步：
 
-```
+```text
 origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ```
 
-**还差"在 GitHub 上建出这个空仓库"这一步**（我没做：`gh` 没登录，也没有 token）。两种办法：
-
-1. 网页：<https://github.com/new> → 名字 `lingdong-client` → **Private** → **不要**勾
-   "Add a README"（我们已经有提交了）。
-2. 或者 `gh auth login` 之后：
-   `gh repo create chuangyilingdong/lingdong-client --private --source=. --push`
-
-建好之后：
-
-```bash
-git push -u origin main
-```
+不要重复创建仓库。需要发布安装包时，走 `deploy/desktop/publish-client.sh`，且发布前先确认。
 
 ## 现在到哪一步了
 
-见 [`docs/交接-客户端-20260919.md`](docs/交接-客户端-20260919.md)：已经在本地验证台**跑通**
-（登录 → 进课 → 发消息 → 平台记到用量），已出包并发布；本轮已补齐侧栏预设提示词与
-交作品入口（均已在 dev 验证台实测），只剩窗口标题随下一次出包自动生效。
+侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
+最新本地安装包已出好，但**尚未发布到生产下载页**。当前状态详见
+[`docs/交接-新对话-20260920.md`](docs/交接-新对话-20260920.md)。
