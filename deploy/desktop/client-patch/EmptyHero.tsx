@@ -1,6 +1,7 @@
 // The composer remains in ConversationRoot so switching out of the blank-draft
 // phase does not remount its textarea.
 
+import { useEffect, useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
 import {
   FishLogo, IconChevronDownOutline14, IconFolderClose16, IconFolderOpen16,
@@ -70,6 +71,27 @@ export interface HeroShellProps {
   children?: ReactNode
 }
 
+function LingdongClassroomLine() {
+  const [label, setLabel] = useState('')
+  useEffect(() => {
+    let alive = true
+    const bridge = (window as Window & {
+      readonly lingdong?: { readonly context?: () => Promise<{ readonly classroom?: { readonly seriesTitle?: unknown; readonly lessonTitle?: unknown; readonly title?: unknown; readonly teacherName?: unknown } | null } | undefined> }
+    }).lingdong
+    void bridge?.context?.().then(context => {
+      if (!alive) return
+      const classroom = context?.classroom
+      if (!classroom) return
+      const course = [classroom.seriesTitle, classroom.lessonTitle].filter((value): value is string => typeof value === 'string' && value.trim() !== '')
+      const title = course.length > 0 ? course.join(' › ') : (typeof classroom.title === 'string' ? classroom.title : '')
+      const teacher = typeof classroom.teacherName === 'string' ? classroom.teacherName : ''
+      setLabel(title ? `正在上：${title}${teacher ? ` · ${teacher}` : ''}` : '')
+    }).catch(() => undefined)
+    return () => { alive = false }
+  }, [])
+  return label ? <div style={{ marginBottom: '14px', color: 'var(--dsw-alias-label-secondary)', fontSize: '12px', textAlign: 'center' }}>{label}</div> : null
+}
+
 /**
  * Render the hero chrome (headline only; no composer, no workspace row).
  * @param props - see {@link HeroShellProps}.
@@ -79,6 +101,7 @@ export function HeroShell({ t, renderSlot, children }: HeroShellProps) {
   return (
     <div className={css.root}>
       <div className={css.stack}>
+        <LingdongClassroomLine />
         <div className={css.headline}>
           {/* figma 34:10412: fish 34×25 leading the headline, gap 10. */}
           {renderSlot('conversation.hero.brand.mark', { size: 34, className: css.fish }, {

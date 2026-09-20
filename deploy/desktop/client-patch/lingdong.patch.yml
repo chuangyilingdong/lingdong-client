@@ -76,4 +76,5 @@
 - {id: cordis-client-runner, name: '@deepseek-ai/dsh-cordis-client-runner', disabled: true}
 - {id: ui-cordis, name: '@deepseek-ai/dsh-client-ui-cordis', disabled: true}
 - {id: plugin-inventory, name: '@deepseek-ai/dsh-host-plugin-inventory', disabled: true}
+- {id: ui-plugin-manager, name: '@deepseek-ai/dsh-client-ui-plugin-manager', disabled: true}
 - {id: open-in-app, name: '@deepseek-ai/dsh-host-open-in-app', disabled: true}

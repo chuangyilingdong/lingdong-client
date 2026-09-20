@@ -1,5 +1,5 @@
 /** File identity and explicit default-app or file-manager actions for one delivery. */
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
 import {
   Menu, FileTypeIcon, fileExtension, IconRightUpOutline16,
@@ -32,6 +32,14 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
 } & PropsLocale<typeof NS>) {
   const [menuOpen, setMenuOpen] = useState(false)
   const previewRef = useRef<HTMLButtonElement>(null)
+  const autoOpened = useRef(false)
+
+  // 代码完成并交付 HTML 时自动把右侧预览打开；用户仍可手动关闭。
+  useEffect(() => {
+    if (autoOpened.current || host?.available !== true || !/\.html?$/iu.test(file.path)) return
+    autoOpened.current = true
+    onPreview()
+  }, [file.path, host, onPreview])
   const pending = phase === 'opening' || phase === 'revealing'
   const menuDisabled = pending || host === null || !host.available
   if (menuDisabled && menuOpen) setMenuOpen(false)

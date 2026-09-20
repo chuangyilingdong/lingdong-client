@@ -178,7 +178,8 @@ export function LingdongPresetPanel({ sessionId }: LingdongPresetPanelProps) {
                       window.dispatchEvent(new CustomEvent('lingdong:insert-preset', {
                         detail: { sessionId, text: preset.text },
                       }))
-                      setNotice(`已填入：${preset.title}`)
+                      const preview = preset.text.length > 28 ? `${preset.text.slice(0, 28)}…` : preset.text
+                      setNotice(`已填入：${preview}`)
                     }}
                   >
                     {preset.title}

@@ -251,6 +251,36 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
       text = `${text.slice(0, start)}${next}${text.slice(end)}`
     }
   }
+  if (!text.includes('const rawList = useSessions(state => state)')) {
+    text = text.replace(
+      '  const list = useSessions(state => state)\n',
+      `  const rawList = useSessions(state => state)
+  const [classroomStartedAt, setClassroomStartedAt] = useState<number | undefined>(undefined)
+  useEffect(() => {
+    let alive = true
+    const bridge = (window as Window & {
+      readonly lingdong?: { readonly context?: () => Promise<{ readonly classroom?: { readonly startedAt?: unknown } | null } | undefined> }
+    }).lingdong
+    void bridge?.context?.().then(context => {
+      if (!alive) return
+      const raw = context?.classroom?.startedAt
+      const value = typeof raw === 'string' ? Date.parse(raw) : Number.NaN
+      setClassroomStartedAt(Number.isFinite(value) ? value : undefined)
+    }).catch(() => undefined)
+    return () => { alive = false }
+  }, [])
+  // 每个新课堂从开始时刻之后算起；旧课堂的本地会话不再出现在侧栏，但磁盘历史不删除。
+  const list = useMemo(() => {
+    if (classroomStartedAt === undefined) return rawList
+    const byId = Object.fromEntries(Object.entries(rawList.byId).filter(([, session]) => {
+      const value = session as { readonly blank?: unknown; readonly updatedAt?: unknown }
+      return value.blank === true || typeof value.updatedAt !== 'number' || value.updatedAt >= classroomStartedAt
+    })) as typeof rawList.byId
+    return { ...rawList, ids: rawList.ids.filter(id => byId[id] !== undefined), byId }
+  }, [classroomStartedAt, rawList])
+`,
+    )
+  }
   if (!text.includes('const sidebarOwner = {')) {
     text = text.replace(
       '  const currentBlank = mainSessionId !== undefined',
@@ -320,8 +350,9 @@ updateTextFile('packages/client/ui-conversation/src/client/apply.ts', (before) =
 //       见 platform-gate.ts 的 @param resetHost）。这里必须**原地换掉那一行**：
 //       若走下面那条按锚点插入的路，旧的那一行会留在上面 —— 登录门会弹两次。
 const mainFile = join(checkout, 'apps/desktop/src/main.ts')
-const STALE_GATE = "if ((await runLingdongGate(createMainWindow, isQuitting)).kind === 'quit') { app.quit(); return }"
-const GATE_CALL = 'if ((await runLingdongGate(createMainWindow, isQuitting, () => backend.stop())).kind === \'quit\') { app.quit(); return }'
+const LEGACY_GATE = "if ((await runLingdongGate(createMainWindow, isQuitting)).kind === 'quit') { app.quit(); return }"
+const PREVIOUS_GATE = "if ((await runLingdongGate(createMainWindow, isQuitting, () => backend.stop())).kind === 'quit') { app.quit(); return }"
+const GATE_CALL = "if ((await runLingdongGate(() => currentMainWindow() ?? createMainWindow(), isQuitting, () => backend.stop())).kind === 'quit') { app.quit(); return }"
 let gateInstalled = false
 if (existsSync(mainFile)) {
   let current = readFileSync(mainFile, 'utf8')
@@ -330,9 +361,12 @@ if (existsSync(mainFile)) {
     current = current.replace(stale, '')
     report.push('✓  apps/desktop/src/main.ts：清掉重复的旧 import')
   }
-  if (current.includes(STALE_GATE)) {
-    current = current.replace(STALE_GATE, GATE_CALL)
-    report.push('✓  apps/desktop/src/main.ts：登录门升级到「过门后重启一次宿主」')
+  if (current.includes(PREVIOUS_GATE)) {
+    current = current.replace(PREVIOUS_GATE, GATE_CALL)
+    report.push('✓  apps/desktop/src/main.ts：登录门改为复用已创建的主窗口')
+  } else if (current.includes(LEGACY_GATE)) {
+    current = current.replace(LEGACY_GATE, GATE_CALL)
+    report.push('✓  apps/desktop/src/main.ts：登录门升级到复用主窗口并重启宿主')
   }
   gateInstalled = current.includes(GATE_CALL)   // 升级过 / 本来就是新版
   if (current !== readFileSync(mainFile, 'utf8')) write('apps/desktop/src/main.ts', current)
@@ -353,10 +387,10 @@ if (!gateInstalled) {
   //    「API 密钥无效」（AUTH）。实测对照：密钥预置在进程环境里 → 成功；只靠登录门事后注入 → 失败。
   // ⚠️ 第三个参数 () => backend.stop() 是**兜底**：宿主可能已经从别的路径（更新/恢复、
   //    策略检查）起来了，过门后停一次，让下面的 reconcileBackend() 用刚写好的密钥重新起。
-  if ((await runLingdongGate(createMainWindow, isQuitting, () => backend.stop())).kind === 'quit') { app.quit(); return }
+  if ((await runLingdongGate(() => currentMainWindow() ?? createMainWindow(), isQuitting, () => backend.stop())).kind === 'quit') { app.quit(); return }
   automaticCheck()
   await reconcileBackend().catch(() => undefined)`,
-  '在 automaticCheck 之前插登录门（含过门后重启宿主）', 'runLingdongGate(createMainWindow, isQuitting, () => backend.stop())')
+  '在 automaticCheck 之前插登录门（复用主窗口，含过门后重启宿主）', 'runLingdongGate(() => currentMainWindow() ?? createMainWindow()')
 }
 // 深链协议：安装器写进注册表，系统才知道怎么用 lingdong:// 拉起本客户端。
 // ⚠️ 单独一条、挂在 automaticCheck() 上 —— 挂在上面那个锚点上的话，登录门一插好锚点就没了。

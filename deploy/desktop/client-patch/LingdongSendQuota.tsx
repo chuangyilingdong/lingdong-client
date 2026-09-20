@@ -110,8 +110,10 @@ export function LingdongSendQuota(props: LingdongSendQuotaProps) {
 
   useEffect(() => { load(true) }, [load])
   useEffect(() => {
-    if (phase === 'submitting') return
-    load(true)
+    // 进入 submitting 后轻量重取一次；平台一旦接受发送，数字很快从 0 变 1。
+    // 仍然只相信平台返回值，客户端不自行加一。
+    const timer = window.setTimeout(() => { load(true) }, phase === 'submitting' ? 450 : 0)
+    return () => { window.clearTimeout(timer) }
   }, [load, phase])
   useEffect(() => {
     const onFocus = (): void => { load(true) }
@@ -122,23 +124,19 @@ export function LingdongSendQuota(props: LingdongSendQuotaProps) {
   if (state === null) return null
   const { classroom, sends, message, upcoming } = state
   const limit = sends?.limit ?? null
-  const used = limit === null ? 0 : Math.min(sends?.used ?? 0, limit)
-  const exhausted = limit !== null && used >= limit
-  const mainLabel = classroom ? courseLabel(classroom) : (message || '当前没有进行中的课堂')
-  const upcomingLabel = !classroom && upcoming ? `接下来：${courseLabel(upcoming)}` : ''
-  const countLabel = limit === null ? '' : `${used}/${limit}`
+  if (limit === null) return null
+  const used = Math.min(sends?.used ?? 0, limit)
+  const exhausted = used >= limit
+  const courseHint = classroom ? courseLabel(classroom) : (message || (upcoming ? `接下来：${courseLabel(upcoming)}` : ''))
 
   return (
     <span
       style={{ ...styles.root, ...(exhausted ? styles.exhausted : {}) }}
-      title={classroom
-        ? `${mainLabel}${countLabel ? `；已发送 ${used} 次，上限 ${limit} 次` : '；这节课不限发送次数'}`
-        : `${message || '当前没有进行中的课堂'}${upcomingLabel ? `；${upcomingLabel}` : ''}`}
-      aria-label={`${mainLabel}${countLabel ? `，发送次数 ${countLabel}` : ''}`}
+      title={courseHint ? `${courseHint}；已发送 ${used} 次，上限 ${limit} 次` : `已发送 ${used} 次，上限 ${limit} 次`}
+      aria-label={`使用次数 ${used}/${limit}`}
       role="status"
     >
-      <span style={styles.course}>{mainLabel}</span>
-      {countLabel !== '' && <span style={styles.count}>{countLabel}</span>}
+      <span style={styles.count}>使用次数{used}/{limit}</span>
     </span>
   )
 }

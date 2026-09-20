@@ -273,7 +273,7 @@ export function OfficialBrandMark({ size }: SidebarBrandMarkOwnerProps) {
       aria-hidden='true'
       role='presentation'
       data-lingdong-wordmark
-      style={{ display: 'block', width: size * 4, height: size, maxWidth: '100%', objectFit: 'contain' }}
+      style={{ display: 'block', width: size * 4.7, height: size * 1.18, maxWidth: '100%', objectFit: 'contain' }}
     />
   )
 }
@@ -288,7 +288,7 @@ export function OfficialBrandName() {
 edit('packages/client/ui-sidebar/src/client/SidebarRoot.module.css', (text) => {
   const marker = '/* 灵动ai：收起轨道裁切横向字标，避免溢出 36px 按钮。 */'
   if (text.includes(marker)) return text
-  return `${text.trimEnd()}\n\n${marker}\n.railMark { width: 36px; overflow: hidden; justify-content: flex-start; }\n`
+  return `${text.trimEnd()}\n\n${marker}\n.railMark { width: 36px; overflow: hidden; justify-content: flex-start; }\n.root:not(.collapsed) .brand { justify-content: center; padding-left: 0 !important; }\n.root:not(.collapsed) .brandIdentity { width: 100%; justify-content: center; height: 28px; }\n.root:not(.collapsed) .brandMark { height: 28px; }\n`
 });
 
 overwrite('packages/client/ui-primitives/src/BrandWordmark.tsx', `/**
@@ -395,6 +395,12 @@ export function FishLogo({ size = 24, className }: IconProps) {
 }
 `);
 overwrite('packages/client/ui-conversation/src/client/skeleton/EmptyHero.tsx', fs.readFileSync(path.join(here, 'client-patch', 'EmptyHero.tsx'), 'utf8'));
+edit('packages/client/ui-chat/src/client/locale.ts', (text) => text
+  .replace("'chat.deepDiving': '深度求索中...',", "'chat.deepDiving': '小灵VibeCoding中...',")
+  .replace("'chat.deepDiving': 'Deep diving...',", "'chat.deepDiving': 'Lingdong VibeCoding...',"));
+edit('packages/client/ui-chat/tests/chat-view.client.spec.tsx', (text) => text
+  .split('深度求索中...').join('小灵VibeCoding中...')
+  .split('深度求索中').join('小灵VibeCoding中'));
 edit('packages/client/ui-conversation/src/client/locales.ts', (text) => text
   .replace("'hero.headline': '探索未至之境',", "'hero.headline': '小灵陪你一起 VibeCoding',")
   .replace("'hero.headline': 'Into the Unknown',", "'hero.headline': 'VibeCoding with Lingdong',"));
