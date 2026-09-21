@@ -53,7 +53,6 @@ JSON
 chown ai-kids-prod:ai-kids-prod manifest.json
 cat manifest.json"
 
-echo "=== ④ 核验公网真能下 ==="
-curl -sI -m 20 "https://iicili.cyou/downloads/$NAME" | head -5
-printf "manifest 公网："; curl -s -m 20 "https://iicili.cyou/downloads/manifest.json" | head -c 200; echo
+echo "=== ④ 核验公网真能下（服务器本机） ==="
+ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST" "curl -sI -m 20 'https://iicili.cyou/downloads/$NAME' | head -5; printf 'manifest 公网：'; curl -s -m 20 'https://iicili.cyou/downloads/manifest.json' | head -c 300; echo"
 echo "PUBLISH_CLIENT_DONE $NAME"
