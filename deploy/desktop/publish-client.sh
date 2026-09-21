@@ -35,23 +35,10 @@ REMOTE_SIZE=$(ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST" "stat -c %s '$RE
 echo "  远端：$REMOTE_SIZE"
 [ "$REMOTE_SIZE" = "$SIZE" ] || { echo "!! 远端字节数与本地不一致，停止"; exit 1; }
 
-echo "=== ③ 置回 manifest（先备份） ==="
+echo "=== ③ 合并写回 manifest（保留后台策略，先备份） ==="
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST" "cd '$REMOTE_DIR' && cp manifest.json manifest.json.bak-$STAMP && cat > manifest.json <<JSON
-{
-  \"version\": \"$VERSION\",
-  \"channel\": \"stable\",
-  \"enabled\": true,
-  \"mandatory\": false,
-  \"minVersion\": \"\",
-  \"publishedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-  \"updatedAt\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
-  \"note\": \"灵动ai创作客户端新版本已发布。\",
-  \"files\": { \"win-x64\": { \"name\": \"$NAME\", \"size\": $SIZE, \"sha256\": \"$SHA\" }, \"mac-arm64\": null }
-}
-JSON
-chown ai-kids-prod:ai-kids-prod manifest.json
-cat manifest.json"
+FILTER='.version = $version | .publishedAt = $timestamp | .updatedAt = $timestamp | .files = ((.files // {}) | .["win-x64"] = {name: $name, size: $size, sha256: $sha}) | .enabled = (if has("enabled") then .enabled else true end) | .mandatory = (if has("mandatory") then .mandatory else false end) | .minVersion = (if has("minVersion") then .minVersion else "" end) | .note = (if has("note") then .note else "灵动ai创作客户端新版本已发布。" end) | .channel = (if has("channel") then .channel else "stable" end)'
+ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST" "cd '$REMOTE_DIR' && cp manifest.json manifest.json.bak-$STAMP && jq --arg version '$VERSION' --arg name '$NAME' --arg sha '$SHA' --argjson size '$SIZE' --arg timestamp '$(date -u +%Y-%m-%dT%H:%M:%SZ)' '$FILTER' manifest.json > manifest.json.tmp && mv manifest.json.tmp manifest.json && chown ai-kids-prod:ai-kids-prod manifest.json && cat manifest.json"
 
 echo "=== ④ 核验公网真能下（服务器本机） ==="
 ssh -i "$KEY" -o StrictHostKeyChecking=no "$HOST" "curl -sI -m 20 'https://iicili.cyou/downloads/$NAME' | head -5; printf 'manifest 公网：'; curl -s -m 20 'https://iicili.cyou/downloads/manifest.json' | head -c 300; echo"

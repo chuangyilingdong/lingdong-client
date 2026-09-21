@@ -292,15 +292,16 @@ async function refreshClassroomContext(): Promise<LingdongContext> {
   if (session === null) return cached
   try {
     const fresh = await call(contextPath(cached.sessionId), { token: session.token }) as Partial<LingdongContext>
-    const gateway = fresh.gateway ?? cached.gateway
+    const hasClassroom = fresh.classroom !== null && fresh.classroom !== undefined
+    const gateway = hasClassroom ? fresh.gateway : undefined
     const next: LingdongContext = {
-      classroom: fresh.classroom ?? null,
+      classroom: hasClassroom ? fresh.classroom : null,
       classrooms: Array.isArray(fresh.classrooms) ? fresh.classrooms : cached.classrooms,
       reason: fresh.reason ?? null,
       upcoming: fresh.upcoming ?? null,
       ...(gateway === undefined ? {} : { gateway }),
-      presets: Array.isArray(fresh.presets) ? fresh.presets : cached.presets,
-      sends: fresh.sends ?? null,
+      presets: hasClassroom && Array.isArray(fresh.presets) ? fresh.presets : [],
+      sends: hasClassroom ? (fresh.sends ?? null) : null,
       message: typeof fresh.message === 'string' ? fresh.message : '',
       workspacePath: cached.workspacePath || '',
       sessionId: cached.sessionId || fresh.classroom?.id || '',

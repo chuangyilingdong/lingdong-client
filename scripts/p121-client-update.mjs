@@ -45,6 +45,21 @@ try {
     assert.match(apply, /to: 'lo'/)
     assert.match(read('deploy/desktop/client-patch/lingdong-office-engine.mjs'), /LINGDONG_LIBREOFFICE_ENGINE_DIR/)
   })
+  check('发布会合并 manifest，不覆盖后台策略', () => {
+    assert.match(publish, /jq --arg version/)
+    assert.match(publish, /has\("enabled"\)/)
+    assert.doesNotMatch(publish, /cat > manifest.json/)
+  })
+  check('classroom 为空时清掉缓存 presets/sends，不再回退 gateway', () => {
+    const gate = read('deploy/desktop/client-patch/platform-gate.ts')
+    assert.match(gate, /const hasClassroom = fresh.classroom !== null/)
+    assert.match(gate, /presets: hasClassroom && Array\.isArray\(fresh\.presets\)/)
+    assert.match(gate, /sends: hasClassroom \? \(fresh\.sends \?\? null\) : null/)
+  })
+  check('契约记录课时 delivery_modes 双开口径', () => {
+    assert.match(contract, /course_lessons.delivery_modes.*VIBECODING/)
+    assert.match(contract, /两种同时声明.*放行/)
+  })
   check('更新进度页已随门页资源打包', () => {
     assert.equal(existsSync(join(root, 'deploy/desktop/client-patch/gate/update.html')), true)
     assert.match(read('deploy/desktop/client-patch/gate/update.html'), /__lingdongUpdate/)
