@@ -69,6 +69,8 @@ if (!dryRun) copyFileSync(join(patchDir, 'platform-gate.ts'), join(checkout, 'ap
 report.push('✓  apps/desktop/src/platform-gate.ts：已放入')
 if (!dryRun) copyFileSync(join(patchDir, 'LingdongUpdater.ts'), join(checkout, 'apps/desktop/src/LingdongUpdater.ts'))
 report.push('✓  apps/desktop/src/LingdongUpdater.ts：已放入')
+if (!dryRun) copyFileSync(join(patchDir, 'lingdong-office-engine.mjs'), join(checkout, 'apps/desktop/scripts/lingdong-office-engine.mjs'))
+report.push('✓  apps/desktop/scripts/lingdong-office-engine.mjs：已放入')
 
 // ②b UI：侧栏预设/作品面板 + 会话输入隐藏桥。
 // 旧版本把两个面板挂在输入框 dock 上；这里先原地清掉旧 import/plugin/文件，再写新结构。
@@ -444,6 +446,39 @@ patch('apps/desktop/src/main.ts',
   '  focusPrimaryWindow = () => {\n    if (quitting) return\n    // 深链/第二次启动都走到这里：让等待页立刻重问一次「现在有没有课」\n    lingdongDeepLink()\n',
   '深链落到 focusPrimaryWindow', '深链/第二次启动都走到这里')
 
+// ④-0 Office 引擎短路径：Windows 下 LibreOffice 对长路径敏感；把 prepared engine 放到 resources/lo。
+updateTextFile('apps/desktop/src/main.ts', (before) => {
+  const source = '  const development = !app.isPackaged\n'
+  const line = "  if (!development) process.env.LINGDONG_LIBREOFFICE_ENGINE_DIR = join(process.resourcesPath, 'lo')\n"
+  return before.includes('LINGDONG_LIBREOFFICE_ENGINE_DIR') ? before : before.replace(source, source + line)
+}, 'Office 引擎切到短路径')
+
+updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
+  let current = before
+  const importAnchor = "import { selectOfficeEngine } from '../../../scripts/libreoffice-engine.ts'"
+  if (!current.includes("from './lingdong-office-engine.mjs'")) {
+    current = current.replace(importAnchor, importAnchor + "\nimport { patchLingdongOfficeEngine } from './lingdong-office-engine.mjs'")
+  }
+  const marker = "    if (!existsSync(join(DSH_OUTPUT_ROOT, 'node_modules', '@deepseek-ai', `libreoffice-kit-${officeEngine}`, 'prebuilds.json'))) {"
+  if (!current.includes('patchLingdongOfficeEngine(DSH_OUTPUT_ROOT')) {
+    current = current.replace("    if (process.platform === 'darwin') {", "    patchLingdongOfficeEngine(DSH_OUTPUT_ROOT, target.platform, target.arch)\n    if (process.platform === 'darwin') {")
+  }
+  return current
+}, 'prepared Office 引擎写入运行时描述前打补丁')
+
+updateTextFile('apps/desktop/scripts/package-target.ts', (before) => {
+  let current = before
+  const importAnchor = "import { withMacOSSigningKeychain } from './macos-signing-keychain.mjs'"
+  if (!current.includes("from './lingdong-office-engine.mjs'")) {
+    current = current.replace(importAnchor, importAnchor + "\nimport { patchLingdongOfficeEngine } from './lingdong-office-engine.mjs'")
+  }
+  const runAnchor = "  await execute(['run', 'prepare:dsh'], targetEnv)"
+  if (!current.includes('patchLingdongOfficeEngine(buildPaths.dsh')) {
+    current = current.replace(runAnchor, runAnchor + "\n  await patchLingdongOfficeEngine(buildPaths.dsh, target.platform, target.arch)")
+  }
+  return current
+}, 'prepared Office 引擎后处理')
+
 // ④a 客户端启动更新：在登录门前检查平台清单；用户确认后下载、校验、静默安装并重启。
 updateTextFile('apps/desktop/src/main.ts', (before) => {
   let current = before
@@ -466,6 +501,31 @@ patch('apps/desktop/scripts/electron-builder-config.mjs',
     protocols: [{ name: '灵动ai创作客户端', schemes: ['lingdong'] }],
     mac: {`,
   '注册 lingdong:// 协议', 'protocols: [{ name: ')
+
+// ④c 打包：LibreOffice 是原生程序，必须连同 ini/rdb/share 配置一起 unpack；只解 DLL 会导致 uno.ini 找不到。
+updateTextFile('apps/desktop/scripts/electron-builder-config.mjs', (before) => {
+  const marker = "'**/node_modules/@deepseek-ai/libreoffice-kit-*/**/*'"
+  if (before.includes(marker)) return before
+  const source = "      '**/*.{node,dylib,dll,so,exe}',"
+  if (!before.includes(source)) return before
+  return before.replace(source, source + "\n      // 原生 LibreOffice 需要完整 program/share 目录（uno.ini、services.rdb 等不能留在 asar 内）。\n      " + marker + ',')
+}, '完整解包 LibreOffice 引擎')
+
+// ④d 打包：把 LibreOffice 引擎搬到 resources/lo，并从深 asar 目录排除。
+updateTextFile('apps/desktop/scripts/electron-builder-config.mjs', (before) => {
+  let current = before
+  const buildAnchor = '  const buildPaths = desktopTargetBuildPaths(resolveDesktopBuildTarget(env, hostPlatform, hostArch))'
+  if (!current.includes('const officeEnginePackage')) {
+    current = current.replace(buildAnchor, buildAnchor + "\n  const officeEnginePackage = resolvedPlatform === 'win32' || resolvedPlatform === 'darwin'\n    ? 'libreoffice-kit-' + (resolvedPlatform === 'win32' ? 'win32' : 'darwin') + '-' + resolvedArch\n    : undefined")
+  }
+  current = current.replace("? '@deepseek-ai/libreoffice-kit-' + (resolvedPlatform === 'win32' ? 'win32' : 'darwin') + '-' + resolvedArch", "? 'libreoffice-kit-' + (resolvedPlatform === 'win32' ? 'win32' : 'darwin') + '-' + resolvedArch")
+  current = current.replace("filter: officeEnginePackage === undefined ? ['**/*'] : ['**/*', '!@deepseek-ai/' + officeEnginePackage + '/**/*']", "filter: ['**/*']")
+  const resourcesAnchor = "      { from: buildPaths.runtime, to: 'runtime' },"
+  if (!current.includes("to: 'lo'")) {
+    current = current.replace(resourcesAnchor, "      ...(officeEnginePackage === undefined ? [] : [{ from: join(buildPaths.dsh, 'node_modules', '@deepseek-ai', officeEnginePackage), to: 'lo' }]),\n" + resourcesAnchor)
+  }
+  return current
+}, 'Office 引擎短路径打包')
 
 // ⑤ 打包：把 gate/ 打进 extraResources
 patch('apps/desktop/scripts/electron-builder-config.mjs',

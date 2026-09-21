@@ -36,6 +36,15 @@ try {
     for (const key of ['enabled', 'mandatory', 'minVersion', 'publishedAt', 'note']) assert.match(publish, new RegExp(key))
     assert.match(contract, /客户端启动时/)
   })
+  check('LibreOffice 引擎整包解包，配置不留在 asar', () => {
+    assert.match(apply, /libreoffice-kit-\*\/\*\*\/\*/)
+  })
+  check('LibreOffice 使用 resources/lo 短路径避免 Windows 长路径限制', () => {
+    assert.match(apply, /LINGDONG_LIBREOFFICE_ENGINE_DIR/)
+    assert.match(apply, /patchLingdongOfficeEngine/)
+    assert.match(apply, /to: 'lo'/)
+    assert.match(read('deploy/desktop/client-patch/lingdong-office-engine.mjs'), /LINGDONG_LIBREOFFICE_ENGINE_DIR/)
+  })
   check('更新进度页已随门页资源打包', () => {
     assert.equal(existsSync(join(root, 'deploy/desktop/client-patch/gate/update.html')), true)
     assert.match(read('deploy/desktop/client-patch/gate/update.html'), /__lingdongUpdate/)
