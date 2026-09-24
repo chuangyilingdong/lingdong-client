@@ -20,7 +20,7 @@ MIRROR_PORT="${2:-18920}"
 PINNED_COMMIT="00102833dfaee1da9f48a3a8eae9d34005a75218"
 ACTUAL_COMMIT="$(git -C "$CHECKOUT" rev-parse HEAD)"
 [ "$ACTUAL_COMMIT" = "$PINNED_COMMIT" ] || { echo "!! 上游 commit 不是钉住的 $PINNED_COMMIT，实际为 $ACTUAL_COMMIT"; exit 2; }
-export LINGDONG_CLIENT_VERSION="${LINGDONG_CLIENT_VERSION:-0.1.7-alpha.2.1}"
+export LINGDONG_CLIENT_VERSION="${LINGDONG_CLIENT_VERSION:-0.1.7-alpha.2.2}"
 export LINGDONG_DSH_BASE_VERSION="0.1.7-alpha.2"
 export LINGDONG_DISABLE_UPSTREAM_UPDATE=1
 # 双保险：代码里的兜底已经是新域名，这里再显式钉一次，避免有人用本机残留环境变量覆盖。

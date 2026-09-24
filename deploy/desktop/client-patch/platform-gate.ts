@@ -975,6 +975,11 @@ export async function runLingdongGate(
     matchTitleBarToGate()
     // 页面里的脚本读这个全局拿到「谁登录了 / 为什么在这等」；不经过 IPC，避免多一轮握手。
     await window.webContents.executeJavaScript(`window.__LINGDONG_STATE__ = ${JSON.stringify(state)}; window.__lingdongRender && window.__lingdongRender();`).catch(() => undefined)
+    if (!isQuitting() && !window.isDestroyed()) {
+      if (window.isMinimized()) window.restore()
+      window.show()
+      window.focus()
+    }
   }
 
   try {

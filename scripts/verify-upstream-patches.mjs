@@ -39,6 +39,7 @@ for (const page of ['login.html', 'loading.html', 'waiting.html', 'classroom.htm
 const expectations = [
   ['apps/desktop/src/preload-app.ts', 'scanWorkFiles'],
   ['apps/desktop/src/platform-gate.ts', 'function renderGatewayPatch('],
+  ['apps/desktop/src/platform-gate.ts', 'window.show()'],
   ['apps/desktop/src/platform-gate.ts', 'LINGDONG_DEFAULT_MODEL_MARKER'],
   ['apps/desktop/resources/gate/lingdong.patch.yml', '# LINGDONG_MODELS_BEGIN'],
   ['apps/desktop/resources/gate/lingdong.patch.yml', '# LINGDONG_MODELS_END'],

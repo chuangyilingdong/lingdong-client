@@ -80,6 +80,9 @@ const installerPath = (() => {
   return path.join(INSTALLER, found.sort().at(-1))
 })()
 
+const installerVersion = path.basename(installerPath).match(/^lingdong-client-(.+)-win-x64(?:-unsigned)?\.exe$/u)?.[1]
+assert.ok(installerVersion, `从文件名解析安装版本失败：${path.basename(installerPath)}`)
+
 fs.rmSync(WORK, { recursive: true, force: true })
 fs.mkdirSync(WORK, { recursive: true })
 fs.mkdirSync(BACKUP_DIR, { recursive: true })
@@ -132,7 +135,7 @@ check('① 运行时资源：登录门页面与 Office 引擎都在包内', () =
 
 check('① 注册表：DisplayVersion / InstallLocation', () => {
   const version = regValue('DisplayVersion')
-  assert.equal(version, '0.1.7-alpha.2.1', `DisplayVersion=${version}`)
+  assert.equal(version, installerVersion, `DisplayVersion=${version}，期望 ${installerVersion}`)
   const location = regValue('InstallLocation')
   assert.ok(location, 'InstallLocation 是空的（这条是本次新加的写入）')
   assert.ok(location.toLowerCase().includes(TEST_DIR.toLowerCase()), `InstallLocation=${location}`)
@@ -144,7 +147,7 @@ const exeBefore = fs.statSync(path.join(TEST_DIR, EXE_NAME)).mtimeMs
 check('② 覆盖升级：再装一次，用户数据保留、版本不变', () => {
   runInstaller(installerPath, ['/S', `/D=${TEST_DIR}`])
   assert.ok(fs.existsSync(path.join(TEST_DIR, EXE_NAME)), '升级后主程序不见了')
-  assert.equal(regValue('DisplayVersion'), '0.1.7-alpha.2.1')
+  assert.equal(regValue('DisplayVersion'), installerVersion)
   assert.ok(fs.existsSync(MARKER), '升级把用户数据目录删了')
   return { replaced: fs.statSync(path.join(TEST_DIR, EXE_NAME)).mtimeMs !== exeBefore || '同版本重装（mtime 可能不变）' }
 })
