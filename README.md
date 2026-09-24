@@ -84,20 +84,21 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-2026-09-24 完成 DSH 0.1.7 升级、模型清单适配与安装/更新加固；最新包 **0.1.7-alpha.2.1** 已发布。
+2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、安装/更新加固，并修复登录门窗口不可见问题；最新包 **0.1.7-alpha.2.2** 已发布。
 
 ### 2026-09-24 发布包
 
 ```text
-E:\灵动ai客户端\.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.1-win-x64-unsigned.exe
+E:\灵动ai客户端\.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.2-win-x64-unsigned.exe
 ```
 
-- 大小：`395987077` 字节
-- SHA256：`BC4C0888654463387B06021579777A991A06DF5A1738F640FE8103BDD848F924`
+- 大小：`395987091` 字节
+- SHA256：`624E6AD9A14895F95238D5AE3E423E35A3AB5D8B84AE4A05807BC00DC5AAA5CD`
 - 状态：未签名、**已发布**（2026-09-24）
-- 下载：<https://aicyld.com/downloads/lingdong-client-0.1.7-alpha.2.1-win-x64-unsigned.exe>
+- 下载：<https://aicyld.com/downloads/lingdong-client-0.1.7-alpha.2.2-win-x64-unsigned.exe>
 - 客户端版本独立于 DSH 基础版本；DSH 运行时为 `0.1.7-alpha.2`
 - 平台 `client-context.models / defaultModel` 下发后，客户端动态渲染模型别名并同步默认模型
+- 修复登录门窗口一直隐藏的问题（`.2.2` 起登录/等待/选课页会正常显示）
 - 关闭 `session-telemetry-otel` 与 `session-log-deepseek`
 - 默认权限改为 `workspace-write`，不再默认完全权限
 - 网关密钥只走环境变量，不再写 agent 可读的 `.credentials.yaml`
