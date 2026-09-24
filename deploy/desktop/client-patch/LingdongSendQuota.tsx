@@ -1,90 +1,19 @@
 /**
  * 灵动ai 课堂上下文：发送按钮前显示「课包 › 课时 · 老师」和「已用/上限」。
  *
- * 平台是唯一计数方：客户端只读取 `client-context.classroom / sends`，不自己加减；
- * 一次提交结束和窗口重新聚焦时各刷新一次，不做定时轮询。超限由平台网关返回 429，
- * 客户端只原样显示 `error.message`。
+ * 平台是唯一计数方：客户端只读 `client-context.classroom / sends`，不自己加减。
+ * 数据源在 `./lingdong-send-state.ts`（发送按钮与提交闸门读同一份快照，见那个文件的文件头）；
+ * 这里只负责显示。超限由平台网关返回 429，提示语原样显示平台给的 `error.message`。
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-
-interface LingdongClassroom {
-  readonly id?: string
-  readonly title?: string
-  readonly seriesTitle?: string
-  readonly lessonTitle?: string
-  readonly teacherName?: string
-}
-
-interface LingdongSends {
-  readonly limit: number | null
-  readonly used: number
-  readonly remaining: number | null
-}
-
-interface LingdongDesktopContext {
-  readonly classroom?: unknown
-  readonly upcoming?: unknown
-  readonly sends?: unknown
-  readonly message?: unknown
-}
-
-interface LingdongDesktopBridge {
-  readonly context?: (options?: unknown) => Promise<LingdongDesktopContext | undefined>
-}
-
-interface CourseState {
-  readonly classroom: LingdongClassroom | null
-  readonly upcoming: LingdongClassroom | null
-  readonly sends: LingdongSends | null
-  readonly message: string
-}
+import {
+  refreshLingdongCourseState, useLingdongCourseState,
+  type LingdongClassroom, type LingdongCourseState,
+} from './lingdong-send-state.ts'
 
 type LingdongSendQuotaProps = PropsRuntime<'conversation.input.right'>
-
-function classroomOf(value: unknown): LingdongClassroom | null {
-  if (value === null || typeof value !== 'object') return null
-  const raw = value as Record<string, unknown>
-  const id = typeof raw.id === 'string' ? raw.id : undefined
-  const title = typeof raw.title === 'string' ? raw.title : undefined
-  const seriesTitle = typeof raw.seriesTitle === 'string' ? raw.seriesTitle : undefined
-  const lessonTitle = typeof raw.lessonTitle === 'string' ? raw.lessonTitle : undefined
-  const teacherName = typeof raw.teacherName === 'string' ? raw.teacherName : undefined
-  return id === undefined && title === undefined && seriesTitle === undefined && lessonTitle === undefined && teacherName === undefined
-    ? null
-    : { ...(id === undefined ? {} : { id }), ...(title === undefined ? {} : { title }), ...(seriesTitle === undefined ? {} : { seriesTitle }), ...(lessonTitle === undefined ? {} : { lessonTitle }), ...(teacherName === undefined ? {} : { teacherName }) }
-}
-
-function normalizeSends(value: unknown): LingdongSends | null {
-  if (value === null || typeof value !== 'object') return null
-  const candidate = value as { readonly limit?: unknown; readonly used?: unknown; readonly remaining?: unknown }
-  const limit = candidate.limit === null || candidate.limit === undefined ? null : Number(candidate.limit)
-  if (limit !== null && (!Number.isFinite(limit) || limit <= 0)) return null
-  const used = Number(candidate.used)
-  return {
-    limit,
-    used: Number.isFinite(used) && used > 0 ? Math.floor(used) : 0,
-    remaining: limit === null ? null : Math.max(0, limit - (Number.isFinite(used) && used > 0 ? Math.floor(used) : 0)),
-  }
-}
-
-async function readContext(refresh: boolean): Promise<CourseState | null> {
-  const bridge = (window as Window & { readonly lingdong?: LingdongDesktopBridge }).lingdong
-  if (bridge?.context === undefined) return null
-  try {
-    const raw = await bridge.context(refresh ? { refresh: true } : undefined)
-    if (raw === undefined) return null
-    return {
-      classroom: classroomOf(raw.classroom),
-      upcoming: classroomOf(raw.upcoming),
-      sends: normalizeSends(raw.sends),
-      message: typeof raw.message === 'string' ? raw.message : '',
-    }
-  } catch {
-    return null
-  }
-}
 
 function readPhase(props: LingdongSendQuotaProps): unknown {
   const input = (props as { readonly input?: { readonly phase?: unknown } }).input
@@ -97,42 +26,33 @@ function courseLabel(classroom: LingdongClassroom): string {
   return `${classroom.title || '当前课堂'}${classroom.teacherName ? ` · ${classroom.teacherName}` : ''}`
 }
 
-export function LingdongSendQuota(props: LingdongSendQuotaProps) {
-  const [state, setState] = useState<CourseState | null>(null)
-  const phase = readPhase(props)
-  const lastGood = useRef<CourseState | null>(null)
-  const load = useCallback((refresh: boolean) => {
-    void readContext(refresh).then(next => {
-      if (next !== null) lastGood.current = next
-      setState(next ?? lastGood.current)
-    })
-  }, [])
+function hintOf(state: LingdongCourseState, used: number, limit: number): string {
+  const { classroom, message, upcoming } = state
+  const course = classroom ? courseLabel(classroom) : (message || (upcoming ? `接下来：${courseLabel(upcoming)}` : ''))
+  return course ? `${course}；已发送 ${used} 次，上限 ${limit} 次` : `已发送 ${used} 次，上限 ${limit} 次`
+}
 
-  useEffect(() => { load(true) }, [load])
+export function LingdongSendQuota(props: LingdongSendQuotaProps) {
+  const state = useLingdongCourseState()
+  const phase = readPhase(props)
   useEffect(() => {
     // 进入 submitting 后轻量重取一次；平台一旦接受发送，数字很快从 0 变 1。
     // 仍然只相信平台返回值，客户端不自行加一。
-    const timer = window.setTimeout(() => { load(true) }, phase === 'submitting' ? 450 : 0)
+    if (phase !== 'submitting') return
+    const timer = window.setTimeout(() => { void refreshLingdongCourseState() }, 450)
     return () => { window.clearTimeout(timer) }
-  }, [load, phase])
-  useEffect(() => {
-    const onFocus = (): void => { load(true) }
-    window.addEventListener('focus', onFocus)
-    return () => { window.removeEventListener('focus', onFocus) }
-  }, [load])
+  }, [phase])
 
   if (state === null) return null
-  const { classroom, sends, message, upcoming } = state
-  const limit = sends?.limit ?? null
+  const limit = state.sends?.limit ?? null
   if (limit === null) return null
-  const used = Math.min(sends?.used ?? 0, limit)
+  const used = Math.min(state.sends?.used ?? 0, limit)
   const exhausted = used >= limit
-  const courseHint = classroom ? courseLabel(classroom) : (message || (upcoming ? `接下来：${courseLabel(upcoming)}` : ''))
 
   return (
     <span
       style={{ ...styles.root, ...(exhausted ? styles.exhausted : {}) }}
-      title={courseHint ? `${courseHint}；已发送 ${used} 次，上限 ${limit} 次` : `已发送 ${used} 次，上限 ${limit} 次`}
+      title={hintOf(state, used, limit)}
       aria-label={`使用次数 ${used}/${limit}`}
       role="status"
     >

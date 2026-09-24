@@ -84,7 +84,19 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新包 **0.1.7-alpha.2.3** 已发布。
+2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.4`（预装插件 + todo 收口 + 次数用完禁用发送）已出包、**未发布**。
+
+### 2026-09-24 预装插件版（`0.1.7-alpha.2.4`，未发布）
+
+- 预装 7 个第三方插件（dsh-web 聚合包、better-sidebar、at-file、find-plugin、modlens、context、browser bridge），
+  随包一份闭包放 `resources/runtime/plugin-profile`，首次启动镜像成 profile 里的真实目录（硬链接，约 26 秒，之后跳过）
+- `dsh-at-file@0.6.3` 与 DSH 0.1.7 的 settings API 不兼容（`settingsNamespace` 已换成 `SettingsForms`），
+  宿主日志会打 `failed to import`，该插件的 @ 文件功能不生效；modlens 只丢设置页
+- 修复 todo：`turn/end(completed)` 时把还挂着的 todo 收口，界面不再停在「N 进行中 · M 待处理」
+- 发送次数：`used >= limit` 时客户端直接禁用发送按钮 + 拦住 Enter 提交（平台网关 429 仍是唯一门禁）
+- 安装包 `490182000` 字节 / SHA256 `9E5C1A5A4AB70190A41A5FAB47E71171F453159BEC2F4DBDC5C19D320E05FF6D`
+  （含插件闭包 388 MB；`.2.3` 是 396 MB）
+- 产物：`.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.4-win-x64-unsigned.exe`
 
 ### 2026-09-24 发布包
 

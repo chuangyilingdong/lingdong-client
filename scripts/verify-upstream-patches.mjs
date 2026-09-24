@@ -19,6 +19,8 @@ const copies = [
   ['deploy/desktop/client-patch/HtmlPreviewPack.ts', 'packages/client/ui-sidebar-documentpreview/src/client/html/pack.ts'],
   ['deploy/desktop/client-patch/OfficePreview.ts', 'packages/client/ui-sidebar-documentpreview/src/client/office/index.ts'],
   ['deploy/desktop/client-patch/Deliverables.tsx', 'packages/client/ui-deliverables/src/client/Deliverables.tsx'],
+  ['deploy/desktop/client-patch/LingdongSendQuota.tsx', 'packages/client/ui-conversation/src/client/LingdongSendQuota.tsx'],
+  ['deploy/desktop/client-patch/lingdong-send-state.ts', 'packages/client/ui-conversation/src/client/lingdong-send-state.ts'],
 ]
 for (const [source, target] of copies) {
   assert.equal(existsSync(join(root, source)), true, `missing patch source ${source}`)
@@ -49,9 +51,24 @@ const expectations = [
   ['apps/desktop/scripts/electron-builder-config.mjs', 'resolvedClientVersion'],
   ['apps/desktop/installer/uninstall.nsh', 'LINGDONG_CLEAN_OPT_IN'],
   ['packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx', 'classroomWorkspacePath'],
+  ['packages/client/ui-conversation/src/client/skeleton/InputBar.tsx', 'lingdongExhausted'],
+  ['packages/client/ui-conversation/src/client/input/facade.ts', 'LINGDONG_SEND_LIMIT_GUARD'],
+  ['packages/todo/tool-todo/src/index.ts', 'LINGDONG_TODO_CLOSE'],
+  ['apps/desktop/src/project-manager.ts', 'function enablePreinstalledPlugins('],
+  ['apps/desktop/src/project-manager.ts', 'materializePreinstalledPlugins(this.paths.profile, this.runtime.plugins)'],
+  ['apps/desktop/src/project-manager.ts', '@yuxianglin/dsh-bridge-browser'],
+  ['apps/desktop/scripts/prepare-dsh.ts', 'LINGDONG_VENDOR_PLUGINS'],
+  ['apps/desktop/scripts/prepare-dsh.ts', 'LINGDONG_PLUGIN_PROFILE'],
+  ['apps/desktop/src/main.ts', 'LINGDONG_PLUGIN_RESOURCE'],
+  ['packages/client/ui-conversation/src/client/lingdong-send-state.ts', 'lingdongSendLimitReached'],
 ]
 for (const [path, marker] of expectations) {
   assert.equal(read(path).includes(marker), true, `missing marker ${marker} in ${path}`)
+}
+
+// 预装插件的 tarball 必须随检出（dsh-browser 没发布到 npm，只能随包）。
+for (const file of ['yuxianglin-dsh-bridge-browser-0.0.5.tgz']) {
+  assert.equal(existsSync(join(checkout, 'apps/desktop/vendor-plugins', file)), true, 'missing packaged plugin ' + file)
 }
 
 console.log(JSON.stringify({ name: 'verify-upstream-patches', pass: true, checkout }))

@@ -907,6 +907,372 @@ patch('apps/desktop-host/src/index.ts',
     })(),`,
   'patchFiles 挂上 lingdong.patch.yml')
 
+// ④i 课堂次数（2026-09-24，.2.4）：used >= limit 时**客户端直接禁用发送**，不再等第 6 次到网关才 429。
+//    平台计数与网关拦截一直是对的（实测 5×200 → 第 6 次 429 SEND_LIMIT_EXCEEDED），缺的只是交互。
+//    ⚠️ 不能只在按钮上禁用：Enter/快捷键走的是 InputShell.submit()（input/facade.ts），
+//       两个入口必须读同一份快照；快照只存一份，见 client-patch/lingdong-send-state.ts 的文件头。
+const sendStateTarget = join(conversationClientDir, 'lingdong-send-state.ts')
+if (!dryRun) {
+  mkdirSync(dirname(sendStateTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'lingdong-send-state.ts'), sendStateTarget)
+}
+report.push('✓  packages/client/ui-conversation/src/client/lingdong-send-state.ts：已放入')
+
+updateTextFile('packages/client/ui-conversation/src/client/skeleton/InputBar.tsx', (before) => {
+  let text = before
+  if (!text.includes('LINGDONG_SEND_LIMIT_IMPORT')) {
+    const anchor = "import css from './InputBar.module.css'"
+    if (!text.includes(anchor)) {
+      report.push('!! .../skeleton/InputBar.tsx：找不到 import 锚点')
+      return before
+    }
+    text = text.replace(anchor, anchor + "\n// LINGDONG_SEND_LIMIT_IMPORT\nimport { useLingdongSendLimitReached } from '../lingdong-send-state.ts'")
+  }
+  if (!text.includes('LINGDONG_SEND_LIMIT_HOOK')) {
+    const anchor = "  const machineBusy = input?.phase === 'adjudicating' || input?.phase === 'submitting'"
+    if (!text.includes(anchor)) {
+      report.push('!! .../skeleton/InputBar.tsx：找不到 machineBusy 锚点')
+      return before
+    }
+    text = text.replace(anchor, anchor + "\n  // LINGDONG_SEND_LIMIT_HOOK：这节课次数用完 → 发送按钮直接禁用。\n  const lingdongExhausted = useLingdongSendLimitReached()")
+  }
+  if (!text.includes('|| lingdongExhausted')) {
+    const anchor = 'empty || disabled || machineBusy || uploadsPending'
+    if (!text.includes(anchor)) {
+      report.push('!! .../skeleton/InputBar.tsx：找不到 primaryDisabled 锚点')
+      return before
+    }
+    text = text.replace(anchor, 'empty || disabled || machineBusy || uploadsPending || lingdongExhausted')
+  }
+  return text
+}, '发送按钮在次数用完时禁用')
+
+updateTextFile('packages/client/ui-conversation/src/client/input/facade.ts', (before) => {
+  let text = before
+  if (!text.includes('LINGDONG_SEND_LIMIT_IMPORT')) {
+    const anchor = "} from '@deepseek-ai/dsh-client-store'"
+    if (!text.includes(anchor)) {
+      report.push('!! .../input/facade.ts：找不到 client-store import 锚点')
+      return before
+    }
+    text = text.replace(anchor, anchor + "\n// LINGDONG_SEND_LIMIT_IMPORT\nimport { lingdongSendLimitNotice, lingdongSendLimitReached } from '../lingdong-send-state.ts'")
+  }
+  if (!text.includes('LINGDONG_SEND_LIMIT_GUARD')) {
+    const anchor = "  submit(mode: InputSubmitMode = 'queue'): void {"
+    if (!text.includes(anchor)) {
+      report.push('!! .../input/facade.ts：找不到 submit 锚点')
+      return before
+    }
+    text = text.replace(anchor, anchor + "\n    // LINGDONG_SEND_LIMIT_GUARD：次数用完时 Enter 与按钮都走这里，先拦住再发。\n    // 平台仍然是唯一门禁（网关 429）；这一层只是不让学生白按一下。\n    if (lingdongSendLimitReached()) {\n      this.notify('error', lingdongSendLimitNotice())\n      return\n    }")
+  }
+  return text
+}, '提交闸门在次数用完时拦住')
+
+// ④j todo 收口（2026-09-24，.2.4）：任务已经结束、模型却没有再写一次 todo_write 时，
+//    计划面板会一直停在「N 进行中 · M 待处理」（学生截图）。在 turn/end(completed) 把剩下的项收口。
+updateTextFile('packages/todo/tool-todo/src/index.ts', (before) => {
+  if (before.includes('LINGDONG_TODO_CLOSE')) return before
+  const anchor = [
+    '    apply: (state, event) => {',
+    "      if (event.type === 'todo/write') return event.data.todos",
+    "      if (event.type === 'turn/start') return null",
+    '      return state',
+    '    },',
+  ].join('\n')
+  if (!before.includes(anchor)) {
+    report.push('!! packages/todo/tool-todo/src/index.ts：找不到 todos 投影锚点')
+    return before
+  }
+  const replacement = [
+    '    apply: (state, event) => {',
+    "      if (event.type === 'todo/write') return event.data.todos",
+    "      if (event.type === 'turn/start') return null",
+    '      // LINGDONG_TODO_CLOSE：这一轮已经正常结束，模型却忘了把剩下的 todo 划掉。',
+    '      // 计划面板读的就是这条投影，不收口就会一直停在「N 进行中 · M 待处理」。',
+    "      // 只在 turn/end 且 reason.kind === 'completed' 时收；中断/报错的轮次保持原样。",
+    "      if (event.type === 'turn/end') {",
+    '        const reason = (event.data as { readonly reason?: { readonly kind?: unknown } }).reason',
+    "        if (reason?.kind === 'completed' && state !== null && state.some(item => item.status !== 'completed')) {",
+    "          return state.map(item => item.status === 'completed' ? item : { ...item, status: 'completed' as const })",
+    '        }',
+    '      }',
+    '      return state',
+    '    },',
+  ].join('\n')
+  let text = before.replace(anchor, replacement)
+  if (text.includes('    stateVersion: 2,')) text = text.replace('    stateVersion: 2,', '    stateVersion: 3,')
+  else if (!text.includes('    stateVersion: 3,')) report.push('!! packages/todo/tool-todo/src/index.ts：找不到 stateVersion 锚点')
+  return text
+}, 'todo 在回合正常结束时收口')
+
+// ④k 插件预装（2026-09-24，.2.4）：7 个第三方插件随客户端分发。
+//    做法：插件闭包单独装一份到 `<targets>/win-x64/runtime/plugin-profile/node_modules`
+//    （resources/runtime 本来就是 extraResources，是**真目录**），desktop profile 里放
+//    **指向它的 junction**。
+//    ⚠️ 为什么不能把插件装进 desktop runtime 再链过去：那时 runtime 在 resources/app.asar 里，
+//      app.asar 对 OS 是个**文件**，junction 的目标必须是真目录（实测：New-Item -ItemType Junction
+//      指到 app.asar/... 直接 "Could not find item"）。
+//    ⚠️ 为什么必须是 junction 而不是「靠 runtime 拦截层找」：实测 desktop 宿主里插件是按
+//      bare specifier 从 profile 目录导入的，只落在 installation 里的包**不会**被拦截层补上
+//      （21 个 entry 全部 failed to import）；闭包实体在 profile 里时，插件自己的依赖照常解析。
+const vendorPluginsSource = join(patchDir, 'vendor-plugins')
+const vendorPluginsTarget = join(checkout, 'apps/desktop/vendor-plugins')
+if (!dryRun) {
+  mkdirSync(vendorPluginsTarget, { recursive: true })
+  for (const name of readdirSync(vendorPluginsSource)) {
+    copyFileSync(join(vendorPluginsSource, name), join(vendorPluginsTarget, name))
+  }
+}
+report.push(`✓  apps/desktop/vendor-plugins/：${dryRun ? '（--dry-run 未写入）' : readdirSync(vendorPluginsTarget).join(' ')}`)
+
+updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
+  if (before.includes('LINGDONG_VENDOR_PLUGINS')) return before
+  const anchor = '      cpSync(join(PACKAGE_SET_ROOT, DESKTOP_PACKAGES_DIR), join(BUILD_ROOT, DESKTOP_PACKAGES_DIR), { recursive: true })'
+  if (!before.includes(anchor)) {
+    report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 stage-packages 锚点')
+    return before
+  }
+  const vendor = [
+    '      // LINGDONG_VENDOR_PLUGINS：随客户端分发的第三方插件 tarball（本地构建的那份不在 npm 上）。',
+    "      cpSync(join(APP_ROOT, 'vendor-plugins'), join(BUILD_ROOT, 'vendor-plugins'), { recursive: true })",
+  ].join('\n')
+  return before.replace(anchor, anchor + '\n' + vendor)
+}, '把随包插件 tarball 放进 runtime 安装目录')
+
+updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
+  let text = before
+  if (!text.includes('workingDirectory: string = BUILD_ROOT')) {
+    const anchor = 'function runPnpm(args: readonly string[]): Promise<void> {'
+    if (!text.includes(anchor)) {
+      report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 runPnpm 锚点')
+      return before
+    }
+    text = text.replace(anchor, 'function runPnpm(args: readonly string[], workingDirectory: string = BUILD_ROOT): Promise<void> {')
+    text = text.replace('      cwd: BUILD_ROOT,', '      cwd: workingDirectory,')
+  }
+  if (!text.includes('createRuntimeProjectMetadata, LINGDONG_PLUGIN_DEPENDENCIES')) {
+    const anchor = "import { createRuntimeProjectMetadata } from '../src/project-manager.ts'"
+    if (!text.includes(anchor)) {
+      report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 project-manager import 锚点')
+      return before
+    }
+    text = text.replace(anchor, "import { createRuntimeProjectMetadata, LINGDONG_PLUGIN_DEPENDENCIES } from '../src/project-manager.ts'")
+  }
+  if (!text.includes('LINGDONG_PLUGIN_PROFILE')) {
+    const anchor = "    if (!existsSync(join(DSH_OUTPUT_ROOT, 'node_modules', '@deepseek-ai', `libreoffice-kit-${officeEngine}`, 'prebuilds.json'))) {"
+    if (!text.includes(anchor)) {
+      report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 LibreOffice 引擎检查锚点')
+      return before
+    }
+    const stage = [
+      "    // LINGDONG_PLUGIN_PROFILE：预装插件的闭包单独装一份，落在 resources/runtime 下（真目录，",
+      '    // 运行时 profile 用 junction 指过去；见 deploy/desktop/apply-client-gate.mjs 的 ④k 注释）。',
+      "    await packagingStep(process.env.DSH_DESKTOP_PACKAGING_RUN_DIR, 'runtime:plugin-profile', async () => {",
+      "      const pluginDir = join(RUNTIME_ROOT, 'plugin-profile')",
+      '      rmSync(pluginDir, { recursive: true, force: true })',
+      '      mkdirSync(pluginDir, { recursive: true })',
+      "      writeFileSync(join(pluginDir, 'package.json'), `${JSON.stringify({",
+      "        name: 'lingdong-plugin-profile', private: true, dependencies: LINGDONG_PLUGIN_DEPENDENCIES,",
+      '      }, undefined, 2)}\\n`)',
+      '      // pnpm 11 对「有 install 脚本但没被批准」的依赖是硬失败（ERR_PNPM_IGNORED_BUILDS）。',
+      '      // 这三个是插件带进来的可选原生加速/外部二进制下载，对孩子要跑的功能不是必须：显式列 false。',
+      "      writeFileSync(join(pluginDir, 'pnpm-workspace.yaml'),",
+      "        'packages:\\n  - .\\n\\nnodeLinker: hoisted\\nautoInstallPeers: false\\nallowBuilds:\\n  cloudflared: false\\n  cpu-features: false\\n  ssh2: false\\n  node-pty: true\\n  koffi: true\\n  fs-ext: true\\n',",
+      '        { mode: 0o600 })',
+      "      cpSync(join(APP_ROOT, 'vendor-plugins'), join(pluginDir, 'vendor-plugins'), { recursive: true })",
+      "      await runPnpm(['install', '--prod'], pluginDir)",
+      '    })',
+      '',
+    ].join('\n')
+    text = text.replace(anchor, stage + anchor)
+  }
+  return text
+}, '预装插件闭包装进 resources/runtime/plugin-profile')
+
+updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
+  let text = before
+  if (!text.includes('  linkSync,')) {
+    const anchor = '  realpathSync,\n'
+    if (!text.includes(anchor)) {
+      report.push('!! apps/desktop/src/project-manager.ts：找不到 node:fs 锚点')
+      return before
+    }
+    text = text.replace(anchor, anchor + '  copyFileSync,\n  linkSync,\n  readdirSync,\n  rmSync,\n  statSync,\n')
+  }
+  if (!text.includes('PROFILE_PATCH_FILENAME,')) {
+    const anchor = '  initProfile, PROFILE_TEMPLATES, removeLinkProjections, sanitizeProfile, type ProfileTemplate,'
+    if (!text.includes(anchor)) {
+      report.push('!! apps/desktop/src/project-manager.ts：找不到 app-boot import 锚点')
+      return before
+    }
+    text = text.replace(anchor, '  initProfile, PROFILE_PATCH_FILENAME, PROFILE_TEMPLATES, removeLinkProjections, sanitizeProfile, type ProfileTemplate,')
+  }
+  return text
+}, 'project-manager 引入预装插件需要的 fs/path 符号')
+
+patch('apps/desktop/src/project-manager.ts',
+  'const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate',
+  [
+    'const WEB_PROFILE = PROFILE_TEMPLATES.web as ProfileTemplate',
+    '// LINGDONG_PLUGIN_BUNDLES：随客户端预装的第三方插件（.2.4 起）。',
+    '// 顺序有讲究：聚合包（@linxin666/dsh-web-all）必须排在 dsh-better-sidebar **前面** ——',
+    '// 后者那条 disabled 表达式只在「前面已经有别的 entry 挂了 dsh-better-sidebar」时才退让，',
+    '// 排反了会把 sidebar 挂两次（duplicate prefix route）。',
+    'const LINGDONG_PLUGIN_BUNDLES = [',
+    "  '@linxin666/dsh-web-all',",
+    "  'dsh-better-sidebar',",
+    "  'dsh-at-file',",
+    "  'dsh-find-plugin',",
+    "  '@liustack/modlens',",
+    "  'dsh-context',",
+    "  '@yuxianglin/dsh-bridge-browser',",
+    '] as const',
+    '// 插件闭包的依赖清单：6 个走 registry；dsh-browser 没发布到 npm，用随包的 tarball。',
+    '// 由 prepare:dsh 装进 resources/runtime/plugin-profile（见 apply-client-gate.mjs 的 ④k）。',
+    'export const LINGDONG_PLUGIN_DEPENDENCIES: Readonly<Record<string, string>> = {',
+    "  '@linxin666/dsh-web-all': '^0.3.24',",
+    "  'dsh-better-sidebar': '^0.19.1',",
+    "  'dsh-at-file': '^0.6.3',",
+    "  'dsh-find-plugin': '^0.3.7',",
+    "  '@liustack/modlens': '^3.26.3',",
+    "  'dsh-context': '^0.55.0',",
+    "  '@yuxianglin/dsh-bridge-browser': 'file:./vendor-plugins/yuxianglin-dsh-bridge-browser-0.0.5.tgz',",
+    '}',
+  ].join('\n'),
+  '预装插件清单与依赖')
+
+patch('apps/desktop/src/project-manager.ts',
+  '      createPluginProfile(this.paths.profile)\n      removeLinkProjections(this.paths.profile)',
+  '      createPluginProfile(this.paths.profile)\n      removeLinkProjections(this.paths.profile)\n      await materializePreinstalledPlugins(this.paths.profile, this.runtime.plugins)',
+  'profile 里落预装插件（真实目录）')
+
+patch('apps/desktop/src/project-manager.ts',
+  '  readonly runtime: { readonly dsh: string },',
+  '  readonly runtime: { readonly dsh: string; readonly plugins?: string },',
+  'DesktopProjectManager 拿到预装插件目录')
+
+patch('apps/desktop/src/project-manager.ts',
+  'export function createPluginProfile(projectDir: string): void {\n  initProfile(projectDir, WEB_PROFILE.bundles)\n}',
+  [
+    'export function createPluginProfile(projectDir: string): void {',
+    '  initProfile(projectDir, WEB_PROFILE.bundles)',
+    '  enablePreinstalledPlugins(projectDir)',
+    '}',
+    '',
+    '/**',
+    ' * Enable the preinstalled plugin bundles inside an existing profile manifest.',
+    ' *',
+    ' * `initProfile` 只在**首次**写 manifest；升级学生的机器时那份 package.json 已经存在，',
+    ' * 所以必须自己把清单补进去。收口规则：只在 profile 自己的 `cordis.patch.yml` 还在时才补 ——',
+    ' * 「禁用第三方插件」那条恢复路径会把这个文件改名备份，补回去会让恢复失效、每次启动原地打转。',
+    ' * @param projectDir - Desktop profile directory.',
+    ' */',
+    'function enablePreinstalledPlugins(projectDir: string): void {',
+    "  const manifestPath = join(projectDir, 'package.json')",
+    '  if (!existsSync(manifestPath) || !existsSync(join(projectDir, PROFILE_PATCH_FILENAME))) return',
+    "  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {",
+    '    dsh?: { profile?: { bundles?: string[] } }',
+    '  }',
+    '  const current = manifest.dsh?.profile?.bundles ?? []',
+    '  const missing = LINGDONG_PLUGIN_BUNDLES.filter(name => !current.includes(name))',
+    '  if (missing.length === 0) return',
+    '  // 聚合包必须排在 dsh-better-sidebar 之前（见清单注释），所以按清单顺序重建尾段：',
+    '  // 保留原有条目、去掉待插入项，再把清单整体接在末尾。',
+    '  const kept = current.filter(name => !(LINGDONG_PLUGIN_BUNDLES as readonly string[]).includes(name))',
+    '  const bundles = [...kept, ...LINGDONG_PLUGIN_BUNDLES]',
+    '  writeJson(manifestPath, {',
+    '    ...manifest,',
+    '    dsh: { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles } },',
+    '  })',
+    '}',
+    '',
+    '/**',
+    " * Materialize the bundled plugin closure as real directories inside the profile.",
+    ' *',
+    ' * 插件闭包只随包一份（resources/runtime/plugin-profile，真目录），profile 里镜像成**真实目录**。',
+    ' * ⚠️ 不能在这里用 junction：宿主按 bare specifier 从 profile 目录导入插件，Node 默认取 realpath，',
+    ' *   junction 会把导入者变成 profile 之外的路径，DSH 的 runtime 拦截层就**不再给它补 `@deepseek-ai/*` 兄弟包**',
+    ' *   （实测：打好的包里 web-ui-settings 直接 ERR_MODULE_NOT_FOUND）。真实目录才会落在 profile 作用域内。',
+    ' * 文件用硬链接（同卷零拷贝，17k 文件 ~几秒）；跨卷或权限不允许时逐个退回复制。',
+    ' * 指纹写进 node_modules/.lingdong-plugin-closure，一致就整段跳过 —— 只有随包闭包变了才重建。',
+    ' * 失败只告警不抛出：少几个插件也不能让学生开不了客户端。',
+    ' * @param projectDir - Desktop profile directory.',
+    ' * @param pluginRoot - Bundled plugin closure directory (contains `node_modules`).',
+    ' */',
+    'export async function materializePreinstalledPlugins(projectDir: string, pluginRoot: string | undefined): Promise<void> {',
+    '  if (pluginRoot === undefined) return',
+    "  const source = join(pluginRoot, 'node_modules')",
+    "  const manifest = join(pluginRoot, 'package.json')",
+    '  if (!existsSync(source) || !existsSync(manifest)) return',
+    "  const modules = join(projectDir, 'node_modules')",
+    "  const marker = join(modules, '.lingdong-plugin-closure')",
+    '  try {',
+    '    const fingerprint = `${pluginRoot}|${String(statSync(manifest).mtimeMs)}|${readFileSync(manifest, \'utf8\')}`',
+    '    if (existsSync(marker) && readFileSync(marker, \'utf8\') === fingerprint) return',
+    '    rmSync(modules, { recursive: true, force: true })',
+    '    mkdirSync(modules, { recursive: true })',
+    '    const directories: string[] = []',
+    '    const files: string[] = []',
+    '    const collect = (relative: string): void => {',
+    '      for (const entry of readdirSync(join(source, relative), { withFileTypes: true })) {',
+    '        const child = relative === \'\' ? entry.name : `${relative}/${entry.name}`',
+    '        if (entry.isDirectory()) { directories.push(child); collect(child); continue }',
+    '        if (entry.isFile()) files.push(child)',
+    '      }',
+    '    }',
+    '    collect(\'\')',
+    '    for (const directory of directories) mkdirSync(join(modules, directory), { recursive: true })',
+    '    let next = 0',
+    '    const worker = async (): Promise<void> => {',
+    '      for (let index = next++; index < files.length; index = next++) {',
+    '        const relative = files[index]!',
+    '        try { linkSync(join(source, relative), join(modules, relative)) } catch { copyFileSync(join(source, relative), join(modules, relative)) }',
+    '      }',
+    '    }',
+    '    await Promise.all(Array.from({ length: Math.min(16, Math.max(1, files.length)) }, worker))',
+    '    writeFileSync(marker, fingerprint, { mode: 0o600 })',
+    '  } catch (error) {',
+    "    console.warn('desktop project: preinstalled plugin materialization skipped:', error)",
+    '  }',
+    '}',
+  ].join('\n'),
+  'profile 创建/升级时启用预装插件，并把插件包链进来',
+  'function enablePreinstalledPlugins(projectDir: string)')
+
+updateTextFile('apps/desktop/src/main.ts', (before) => {
+  if (before.includes('LINGDONG_PLUGIN_RESOURCE')) return before
+  let text = before
+  const iface = '  readonly dsh: string\n}'
+  if (!text.includes(iface)) {
+    report.push('!! apps/desktop/src/main.ts：找不到 RuntimeResources 锚点')
+    return before
+  }
+  text = text.replace(iface, '  readonly dsh: string\n  // LINGDONG_PLUGIN_RESOURCE：随包预装的第三方插件闭包（真目录，不能放进 asar）。\n  readonly plugins: string\n}')
+  const anchor = "    ?? (development ? join(app.getAppPath(), '.desktop-build', 'development', 'project') : join(app.getAppPath(), 'dsh'))"
+  if (!text.includes(anchor)) {
+    report.push('!! apps/desktop/src/main.ts：找不到 dsh 目录锚点')
+    return before
+  }
+  text = text.replace(anchor, [
+    anchor,
+    '  // LINGDONG_PLUGIN_RESOURCE：预装插件闭包随 resources/runtime 分发（extraResources 是真目录；',
+    '  // app.asar 对操作系统是个文件，junction 的目标不能落在里面）。',
+    '  const plugins = (development ? process.env.DSH_DESKTOP_PLUGIN_ROOT : undefined)',
+    "    ?? (development ? join(app.getAppPath(), '.desktop-build', 'development', 'plugin-profile') : join(process.resourcesPath, 'runtime', 'plugin-profile'))",
+  ].join('\n'))
+  const ret = '  return { node, nodeBin, pnpm, dsh }'
+  if (!text.includes(ret)) {
+    report.push('!! apps/desktop/src/main.ts：找不到 runtimeResources 返回锚点')
+    return before
+  }
+  return text.replace(ret, '  return { node, nodeBin, pnpm, dsh, plugins }')
+}, 'runtimeResources 暴露预装插件目录')
+// applyRelease 的锁回调要能 await（预装插件是镜像文件，不是一条 junction）。
+patch('apps/desktop/src/project-manager.ts',
+  '    await this.withLock(() => {',
+  '    await this.withLock(async () => {',
+  'applyRelease 的 profile 准备改成异步')
+
 console.log(`检出：${checkout}${dryRun ? '（--dry-run）' : ''}`)
 for (const line of report) console.log('  ' + line)
 const failed = report.filter((line) => line.startsWith('!!'))
