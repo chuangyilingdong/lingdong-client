@@ -24,8 +24,8 @@ Electron 壳（`apps/desktop`）+ 完整 dsh Web 应用（`packages/client/*`）
 | 项 | 值 |
 |---|---|
 | 仓库 | `https://github.com/deepseek-ai/deepseek-harness.git` |
-| 提交 | `ddefc45`（tag **`dsh-v0.1.6-alpha.2`**） |
-| 版本 | `0.1.6-alpha.2` |
+| 提交 | `00102833dfaee1da9f48a3a8eae9d34005a75218`（tag **`dsh-v0.1.7-alpha.2`**） |
+| 版本 | `0.1.7-alpha.2` |
 | 检出位置 | `upstream/dsh-harness/`（**gitignore**，体积大、含构建缓存，不要提交） |
 
 升级上游时：改上面这个提交号 → 重跑两个补丁脚本 → 出包 → 在真机上过一遍登录/上课链路。
@@ -84,18 +84,20 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-2026-09-23 又完成一轮外放安全与稳定性加固，最新包 **0.1.6-alpha.2.1** 已本地构建，尚未发布。
+2026-09-24 完成 DSH 0.1.7 升级、模型清单适配与安装/更新加固；最新包 **0.1.7-alpha.2.1** 已发布。
 
-### 2026-09-23 加固包
+### 2026-09-24 发布包
 
 ```text
-E:\灵动ai客户端\upstream\dsh-harness\apps\desktop\.desktop-build2\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.6-alpha.2.1-win-x64.exe
+E:\灵动ai客户端\.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.1-win-x64-unsigned.exe
 ```
 
-- 大小：`379720883` 字节
-- SHA256：`56B649CCBBC311EF3CFE8FC575424276A16BD3032FFD40BFB461B8CE08505907`
-- 状态：未签名、未发布
-- 客户端版本独立于 DSH 基础版本；DSH 运行时仍为 `0.1.6-alpha.2`
+- 大小：`395987077` 字节
+- SHA256：`BC4C0888654463387B06021579777A991A06DF5A1738F640FE8103BDD848F924`
+- 状态：未签名、**已发布**（2026-09-24）
+- 下载：<https://aicyld.com/downloads/lingdong-client-0.1.7-alpha.2.1-win-x64-unsigned.exe>
+- 客户端版本独立于 DSH 基础版本；DSH 运行时为 `0.1.7-alpha.2`
+- 平台 `client-context.models / defaultModel` 下发后，客户端动态渲染模型别名并同步默认模型
 - 关闭 `session-telemetry-otel` 与 `session-log-deepseek`
 - 默认权限改为 `workspace-write`，不再默认完全权限
 - 网关密钥只走环境变量，不再写 agent 可读的 `.credentials.yaml`
