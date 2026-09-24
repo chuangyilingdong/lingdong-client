@@ -169,6 +169,46 @@ updateTextFile('apps/desktop/src/platform-gate.ts', (before) => {
   return before
 }, '模型清单渲染器已就位')
 
+// ③a1 旧会话模型迁移：平台只允许 platform-gateway，旧会话若仍选中 deepseek-official，
+// 登录后自动把 durable selection 改回平台默认模型，避免 MISSING_CREDENTIAL。
+updateTextFile('packages/client/ui-model-selection/src/client/directory.ts', (before) => {
+  if (before.includes('LINGDONG_PLATFORM_MODEL_MIGRATION')) return before
+  let text = before
+  const resolvedAnchor = '  private resolved = false\n'
+  if (!text.includes(resolvedAnchor)) {
+    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 resolved 锚点')
+    return before
+  }
+  text = text.replace(resolvedAnchor, resolvedAnchor + [
+    '  /** LINGDONG_PLATFORM_MODEL_MIGRATION：旧会话的上游模型选择自动迁回平台网关。 */',
+    '  private repairedSelection = false',
+  ].join('\n') + '\n')
+  const resetAnchor = '  resetConnected(): void {\n    if (this.disposed) return\n'
+  if (!text.includes(resetAnchor)) {
+    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 resetConnected 锚点')
+    return before
+  }
+  text = text.replace(resetAnchor, resetAnchor + '    this.repairedSelection = false\n')
+  const currentAnchor = '    const current = projected.next ?? catalog.value.default\n'
+  if (!text.includes(currentAnchor)) {
+    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 current 锚点')
+    return before
+  }
+  const replacement = [
+    '    const projectedSelection = projected.next',
+    "    const migrateToPlatform = projectedSelection !== undefined && projectedSelection !== null",
+    "      && projectedSelection.provider !== 'platform-gateway'",
+    "      && catalog.value.default.provider === 'platform-gateway'",
+    '    if (migrateToPlatform && !this.repairedSelection && this.available()) {',
+    '      this.repairedSelection = true',
+    '      void this.select(catalog.value.default).catch(() => undefined)',
+    '    }',
+    '    const current = migrateToPlatform ? catalog.value.default : projectedSelection ?? catalog.value.default',
+  ].join('\n') + '\n'
+  return text.replace(currentAnchor, replacement)
+}, '旧会话模型选择迁回 platform-gateway')
+
+
 // ③a HTML 预览引导层：opaque-origin 沙箱里补内存 localStorage/sessionStorage。
 // 上游的 sandbox="allow-scripts" 不能打开同源权限；但生成的网页常把 localStorage
 // 当启动前置条件（如打地鼠游戏），直接访问会抛 SecurityError 并让整个脚本白屏。
