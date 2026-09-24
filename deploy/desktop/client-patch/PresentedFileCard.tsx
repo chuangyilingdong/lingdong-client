@@ -1,9 +1,9 @@
 /** File identity and explicit default-app or file-manager actions for one delivery. */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
 import {
-  Menu, FileTypeIcon, fileExtension, IconRightUpOutline16,
-  IconChevronDownOutline14, IconFolderOpenOutline16,
+  Menu, FileTypeIcon, fileExtension, IconRightUpOutlineMedium,
+  IconChevronDownOutlineMedium, IconFolderOpenOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PresentedAction, PresentedHost } from '../presented.ts'
@@ -22,13 +22,15 @@ function cardDescription(description: string | undefined, fallback: string): str
  * @param props - durable file metadata, Sidebar preview, Host capabilities, gesture status, and localized copy.
  * @returns the file card and its anchored action menu.
  */
-export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction, t }: {
+export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction, actions, t }: {
   file: PresentedPath
   cwd: string | undefined
   phase: PresentedOpenPhase | undefined
   host: PresentedHost | null
   onPreview: () => void
-  onAction: (action: PresentedAction) => void
+  /** 灵动ai 自绘动作菜单；新版上游也允许直接塞一个 actions 节点。 */
+  onAction?: (action: PresentedAction) => void
+  actions?: ReactNode
 } & PropsLocale<typeof NS>) {
   const [menuOpen, setMenuOpen] = useState(false)
   const previewRef = useRef<HTMLButtonElement>(null)
@@ -47,7 +49,7 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
   const act = (action: PresentedAction) => {
     setMenuOpen(false)
     previewRef.current?.focus()
-    onAction(action)
+    onAction?.(action)
   }
   /** Prefer the desktop shell's direct reveal IPC: no local plugin transport or model round-trip. */
   const revealDirect = async () => {
@@ -57,14 +59,14 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
       readonly lingdong?: { readonly showInFolder?: (path: string) => Promise<{ ok: boolean; message?: string }> }
     }).lingdong
     if (bridge?.showInFolder === undefined || cwd === undefined) {
-      onAction('reveal')
+      onAction?.('reveal')
       return
     }
     try {
       const result = await bridge.showInFolder(resolveWorkspacePath(cwd, file.path))
-      if (result.ok !== true) onAction('reveal')
+      if (result.ok !== true) onAction?.('reveal')
     } catch {
-      onAction('reveal')
+      onAction?.('reveal')
     }
   }
   const name = basename(file.path)
@@ -87,24 +89,27 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
           <span className={css.previewHint}>{t('presented.preview')}</span>
         </span>
       </div>
-      <div className={css.split}>
-        <button ref={previewRef} type="button" className={css.open}
-          aria-label={t('presented.previewButton', { name: file.path })}
-          onClick={onPreview}>{t('presented.action')}</button>
-        <Menu className={css.menuAnchor} open={menuOpen && !menuDisabled} autoFocus portal align="end" onClose={() => { setMenuOpen(false) }}
-          anchor={<button type="button" className={css.chevron} disabled={menuDisabled}
-            aria-haspopup="menu" aria-expanded={menuOpen && !menuDisabled}
-            aria-label={t('presented.more', { name: file.path })}
-            onClick={() => { setMenuOpen(value => !value) }}>
-            <IconChevronDownOutline14 size={11} />
-          </button>}
-          items={[
-            { id: 'open', icon: <IconRightUpOutline16 size={16} className={css.menuActionIcon} />,
-              label: t('presented.defaultApp') },
-            { id: 'reveal', icon: <IconFolderOpenOutline16 />,
-              label: t(`presented.${reveal}`) },
-          ]}
-          onSelect={(id) => { if (id === 'reveal') void revealDirect(); else act('open') }} />
+      <div className={css.actionsRow}>
+        {actions}
+        {onAction === undefined ? null : <div className={css.split}>
+          <button ref={previewRef} type="button" className={css.open}
+            aria-label={t('presented.previewButton', { name: file.path })}
+            onClick={onPreview}>{t('presented.action')}</button>
+          <Menu className={css.menuAnchor} open={menuOpen && !menuDisabled} autoFocus portal align="end" onClose={() => { setMenuOpen(false) }}
+            anchor={<button type="button" className={css.chevron} disabled={menuDisabled}
+              aria-haspopup="menu" aria-expanded={menuOpen && !menuDisabled}
+              aria-label={t('presented.more', { name: file.path })}
+              onClick={() => { setMenuOpen(value => !value) }}>
+              <IconChevronDownOutlineMedium size={11} />
+            </button>}
+            items={[
+              { id: 'open', icon: <IconRightUpOutlineMedium size={16} className={css.menuActionIcon} />,
+                label: t('presented.defaultApp') },
+              { id: 'reveal', icon: <IconFolderOpenOutlineMedium />,
+                label: t(`presented.${reveal}`) },
+            ]}
+            onSelect={(id) => { if (id === 'reveal') void revealDirect(); else act('open') }} />
+        </div>}
       </div>
     </div>
   </div>

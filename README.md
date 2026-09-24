@@ -84,5 +84,28 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-最新反馈修复版安装包**已发布到生产下载页**。当前状态详见
-[`docs/交接-新对话-20260920.md`](docs/交接-新对话-20260920.md)。
+2026-09-23 又完成一轮外放安全与稳定性加固，最新包 **0.1.6-alpha.2.1** 已本地构建，尚未发布。
+
+### 2026-09-23 加固包
+
+```text
+E:\灵动ai客户端\upstream\dsh-harness\apps\desktop\.desktop-build2\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.6-alpha.2.1-win-x64.exe
+```
+
+- 大小：`379720883` 字节
+- SHA256：`56B649CCBBC311EF3CFE8FC575424276A16BD3032FFD40BFB461B8CE08505907`
+- 状态：未签名、未发布
+- 客户端版本独立于 DSH 基础版本；DSH 运行时仍为 `0.1.6-alpha.2`
+- 关闭 `session-telemetry-otel` 与 `session-log-deepseek`
+- 默认权限改为 `workspace-write`，不再默认完全权限
+- 网关密钥只走环境变量，不再写 agent 可读的 `.credentials.yaml`
+- 登录态使用 Electron `safeStorage` 加密；会话/缓存放到应用自己的 `userData/dsh-home`
+- 侧栏和交作品按当前课堂工作区隔离
+- 每个课堂用独立工作区标记，避免同名学生/同名课时复用旧目录
+- 交作品识别更多文件类型；平台尚不支持的类型会显示但不可提交
+- HTML 预览支持本地图片/媒体打包并禁止外部网络连接
+- 更新器只接受平台同域 HTTPS 下载地址，校验固定文件名、大小和 SHA256
+- 发布脚本禁止同版本覆盖发布，并核对远端 SHA256
+- 卸载时可选清理本机登录凭据与聊天记录，学生作品目录不自动删除
+
+当前状态详见 [`docs/交接-新对话-20260920.md`](docs/交接-新对话-20260920.md)。

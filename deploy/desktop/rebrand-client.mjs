@@ -231,14 +231,8 @@ edit('apps/desktop/installer/window-frame.cpp', (text) => text
   .split('482.0f').join('500.0f')
   .split('484.0f').join('502.0f'));
 
-// ⑤c 修正 NSIS 查找安装器资源的构建根。
-//    配置层的 `beforeBuild` 把 BMP/DLL 写到 `$LINGDONG_BUILD_ROOT`（本项目约定 `.desktop-build2`），
-//    但上游 `installer.nsh` 默认还指向 `.desktop-build`，导致安装器明明生成了新图却嵌入旧缓存。
-edit('apps/desktop/scripts/installer.nsh', (text) =>
-  text.replace(
-    '${__FILEDIR__}\\..\\.desktop-build\\targets\\win-x64\\installer-ui',
-    '${__FILEDIR__}\\..\\.desktop-build2\\targets\\win-x64\\installer-ui',
-  ));
+// ⑤c 安装器资源构建根：0.1.7 起上游把根目录固定为 apps/desktop/.desktop-build（不再读环境变量），
+//    所以这里不再改写 installer.nsh；0.1.6 时代的 .desktop-build2 改写已删除（否则 NSIS 找不到 window-frame.dll）。
 // ⑥ dsh 界面里的字标：**字符串替换改不动** —— 上游那幅字标是矢量稿，
 //    "deepseek" 那几个字母是 SVG path 而不是文本节点（上一轮就是卡在这：扫了 4470 个文件、
 //    命中 150 个，学生打开客户端看到的还是上游字标）。所以直接换"字标产地"：

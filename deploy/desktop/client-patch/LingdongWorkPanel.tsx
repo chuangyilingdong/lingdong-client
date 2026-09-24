@@ -27,6 +27,8 @@ interface WorkCandidate {
   readonly path: string
   readonly displayPath: string
   readonly updatedAt: number
+  readonly source: 'session' | 'workspace'
+  readonly submittable: boolean
 }
 
 interface WorkItemView {
@@ -38,6 +40,7 @@ interface WorkItemView {
   readonly lessonTitle: string
   readonly submittedAt: string
   readonly teacherComment: string
+  readonly submissionRound: number
 }
 
 interface WorksView {
@@ -46,6 +49,7 @@ interface WorksView {
 }
 
 interface ClassroomView {
+  readonly id: string
   readonly lessonTitle: string
 }
 
@@ -74,6 +78,7 @@ interface LingdongDesktopBridge {
     readonly items: readonly BatchBridgeItem[]
   }) => Promise<BatchResponse | undefined>
   readonly listWorks?: () => Promise<unknown>
+  readonly scanWorkFiles?: () => Promise<unknown>
   readonly context?: () => Promise<unknown>
 }
 
@@ -158,8 +163,25 @@ function pathBasename(raw: string): string {
   return parts[parts.length - 1] || normalized
 }
 
+const SUBMITTABLE_WORK_EXTENSIONS = new Set(['.htm', '.html', '.docx', '.xlsx', '.pptx'])
+const RECOGNIZED_WORK_EXTENSIONS = new Set([
+  ...SUBMITTABLE_WORK_EXTENSIONS,
+  '.pdf', '.md', '.txt', '.csv', '.json', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.py',
+  '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.go', '.rs', '.lua', '.rb', '.php', '.sql',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.mp3', '.wav', '.mp4', '.webm', '.mov', '.zip',
+])
+
+function extensionOf(raw: string): string {
+  const extension = /\.([a-z0-9]+)$/iu.exec(pathBasename(raw))?.[1]
+  return extension === undefined ? '' : '.' + extension.toLocaleLowerCase('en-US')
+}
+
 function isSubmittableWorkPath(raw: string): boolean {
-  return /\.(?:html?|docx|xlsx|pptx)$/iu.test(raw)
+  return SUBMITTABLE_WORK_EXTENSIONS.has(extensionOf(raw))
+}
+
+function isRecognizedWorkPath(raw: string): boolean {
+  return RECOGNIZED_WORK_EXTENSIONS.has(extensionOf(raw))
 }
 
 function displayPathFor(cwd: string, raw: string): string {
@@ -177,7 +199,7 @@ function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary:
   const cwd = summary.cwd?.trim() ?? ''
   if (cwd === '') return []
   const add = (rawPath: string): void => {
-    if (!isSubmittableWorkPath(rawPath)) return
+    if (!isRecognizedWorkPath(rawPath)) return
     const normalized = normalizedPath(rawPath)
     if (normalized === '') return
     const key = `${summary.id}\u0000${normalized}`
@@ -190,6 +212,8 @@ function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary:
       path: rawPath,
       displayPath: displayPathFor(cwd, rawPath),
       updatedAt: summary.updatedAt,
+      source: 'session',
+      submittable: isSubmittableWorkPath(rawPath),
     })
   }
 
@@ -265,6 +289,38 @@ async function scanWorkCandidates(
   return [...found.values()].sort((left, right) => right.updatedAt - left.updatedAt || left.displayPath.localeCompare(right.displayPath))
 }
 
+async function scanWorkspaceCandidates(
+  bridge: LingdongDesktopBridge | undefined,
+  signal: AbortSignal,
+): Promise<WorkCandidate[]> {
+  if (bridge?.scanWorkFiles === undefined || signal.aborted) return []
+  const response = await bridge.scanWorkFiles().catch(() => null)
+  if (signal.aborted) throw new DOMException('aborted', 'AbortError')
+  const root = asRecord(response)
+  if (root?.ok !== true || typeof root.root !== 'string' || !Array.isArray(root.files)) return []
+  const cwd = root.root
+  return root.files.flatMap((value): WorkCandidate[] => {
+    const record = asRecord(value)
+    const rawPath = asString(record?.path)
+    const displayPath = asString(record?.displayPath) || pathBasename(rawPath)
+    const title = asString(record?.title) || pathBasename(rawPath)
+    const updatedAt = typeof record?.updatedAt === 'number' ? record.updatedAt : 0
+    if (rawPath === '' || !isRecognizedWorkPath(rawPath)) return []
+    const normalized = normalizedPath(rawPath)
+    return [{
+      key: `workspace\u0000${normalized}`,
+      sessionId: 'workspace',
+      sessionTitle: title,
+      cwd,
+      path: rawPath,
+      displayPath,
+      updatedAt,
+      source: 'workspace',
+      submittable: isSubmittableWorkPath(rawPath),
+    }]
+  })
+}
+
 function normalizeWorks(value: unknown): WorksView {
   const root = asRecord(value)
   const items = Array.isArray(root?.items) ? root.items : []
@@ -280,6 +336,7 @@ function normalizeWorks(value: unknown): WorksView {
       lessonTitle: asString(record.lessonTitle),
       submittedAt: asString(record.submittedAt),
       teacherComment: asString(record.teacherComment),
+      submissionRound: typeof record.submissionRound === 'number' ? record.submissionRound : 0,
     }
   }).filter(item => item.id !== '')
   return { items: normalized, total: typeof summary?.total === 'number' ? summary.total : normalized.length }
@@ -297,11 +354,25 @@ function submittedKeysFor(
   const submittedNames = new Set(
     works
       .filter(work => work.source.toUpperCase() === 'VIBECODING')
+      .filter(work => work.status.toUpperCase() !== 'REJECTED')
       .filter(work => lessonTitle === '' || work.lessonTitle === '' || work.lessonTitle === lessonTitle)
       .map(work => normalizedEntryName(work.entryFile))
       .filter(Boolean),
   )
-  return new Set(candidates.filter(item => submittedNames.has(normalizedEntryName(item.path))).map(item => item.key))
+  const byName = new Map<string, WorkCandidate[]>()
+  for (const item of candidates) {
+    const name = normalizedEntryName(item.path)
+    const group = byName.get(name)
+    if (group === undefined) byName.set(name, [item])
+    else group.push(item)
+  }
+  const result = new Set<string>()
+  for (const name of submittedNames) {
+    const matches = byName.get(name) ?? []
+    // A basename alone cannot identify a work when the same lesson contains several index.html-like files.
+    if (matches.length === 1 && matches[0] !== undefined) result.add(matches[0].key)
+  }
+  return result
 }
 
 const STATUS_TEXT: Readonly<Record<string, string>> = {
@@ -380,6 +451,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
   const [error, setError] = useState('')
   const [result, setResult] = useState<BatchResponse | null>(null)
   const aborter = useRef<AbortController | null>(null)
+  const submitBusy = useRef(false)
 
   useEffect(() => () => { aborter.current?.abort() }, [])
 
@@ -395,11 +467,23 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
     setError('')
     setResult(null)
     try {
-      const next = await scanWorkCandidates(sessions, sessionList, controller.signal)
-      if (controller.signal.aborted) return
       const bridge = (window as Window & { readonly lingdong?: LingdongDesktopBridge }).lingdong
+      const [sessionCandidates, workspaceCandidates] = await Promise.all([
+        scanWorkCandidates(sessions, sessionList, controller.signal),
+        scanWorkspaceCandidates(bridge, controller.signal),
+      ])
+      if (controller.signal.aborted) return
+      const merged = [...sessionCandidates]
+      const seenPaths = new Set(merged.map(item => normalizedPath(item.path).toLocaleLowerCase('en-US')))
+      for (const item of workspaceCandidates) {
+        const identity = normalizedPath(item.path).toLocaleLowerCase('en-US')
+        if (seenPaths.has(identity)) continue
+        seenPaths.add(identity)
+        merged.push(item)
+      }
+      const next = merged.sort((left, right) => right.updatedAt - left.updatedAt || left.displayPath.localeCompare(right.displayPath))
       let platformWorks = normalizeWorks(null)
-      let classroom: ClassroomView = { lessonTitle: '' }
+      let classroom: ClassroomView = { id: '', lessonTitle: '' }
       if (bridge?.listWorks !== undefined) {
         const [worksResponse, contextResponse] = await Promise.all([
           bridge.listWorks().catch(() => null),
@@ -407,14 +491,15 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
         ])
         const worksRecord = asRecord(worksResponse)
         if (worksRecord?.ok === true) platformWorks = normalizeWorks(worksRecord.works)
-        const classroomRecord = asRecord(asRecord(contextResponse)?.classroom)
-        classroom = { lessonTitle: asString(classroomRecord?.lessonTitle) }
+        const contextRecord = asRecord(contextResponse)
+        const classroomRecord = asRecord(contextRecord?.classroom)
+        classroom = { id: asString(classroomRecord?.id), lessonTitle: asString(classroomRecord?.lessonTitle) }
       }
       if (controller.signal.aborted) return
       const submitted = submittedKeysFor(next, platformWorks.items, classroom.lessonTitle)
       setItems(next)
       setSubmittedKeys(submitted)
-      setSelected(new Set(next.filter(item => !submitted.has(item.key)).map(item => item.key)))
+      setSelected(new Set(next.filter(item => item.submittable && !submitted.has(item.key)).map(item => item.key)))
     } catch (scanError) {
       if (controller.signal.aborted) return
       setError(scanError instanceof Error ? scanError.message : String(scanError))
@@ -429,9 +514,9 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
     if (next) void scan()
   }
 
-  const selectable = useMemo(() => items.filter(item => !submittedKeys.has(item.key)), [items, submittedKeys])
+  const selectable = useMemo(() => items.filter(item => item.submittable && !submittedKeys.has(item.key)), [items, submittedKeys])
   const allSelected = selectable.length > 0 && selectable.every(item => selected.has(item.key))
-  const chosen = useMemo(() => selectedItems(items, selected).filter(item => !submittedKeys.has(item.key)), [items, selected, submittedKeys])
+  const chosen = useMemo(() => selectedItems(items, selected).filter(item => item.submittable && !submittedKeys.has(item.key)), [items, selected, submittedKeys])
   const works = useMemo(() => result === null ? null : normalizeWorks(result.works), [result])
   const submitted = useMemo(() => {
     if (!Array.isArray(result?.submitted)) return []
@@ -461,12 +546,13 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
   }, [result])
 
   const submit = useCallback(async () => {
-    if (chosen.length === 0) return
+    if (chosen.length === 0 || submitBusy.current) return
     const bridge = (window as Window & { readonly lingdong?: LingdongDesktopBridge }).lingdong
     if (bridge?.submitWorkBatch === undefined) {
       setError('客户端作品桥还没加载，请重启客户端后再试。')
       return
     }
+    submitBusy.current = true
     setBusy('submitting')
     setError('')
     try {
@@ -500,6 +586,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : String(submitError))
     } finally {
+      submitBusy.current = false
       setBusy('idle')
     }
   }, [chosen])
@@ -513,7 +600,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
       {open && (
         <div style={styles.panel}>
           <div style={styles.intro}>
-            扫描本机有效会话交付过的 HTML、Word、Excel 和 PPT。网页会连同本地 CSS、图片等资源一起交；已提交过的作品会自动标记，不重复提交。
+            扫描当前课堂工作区和本机有效会话里的作品文件。HTML、Word、Excel、PPT 可直接提交；其它常见文件会显示出来，但需平台扩展作品类型后才能提交。
           </div>
           <div style={styles.toolbar}>
             <label style={styles.selectionLine}>
@@ -530,19 +617,20 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
             </button>
           </div>
 
-          {busy === 'scanning' && items.length === 0 && <div style={styles.state}>正在读取本机会话历史…</div>}
-          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>没有找到有效会话交付的 HTML、Word、Excel 或 PPT。</div>}
+          {busy === 'scanning' && items.length === 0 && <div style={styles.state}>正在读取当前课堂工作区…</div>}
+          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>没有找到可识别的作品文件。</div>}
           {items.length > 0 && selectable.length === 0 && <div style={styles.state}>找到的作品都已经提交过，无需重复提交。</div>}
           {items.length > 0 && (
             <div style={styles.list}>
               {items.map(item => {
                 const isSubmitted = submittedKeys.has(item.key)
+                const unsupported = !item.submittable
                 return (
                 <label key={item.key} style={styles.item}>
                   <input
                     type="checkbox"
-                    checked={!isSubmitted && selected.has(item.key)}
-                    disabled={busy !== 'idle' || isSubmitted}
+                    checked={!isSubmitted && !unsupported && selected.has(item.key)}
+                    disabled={busy !== 'idle' || isSubmitted || unsupported}
                     onChange={event => {
                       const checked = event.currentTarget.checked
                       setSelected(current => {
@@ -555,7 +643,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
                   />
                   <span style={styles.itemBody}>
                     <span style={styles.itemTitle}>{item.sessionTitle}</span>
-                    <span style={styles.itemMeta}>{item.displayPath}{isSubmitted ? ' · 已提交，无需重复提交' : ''}</span>
+                    <span style={styles.itemMeta}>{item.displayPath}{isSubmitted ? ' · 已提交，无需重复提交' : unsupported ? ' · 已识别，但平台暂不支持此文件类型' : ''}</span>
                   </span>
                 </label>
                 )

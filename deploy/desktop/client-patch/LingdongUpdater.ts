@@ -7,12 +7,12 @@
 import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { writeFileSync } from 'node:fs'
-import { open, rm } from 'node:fs/promises'
+import { open, readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { app, BrowserWindow, dialog } from 'electron'
 import { gt, valid } from 'semver'
 
-const API_BASE = String(process.env.LINGDONG_API_BASE || 'https://iicili.cyou').replace(/\/+$/u, '')
+const API_BASE = String(process.env.LINGDONG_API_BASE || 'https://aicyld.com').replace(/\/+$/u, '')
 const VERSION_PATTERN = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/u
 
 interface UpdateFile {
@@ -95,12 +95,22 @@ async function reportUpdate(window: BrowserWindow | null, percent: number, messa
   await window.webContents.executeJavaScript(`window.__lingdongUpdate && window.__lingdongUpdate(${payload})`).catch(() => undefined)
 }
 
+function allowedUpdateUrl(candidate: string): string {
+  const base = new URL(`${API_BASE}/`)
+  const url = new URL(candidate, base)
+  const localDevelopment = !app.isPackaged && (url.hostname === '127.0.0.1' || url.hostname === 'localhost')
+  if (url.protocol !== 'https:' && !(localDevelopment && url.protocol === 'http:')) {
+    throw new Error('更新地址必须使用 HTTPS')
+  }
+  if (!localDevelopment && url.origin !== base.origin) throw new Error('更新地址不是平台下载域名')
+  if (!url.pathname.startsWith('/downloads/')) throw new Error('更新地址不是平台下载目录')
+  return url.href
+}
+
 function downloadUrl(file: UpdateFile, name: string): string {
   const configured = text(file.url)
-  if (configured !== '') {
-    try { return new URL(configured, `${API_BASE}/`).href } catch { /* fall through to manifest convention */ }
-  }
-  return `${API_BASE}/downloads/${encodeURIComponent(name)}`
+  if (configured !== '') return allowedUpdateUrl(configured)
+  return allowedUpdateUrl(`${API_BASE}/downloads/${encodeURIComponent(name)}`)
 }
 
 async function downloadAndVerify(
@@ -109,7 +119,8 @@ async function downloadAndVerify(
   version: string,
 ): Promise<string> {
   const name = text(file.name)
-  if (name === '' || !/\.exe$/iu.test(name)) throw new Error('更新清单没有可用的 Windows 安装包')
+  const expectedName = `lingdong-client-${version}-win-x64.exe`
+  if (name !== expectedName) throw new Error(`更新清单文件名不匹配：期望 ${expectedName}`)
   const expectedHash = text(file.sha256).toLocaleLowerCase('en-US')
   if (!/^[a-f0-9]{64}$/u.test(expectedHash)) throw new Error('更新清单缺少有效的 SHA256')
   const expectedSize = Number(file.size)
@@ -122,7 +133,9 @@ async function downloadAndVerify(
     const response = await fetch(downloadUrl(file, name), { signal: controller.signal })
     if (!response.ok || response.body === null) throw new Error(`下载安装包失败（HTTP ${response.status}）`)
     const total = Number(response.headers.get('content-length')) || (Number.isSafeInteger(expectedSize) ? expectedSize : 0)
-    handle = await open(destination, 'w')
+    const downloadTimeout = setTimeout(() => controller.abort(), 20 * 60_000)
+    try {
+      handle = await open(destination, 'w')
     const reader = response.body.getReader()
     const hash = createHash('sha256')
     let received = 0
@@ -146,9 +159,12 @@ async function downloadAndVerify(
     if (Number.isSafeInteger(expectedSize) && expectedSize > 0 && received !== expectedSize) {
       throw new Error(`安装包大小不一致（期望 ${expectedSize}，实际 ${received}）`)
     }
-    const actualHash = hash.digest('hex').toLocaleLowerCase('en-US')
-    if (actualHash !== expectedHash) throw new Error('安装包 SHA256 校验失败')
-    return destination
+      const actualHash = hash.digest('hex').toLocaleLowerCase('en-US')
+      if (actualHash !== expectedHash) throw new Error('安装包 SHA256 校验失败')
+      return destination
+    } finally {
+      clearTimeout(downloadTimeout)
+    }
   } catch (error) {
     await handle?.close().catch(() => undefined)
     await rm(destination, { force: true }).catch(() => undefined)
@@ -158,11 +174,20 @@ async function downloadAndVerify(
 
 async function launchInstallerAndRestart(installerPath: string): Promise<void> {
   const script = join(app.getPath('temp'), `lingdong-client-update-${Date.now()}.cmd`)
+  const result = join(app.getPath('temp'), 'lingdong-client-update-result.txt')
   const currentExecutable = process.execPath
+  await rm(result, { force: true }).catch(() => undefined)
   const content = [
     '@echo off',
     'ping 127.0.0.1 -n 2 >nul',
     `start "" /wait "${installerPath}" /S --updated`,
+    'set "LINGDONG_UPDATE_EXIT=%ERRORLEVEL%"',
+    'if not "%LINGDONG_UPDATE_EXIT%"=="0" (',
+    `  >"${result}" echo %LINGDONG_UPDATE_EXIT%`,
+    `  start "" "${currentExecutable}"`,
+    '  del /f /q "%~f0" >nul 2>nul',
+    '  exit /b',
+    ')',
     `del /f /q "${installerPath}" >nul 2>nul`,
     `start "" "${currentExecutable}"`,
     'del /f /q "%~f0" >nul 2>nul',
@@ -177,9 +202,25 @@ async function launchInstallerAndRestart(installerPath: string): Promise<void> {
 }
 
 /** @returns True when the app must quit and let the updater finish. */
+async function reportPreviousUpdateFailure(): Promise<void> {
+  const file = join(app.getPath('temp'), 'lingdong-client-update-result.txt')
+  const value = await readFile(file, 'utf8').catch(() => '')
+  if (value.trim() === '') return
+  await rm(file, { force: true }).catch(() => undefined)
+  await dialog.showMessageBox({
+    type: 'error',
+    title: '上次更新失败',
+    message: '客户端没有完成上次更新',
+    detail: `安装器退出码：${value.trim()}\n请重新打开客户端后再次尝试更新。`,
+    buttons: ['知道了'],
+    noLink: true,
+  })
+}
+
 export async function runLingdongUpdater(): Promise<boolean> {
   if (!app.isPackaged && process.env.LINGDONG_UPDATE_ALLOW_DEV !== '1') return false
   if (process.argv.includes('--updated')) return false
+  await reportPreviousUpdateFailure()
   const target = updateTarget()
   if (target === null) return false
 
@@ -190,6 +231,7 @@ export async function runLingdongUpdater(): Promise<boolean> {
     return false
   }
   if (manifest.enabled === false) return false
+  if ((text(manifest.channel) || 'stable') !== (process.env.LINGDONG_UPDATE_CHANNEL || 'stable')) return false
   const version = text(manifest.version)
   const latest = valid(version)
   const current = valid(app.getVersion())

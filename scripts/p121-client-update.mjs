@@ -65,6 +65,72 @@ try {
     assert.match(read('deploy/desktop/client-patch/gate/update.html'), /__lingdongUpdate/)
   })
 
+  check('更新地址限制为平台 HTTPS 下载域且文件名可核对', () => {
+    assert.match(updater, /allowedUpdateUrl/)
+    assert.match(updater, /url\.origin !== base\.origin/)
+    assert.match(updater, /expectedName = `lingdong-client-\$\{version\}-win-x64\.exe`/)
+  })
+  check('安装器失败会写回结果并在下次启动提示', () => {
+    assert.match(updater, /LINGDONG_UPDATE_EXIT/)
+    assert.match(updater, /reportPreviousUpdateFailure/)
+    assert.match(updater, /上次更新失败/)
+  })
+  check('关闭 DSH 遥测和官方会话日志上传', () => {
+    const patch = read('deploy/desktop/client-patch/lingdong.patch.yml')
+    assert.match(patch, /session-telemetry-otel.*disabled: true/)
+    assert.match(patch, /session-log-deepseek.*disabled: true/)
+    assert.match(read('deploy/desktop/client-patch/platform-gate.ts'), /DSH_TELEMETRY_DISABLED = '1'/)
+  })
+  check('学生端默认限制在工作区且不再写 agent 可读网关凭据', () => {
+    const patch = read('deploy/desktop/client-patch/lingdong.patch.yml')
+    const gate = read('deploy/desktop/client-patch/platform-gate.ts')
+    assert.match(patch, /defaultPreset: workspace-write/)
+    assert.doesNotMatch(patch, /defaultPreset: danger-full-access/)
+    assert.match(gate, /function removeGatewayCredential/)
+    assert.doesNotMatch(gate, /writeGatewayCredential\(/)
+  })
+  check('会话按课堂工作区隔离', () => {
+    assert.match(apply, /classroomWorkspacePath/)
+    assert.match(apply, /samePath\(value\.cwd, classroomWorkspacePath\)/)
+  })
+  check('作品面板识别工作区文件并区分平台不支持类型', () => {
+    const panel = read('deploy/desktop/client-patch/LingdongWorkPanel.tsx')
+    assert.match(panel, /scanWorkFiles/)
+    assert.match(panel, /RECOGNIZED_WORK_EXTENSIONS/)
+    assert.match(panel, /平台暂不支持此文件类型/)
+  })
+  check('HTML 预览打包本地图片和媒体资源', () => {
+    assert.match(read('deploy/desktop/client-patch/HtmlPreviewPack.ts'), /img\[src\]/)
+    assert.match(read('deploy/desktop/client-patch/HtmlPreviewBootstrap.ts'), /image/)
+    assert.match(read('deploy/desktop/client-patch/HtmlPreviewBootstrap.ts'), /Content-Security-Policy/)
+    assert.match(read('deploy/desktop/client-patch/HtmlPreviewBytes.ts'), /encodeBytes/)
+  })
+
+  check('域名与发布机已切到新环境', () => {
+    const gate = read('deploy/desktop/client-patch/platform-gate.ts')
+    const updater = read('deploy/desktop/client-patch/LingdongUpdater.ts')
+    assert.match(gate, /https:\/\/aicyld\.com/)
+    assert.match(updater, /https:\/\/aicyld\.com/)
+    assert.doesNotMatch(gate, /iicili/)
+    assert.doesNotMatch(updater, /iicili/)
+    assert.match(publish, /root@8\.134\.80\.184/)
+    assert.match(publish, /https:\/\/aicyld\.com\/downloads/)
+    assert.doesNotMatch(publish, /39\.106\.183\.200|iicili/)
+    assert.match(read('docs/平台接口契约.md'), /https:\/\/aicyld\.com/)
+  })
+
+  check('客户端版本独立于 DSH 基线且每次发布可递增', () => {
+    const build = read('scripts/build-win.sh')
+    // 版本号本身每次发版都会变，这里只锁「可覆盖 + 语义化」的形状。
+    assert.match(build, /LINGDONG_CLIENT_VERSION:-\d+\.\d+\.\d+/)
+    assert.match(build, /LINGDONG_DSH_BASE_VERSION/)
+    assert.match(apply, /LINGDONG_DSH_BASE_VERSION/)
+    assert.match(apply, /resolvedClientVersion/)
+    assert.match(apply, /spawn\(process\.execPath/)
+    assert.match(publish, /REMOTE_VERSION.*VERSION/s)
+    assert.match(publish, /ALLOW_SAME_VERSION_REPUBLISH/)
+  })
+
   console.log(JSON.stringify({ name: 'p121-client-update', pass: true, checks: checks.length }))
 } catch (error) {
   console.error(error)

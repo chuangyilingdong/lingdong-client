@@ -40,7 +40,7 @@ export const lingdongClassroomWorkspaceEntry = {
     let appliedSessionId = ''
 
     const ensure = async (): Promise<void> => {
-      if (disposed || busy) return
+      if (disposed || busy || typeof window === 'undefined') return
       const bridge = (window as Window & { readonly lingdong?: LingdongContextBridge }).lingdong
       if (bridge?.context === undefined) return
       busy = true

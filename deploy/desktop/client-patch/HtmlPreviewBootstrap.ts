@@ -1,9 +1,10 @@
 /** 灵动ai：固定 bootstrap 运行在 opaque iframe 内；不向宿主暴露回调，并为沙箱补内存存储。 */
-import { decodeText, encodeText } from './bytes.ts'
+import { decodeText, encodeBytes, encodeText } from './bytes.ts'
 
 /** One statically declared local script or stylesheet, already read under the source file's authority. */
 export interface HtmlAsset {
-  readonly kind: 'script' | 'stylesheet'
+  readonly kind: 'script' | 'stylesheet' | 'image' | 'binary'
+  readonly mime?: string
   /** Original HTML attribute, not a Host absolute path. */
   readonly reference: string
   readonly data: Uint8Array<ArrayBuffer>
@@ -24,9 +25,12 @@ export interface HtmlBundle {
 export function createHtmlDocument(bundle: HtmlBundle): string {
   const payload = encodeText(JSON.stringify({
     html: decodeText(bundle.data),
-    assets: bundle.assets.map(asset => ({ kind: asset.kind, reference: asset.reference, text: decodeText(asset.data) })),
+    assets: bundle.assets.map(asset => {
+      if (asset.kind === 'script' || asset.kind === 'stylesheet') decodeText(asset.data)
+      return { kind: asset.kind, reference: asset.reference, data: encodeBytes(asset.data), mime: asset.mime }
+    }),
   }))
-  return `<!doctype html><meta charset="utf-8"><script>(()=>{
+  return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' blob:; style-src 'unsafe-inline' blob:; img-src data: blob:; media-src data: blob:; font-src data: blob:; connect-src 'none'; object-src 'none'; base-uri 'none'"><script>(()=>{
 const bytes=data=>Uint8Array.from(atob(data),character=>character.charCodeAt(0));
 const text=data=>new TextDecoder('utf-8',{fatal:true}).decode(bytes(data));
 const bundle=JSON.parse(text("${payload}"));
@@ -49,11 +53,23 @@ let html=bundle.html;
 if(bundle.assets.length){
   const parsed=new DOMParser().parseFromString(html,'text/html');
   for(const asset of bundle.assets){
-    const script=asset.kind==='script';
-    const url=URL.createObjectURL(new Blob([asset.text],{type:script?'application/javascript':'text/css'}));
-    const attribute=script?'src':'href';
-    for(const element of parsed.querySelectorAll(script?'script[src]':'link[rel~="stylesheet" i][href]')){
-      if(element.getAttribute(attribute)===asset.reference)element.setAttribute(attribute,url);
+    const bytesForAsset=bytes(asset.data);
+    const type=asset.mime||(asset.kind==='script'?'application/javascript':asset.kind==='stylesheet'?'text/css':'application/octet-stream');
+    const url=URL.createObjectURL(new Blob([bytesForAsset],{type}));
+    if(asset.kind==='script'){
+      for(const element of parsed.querySelectorAll('script[src]')){
+        if(element.getAttribute('src')===asset.reference)element.setAttribute('src',url);
+      }
+    }else if(asset.kind==='stylesheet'){
+      for(const element of parsed.querySelectorAll('link[rel~="stylesheet" i][href]')){
+        if(element.getAttribute('href')===asset.reference)element.setAttribute('href',url);
+      }
+    }else{
+      for(const element of parsed.querySelectorAll('[src],[href],[poster]')){
+        for(const attribute of ['src','href','poster']){
+          if(element.getAttribute(attribute)===asset.reference)element.setAttribute(attribute,url);
+        }
+      }
     }
   }
   html='<!doctype html>'+parsed.documentElement.outerHTML;

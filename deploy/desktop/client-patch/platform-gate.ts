@@ -1,7 +1,8 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { readFile, realpath, stat } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 
 /**
@@ -25,15 +26,13 @@ import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
  *     ⚠️ **不要写 profile 里的 `cordis.patch.yml`**：桌面宿主显式传的是 `patchFiles: []`，而
  *        `profile-context.ts` 是 `initialProfile?.patches ?? loadOptionalPatches(...)` ——
  *        空数组不是 undefined，所以那个文件**永远不会被读**；而且 app 的恢复流程还会把它重置并备份掉。
- *   · **凭据文件的 `refs`**：一并写上（见 writeGatewayCredential），但**别把它当承重的那一条** ——
- *     补丁层声明的是 `apiKeyEnv: PLATFORM_GATEWAY_KEY`（读环境变量），而不是 `apiKeyRef`，
- *     所以 `refs` 里那个键现在我们这条链路上**没有任何读方**。上一轮"写凭据文件也没用"的结论
- *     就来自这里，那是**实验设计的问题**，不是"宿主起太早"的证据。
+ *   · **不要写凭据文件**：补丁层声明的是 `apiKeyEnv: PLATFORM_GATEWAY_KEY`，只读环境变量；
+ *     历史版本曾把 key 写进 `$DSH_HOME/.credentials.yaml`，那是 agent 可读的泄密路径，现已移除并在登录/退出时清理。
  */
 const GATE_DIR = app.isPackaged
   ? join(process.resourcesPath, 'gate')
   : join(app.getAppPath(), 'resources', 'gate')
-const API_BASE = String(process.env.LINGDONG_API_BASE || 'https://iicili.cyou').replace(/\/$/, '')
+const API_BASE = String(process.env.LINGDONG_API_BASE || 'https://aicyld.com').replace(/\/$/, '')
 
 interface LingdongUser { readonly displayName?: string; readonly login?: string }
 interface LingdongSession { readonly token: string; readonly user?: LingdongUser }
@@ -53,6 +52,8 @@ interface LingdongContext {
   readonly upcoming: LingdongClassroom | null
   readonly gateway?: { readonly baseUrl?: string; readonly key?: string }
   readonly presets: readonly { readonly title: string; readonly text: string }[]
+  readonly models?: readonly { readonly id?: unknown; readonly displayName?: unknown }[]
+  readonly defaultModel?: unknown
   readonly sends: { readonly limit: number | null; readonly used: number; readonly remaining: number | null } | null
   readonly message: string
   /** Classroom workspace prepared before the DSH host comes up. */
@@ -80,6 +81,13 @@ interface PreparedWork {
   readonly files: readonly WorkFilePayload[]
   readonly missing: readonly string[]
 }
+interface WorkspaceFileCandidate {
+  readonly path: string
+  readonly displayPath: string
+  readonly title: string
+  readonly updatedAt: number
+  readonly size: number
+}
 type GateAction =
   | { action: 'login' }
   | { action: 'refresh' }
@@ -95,6 +103,12 @@ const TEXT_WORK_EXTENSIONS = new Set([
   '.ts', '.tsx', '.txt', '.webmanifest', '.xml', '.yaml', '.yml',
 ])
 const SUBMITTABLE_WORK_EXTENSIONS = new Set(['.htm', '.html', '.docx', '.xlsx', '.pptx'])
+const RECOGNIZED_WORK_EXTENSIONS = new Set([
+  ...SUBMITTABLE_WORK_EXTENSIONS,
+  '.pdf', '.md', '.txt', '.csv', '.json', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.py',
+  '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.go', '.rs', '.lua', '.rb', '.php', '.sql',
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.mp3', '.wav', '.mp4', '.webm', '.mov', '.zip',
+])
 const SCANNABLE_WORK_EXTENSIONS = new Set(['.css', '.htm', '.html', '.svg'])
 /** 平台错误要保留业务 code；界面上仍展示平台原始 message。 */
 class PlatformRequestError extends Error {
@@ -145,21 +159,59 @@ function readJson<T>(file: string): T | null {
     return text ? (JSON.parse(text) as T) : null
   } catch { return null }
 }
-function readSession(): LingdongSession | null {
-  const session = readJson<LingdongSession>(sessionFile())
-  return session && typeof session.token === 'string' && session.token ? session : null
-}
-function writeSession(session: LingdongSession | null): void {
-  try { writeFileSync(sessionFile(), session === null ? '' : JSON.stringify(session, null, 2)) } catch { /* 存不下就当没登录 */ }
+interface StoredSession extends Partial<LingdongSession> {
+  readonly version?: number
+  readonly encrypted?: boolean
+  readonly value?: string
 }
 
-async function call(path: string, { method = 'GET', body, token }: { method?: string; body?: unknown; token?: string } = {}): Promise<any> {
+function dshHome(): string {
+  const configured = String(process.env.DSH_HOME || '').trim()
+  return configured || join(app.getPath('userData'), 'dsh-home')
+}
+
+function readSession(): LingdongSession | null {
+  const stored = readJson<StoredSession>(sessionFile())
+  if (stored === null) return null
+  // Migrate the old plaintext session on first read.
+  if (typeof stored.token === 'string' && stored.token) {
+    const legacy: LingdongSession = stored.user === undefined ? { token: stored.token } : { token: stored.token, user: stored.user }
+    writeSession(legacy)
+    return legacy
+  }
+  if (stored.encrypted !== true || typeof stored.value !== 'string' || !safeStorage.isEncryptionAvailable()) return null
+  try {
+    const decoded = safeStorage.decryptString(Buffer.from(stored.value, 'base64'))
+    const session = JSON.parse(decoded) as LingdongSession
+    return typeof session?.token === 'string' && session.token ? session : null
+  } catch { return null }
+}
+
+function writeSession(session: LingdongSession | null): void {
+  const file = sessionFile()
+  try {
+    if (session === null) { rmSync(file, { force: true }); return }
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('系统凭据加密不可用')
+    const encrypted = safeStorage.encryptString(JSON.stringify(session)).toString('base64')
+    writeFileSync(file, JSON.stringify({ version: 1, encrypted: true, value: encrypted }))
+  } catch (error) {
+    console.error('灵动ai：保存登录态失败', error)
+    try { rmSync(file, { force: true }) } catch { /* best effort */ }
+  }
+}
+
+async function call(path: string, { method = 'GET', body, token, timeoutMs = 15_000 }: { method?: string; body?: unknown; token?: string; timeoutMs?: number } = {}): Promise<any> {
   const headers: Record<string, string> = { 'content-type': 'application/json' }
   if (token) headers.authorization = `Bearer ${token}`
   const init: RequestInit = { method, headers }
   // ⚠️ 上游开了 `exactOptionalPropertyTypes`：不能写成 `body: undefined`，要按需赋值。
   if (body !== undefined) init.body = JSON.stringify(body)
-  const response = await fetch(`${API_BASE}${path}`, init)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  const response = await fetch(`${API_BASE}${path}`, { ...init, signal: controller.signal }).catch((error: unknown) => {
+    if (controller.signal.aborted) throw new PlatformRequestError('平台连接超时，请稍后重试。')
+    throw error
+  }).finally(() => clearTimeout(timer))
   const payload = await response.json().catch(() => ({}))
   if (!response.ok) {
     const code = typeof payload?.error?.code === 'string' ? payload.error.code : undefined
@@ -169,6 +221,69 @@ async function call(path: string, { method = 'GET', body, token }: { method?: st
     )
   }
   return payload?.data ?? payload
+}
+
+const LINGDONG_MODELS_BEGIN = '# LINGDONG_MODELS_BEGIN'
+const LINGDONG_MODELS_END = '# LINGDONG_MODELS_END'
+const LINGDONG_DEFAULT_MODEL_MARKER = '# LINGDONG_DEFAULT_MODEL'
+const LINGDONG_FALLBACK_MODEL = 'deepseek-flash'
+
+interface LingdongGatewayModel {
+  readonly id: string
+  readonly name: string
+  readonly input: readonly ['text', 'image']
+}
+
+/** Normalize platform data into DSH's hand-declared provider model shape. */
+function gatewayModels(context: LingdongContext): readonly LingdongGatewayModel[] {
+  if (!Array.isArray(context.models)) return []
+  const seen = new Set<string>()
+  const models: LingdongGatewayModel[] = []
+  for (const item of context.models) {
+    const id = typeof item?.id === 'string' ? item.id.trim() : ''
+    if (id === '' || seen.has(id)) continue
+    const displayName = typeof item?.displayName === 'string' ? item.displayName.trim() : ''
+    seen.add(id)
+    models.push({ id, name: displayName || id, input: ['text', 'image'] as const })
+  }
+  return models
+}
+
+function gatewayDefaultModel(context: LingdongContext, models: readonly LingdongGatewayModel[]): string {
+  const requested = typeof context.defaultModel === 'string' ? context.defaultModel.trim() : ''
+  return models.some(model => model.id === requested) ? requested : (models[0]?.id || LINGDONG_FALLBACK_MODEL)
+}
+
+/**
+ * 把平台下发的模型清单渲染进 DSH 补丁层模板。
+ * 平台没给 models（旧平台/渠道未配置）时原样返回模板，继续走内置兜底。
+ * JSON.stringify() 的输出同时是合法 YAML/JSON 标量，中文、冒号、引号都不用手写转义。
+ */
+function renderGatewayPatch(template: string, context: LingdongContext): string {
+  if (!Array.isArray(context.models) || context.models.length === 0) return template
+  const models = gatewayModels(context)
+  if (models.length === 0) return template
+  const begin = template.indexOf(LINGDONG_MODELS_BEGIN)
+  const end = template.indexOf(LINGDONG_MODELS_END)
+  if (begin < 0 || end < begin || !template.includes(LINGDONG_DEFAULT_MODEL_MARKER)) {
+    console.error('灵动ai：补丁层缺少模型清单锚点，沿用内置模型')
+    return template
+  }
+  const defaultModel = gatewayDefaultModel(context, models)
+  const lineStart = template.lastIndexOf('\n', begin - 1) + 1
+  const indent = template.slice(lineStart, begin)
+  const eol = template.includes('\r\n') ? '\r\n' : '\n'
+  const block = [
+    LINGDONG_MODELS_BEGIN,
+    ...models.map(model => `${indent}- ${JSON.stringify(model)}`),
+    LINGDONG_MODELS_END,
+  ].join(eol)
+  let rendered = template.slice(0, begin) + block + template.slice(end + LINGDONG_MODELS_END.length)
+  rendered = rendered.replace(
+    /^([ \t]*)model:[^\r\n]*# LINGDONG_DEFAULT_MODEL[^\r\n]*/mu,
+    (_line, indent: string) => `${indent}model: ${JSON.stringify(defaultModel)} # LINGDONG_DEFAULT_MODEL`,
+  )
+  return rendered
 }
 
 /**
@@ -183,11 +298,11 @@ async function call(path: string, { method = 'GET', body, token }: { method?: st
  *     does not support reasoning effort "low"`（实测），去掉才回落到渠道默认。
  * 只改这一个键，其余设置原样保留；改前留一份 .lingdong-backup。
  */
-function pointDefaultModelToGateway(home: string): void {
+function pointDefaultModelToGateway(home: string, model: string): void {
   const file = join(home, 'settings.yaml')
   let text = ''
   try { text = existsSync(file) ? readFileSync(file, 'utf8') : '' } catch { return }
-  const block = 'agent-default-model:\n  provider: platform-gateway\n  model: deepseek-flash\n'
+  const block = `agent-default-model:\n  provider: platform-gateway\n  model: ${JSON.stringify(model)}\n`
   const next = /^agent-default-model:\n(?:[ \t]+.*\n)*/mu.test(text)
     ? text.replace(/^agent-default-model:\n(?:[ \t]+.*\n)*/mu, block)
     : block + text
@@ -211,34 +326,18 @@ function pointDefaultModelToGateway(home: string): void {
  * 只动 `refs:` 段里的一个键，文件其余内容（如 `records` 里的浏览器会话授权）原样保留；
  * 改前留一份 .lingdong-backup。
  */
-function writeGatewayCredential(home: string, key: string): void {
+function removeGatewayCredential(home: string): void {
   const file = join(home, '.credentials.yaml')
-  let text = ''
-  try { text = existsSync(file) ? readFileSync(file, 'utf8') : '' } catch { text = '' }
-  const entry = `  PLATFORM_GATEWAY_KEY: ${key}`
-  // `refs: {}` 也是一个合法文档。先把它展开，否则旧逻辑会以为没有 refs，
-  // 再把第二个 `version/refs` 前缀拼上去，凭据插件会因 DUPLICATE_KEY 拒启。
-  let next = text
-  if (/^refs:\s*\{\}\s*$/mu.test(next)) {
-    next = next.replace(/^refs:\s*\{\}\s*$/mu, 'refs:')
-  }
-  if (!/^refs:\s*/mu.test(next)) {
-    next = /^version:\s*.*$/mu.test(next)
-      ? next.replace(/^version:\s*.*$/mu, matched => `${matched}\nrefs:`)
-      : `version: 1\nrefs:\n${next}`
-  }
-  if (/^ {2}PLATFORM_GATEWAY_KEY:.*$/mu.test(next)) {
-    next = next.replace(/^ {2}PLATFORM_GATEWAY_KEY:.*$/mu, entry)
-  } else if (/^refs:\s*$/mu.test(next)) {
-    next = next.replace(/^refs:\s*$/mu, `refs:\n${entry}`)
-  } else if (/^refs:\s*\{.*\}\s*$/mu.test(next)) {
-    next = next.replace(/^refs:\s*\{.*\}\s*$/mu, `refs:\n${entry}`)
-  }
   try {
+    if (!existsSync(file)) return
+    const before = readFileSync(file, 'utf8')
+    const next = before.replace(/^ {2}PLATFORM_GATEWAY_KEY:.*(?:\r?\n|$)/gmu, '')
+    if (next !== before) writeFileSync(file, next)
     const backup = `${file}.lingdong-backup`
-    if (existsSync(file) && !existsSync(backup)) writeFileSync(backup, text)
-    writeFileSync(file, next)
-  } catch (error) { console.error('灵动ai：写入凭据失败', error) }
+    if (existsSync(backup)) rmSync(backup, { force: true })
+  } catch (error) {
+    console.error('灵动ai：清理旧网关凭据失败（不影响环境变量注入）', error)
+  }
 }
 function contextPath(sessionId = ''): string {
   return `/api/student/runtime/client-context${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`
@@ -314,7 +413,10 @@ async function refreshClassroomContext(): Promise<LingdongContext> {
 }
 
 function clearLoginState(): void {
+  delete process.env.PLATFORM_GATEWAY_KEY
+  delete process.env.PLATFORM_GATEWAY_BASE_URL
   writeSession(null)
+  removeGatewayCredential(dshHome())
   writeClassroomContext({ classroom: null, classrooms: [], reason: null, upcoming: null, presets: [], sends: null, message: '', sessionId: '' })
 }
 
@@ -606,7 +708,7 @@ async function submitWork(token: string, item: WorkBatchItem): Promise<WorkBatch
     throw new PlatformRequestError('这个作品编码后太大了，请减少素材后再交。')
   }
   const selectedSessionId = readClassroomContext().sessionId || ''
-  const data = await call(`/api/student/runtime/submit-upload${selectedSessionId ? `?sessionId=${encodeURIComponent(selectedSessionId)}` : ''}`, { method: 'POST', token, body })
+  const data = await call(`/api/student/runtime/submit-upload${selectedSessionId ? `?sessionId=${encodeURIComponent(selectedSessionId)}` : ''}`, { method: 'POST', token, body, timeoutMs: 60_000 })
   const record = asRecord(data)
   return {
     item,
@@ -622,11 +724,52 @@ function pushUnique(target: string[], values: readonly string[]): void {
   }
 }
 
+function scanWorkspaceFiles(context: LingdongContext, limit = 500): WorkspaceFileCandidate[] {
+  const root = String(context.workspacePath || '').trim()
+  if (root === '' || !existsSync(root)) return []
+  const found: WorkspaceFileCandidate[] = []
+  const queue: Array<{ readonly directory: string; readonly depth: number }> = [{ directory: root, depth: 0 }]
+  while (queue.length > 0 && found.length < limit) {
+    const current = queue.shift()
+    if (current === undefined || current.depth > 6) continue
+    let names: string[] = []
+    try { names = readdirSync(current.directory) } catch { continue }
+    for (const name of names) {
+      if (found.length >= limit) break
+      if (name.startsWith('.') || name === 'node_modules' || (name === 'dist' && current.depth > 0)) continue
+      const absolute = join(current.directory, name)
+      let info: ReturnType<typeof statSync>
+      try { info = statSync(absolute) } catch { continue }
+      if (info.isDirectory()) { queue.push({ directory: absolute, depth: current.depth + 1 }); continue }
+      if (!info.isFile() || info.size > MAX_WORK_TOTAL_BYTES) continue
+      const extension = extname(name).toLocaleLowerCase('en-US')
+      if (!RECOGNIZED_WORK_EXTENSIONS.has(extension)) continue
+      found.push({
+        path: absolute,
+        displayPath: relative(root, absolute).replaceAll('\\', '/'),
+        title: basename(absolute),
+        updatedAt: info.mtimeMs,
+        size: info.size,
+      })
+    }
+  }
+  return found.sort((left, right) => right.updatedAt - left.updatedAt)
+}
+
+
 // 预设、发送次数在渲染时读它；handler 常驻应用生命周期。
 // ⚠️ 传 `{ refresh: true }` = **再去问一次平台**（发送次数得这么拿才准，见 refreshClassroomContext）。
 ipcMain.handle('lingdong:classroom-context', async (_event, payload: unknown) => {
   const wantsRefresh = payload !== null && typeof payload === 'object' && (payload as { refresh?: unknown }).refresh === true
   return wantsRefresh ? await refreshClassroomContext() : readClassroomContext()
+})
+ipcMain.handle('lingdong:scan-work-files', () => {
+  try {
+    const context = readClassroomContext()
+    return { ok: true, root: context.workspacePath || '', files: scanWorkspaceFiles(context) }
+  } catch (error) {
+    return workFailure(error instanceof Error ? error.message : String(error))
+  }
 })
 ipcMain.handle('lingdong:account', () => readSession()?.user ?? null)
 ipcMain.handle('lingdong:logout', async () => {
@@ -717,15 +860,31 @@ function safeWorkspaceSegment(value: unknown, fallback: string, maxChars: number
   return Array.from(source).slice(0, maxChars).join('') || fallback
 }
 
-/** One physical workspace per classroom, named from the student and lesson. */
+function shortClassId(value: string): string {
+  return createHash('sha256').update(value).digest('hex').slice(0, 8)
+}
+
+/** One physical workspace per class session; friendly name, unique marker. */
 function ensureClassroomWorkspace(context: LingdongContext, user?: LingdongUser): string | undefined {
   if (!context.classroom) return undefined
   try {
     const student = safeWorkspaceSegment(user?.displayName || user?.login, '学生', 24)
     const lesson = safeWorkspaceSegment(context.classroom.lessonTitle || context.classroom.title, '课堂', 28)
+    const classroomId = String(context.classroom.id || context.sessionId || '').trim() || shortClassId(JSON.stringify(context.classroom))
     const root = join(app.getPath('documents'), '灵动ai创作')
-    const workspacePath = join(root, `${student}-${lesson}`)
+    const base = join(root, `${student}-${lesson}`)
+    const markerName = '.lingdong-classroom.json'
+    let workspacePath = base
+    if (existsSync(base)) {
+      const marker = readJson<{ readonly classroomId?: unknown }>(join(base, markerName))
+      const entries = readdirSync(base).filter(name => name !== markerName)
+      const sameClass = marker !== null && String(marker.classroomId || '') === classroomId
+      if (!sameClass && entries.length > 0) workspacePath = join(root, `${student}-${lesson}-${shortClassId(classroomId)}`)
+    }
     mkdirSync(workspacePath, { recursive: true })
+    writeFileSync(join(workspacePath, markerName), JSON.stringify({
+      classroomId, student: user?.displayName || user?.login || '', lesson, createdAt: new Date().toISOString(),
+    }, null, 2))
     return workspacePath
   } catch (error) {
     console.error('灵动ai：创建课堂工作区失败（继续使用原工作区）', error)
@@ -740,13 +899,20 @@ function applyGateway(context: LingdongContext, user?: LingdongUser): void {
   if (!key || !baseUrl) throw new Error('平台没有下发网关密钥，无法启动创作环境')
   process.env.PLATFORM_GATEWAY_KEY = String(key)
   process.env.PLATFORM_GATEWAY_BASE_URL = String(baseUrl)
-  const home = String(process.env.DSH_HOME || '').trim() || join(app.getPath('home'), '.dsh')
+  process.env.DSH_TELEMETRY_DISABLED = '1'
+  const home = dshHome()
+  process.env.DSH_HOME = home
   const patch = join(GATE_DIR, 'lingdong.patch.yml')
+  const defaultModel = gatewayDefaultModel(context, gatewayModels(context))
   if (existsSync(patch)) {
-    try { writeFileSync(join(home, 'lingdong.patch.yml'), readFileSync(patch, 'utf8')) } catch (error) { console.error('灵动ai：写入补丁层失败', error) }
+    try {
+      const rendered = renderGatewayPatch(readFileSync(patch, 'utf8'), context)
+      writeFileSync(join(home, 'lingdong.patch.yml'), rendered)
+    } catch (error) { console.error('灵动ai：写入补丁层失败', error) }
   }
-  writeGatewayCredential(home, String(key))
-  pointDefaultModelToGateway(home)
+  // Never persist the gateway key in an agent-readable file. The host receives it via env only.
+  removeGatewayCredential(home)
+  pointDefaultModelToGateway(home, defaultModel)
   const workspacePath = ensureClassroomWorkspace(context, user)
   writeClassroomContext(workspacePath === undefined ? context : { ...context, workspacePath })
 }

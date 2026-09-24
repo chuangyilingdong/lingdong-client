@@ -28,12 +28,14 @@
         # 8MiB ≈ 30 张我们的截图，而一轮"看自己的产物"通常只读 4-12 张。
         maxRequestImageBytes: 8388608
         models:
+          # LINGDONG_MODELS_BEGIN
           - id: deepseek-flash
             name: DeepSeek Flash
             input: [text, image]
           - id: deepseek-pro
             name: DeepSeek Pro
             input: [text, image]
+          # LINGDONG_MODELS_END
 
 # 默认模型必须指到我们网关，并把官方那条直连路由关掉 —— 否则学生一发消息就 MISSING_CREDENTIAL
 # （客户端里没有官方 key），而且会在模型选择器里挑到一个必然失败的模型。
@@ -41,7 +43,7 @@
   name: '@deepseek-ai/dsh-agent-default-model'
   config:
     provider: platform-gateway
-    model: deepseek-flash
+    model: deepseek-flash # LINGDONG_DEFAULT_MODEL
 - id: llm-deepseek
   name: '@deepseek-ai/dsh-llm-deepseek'
   disabled: true
@@ -57,16 +59,13 @@
 - id: permission
   name: '@deepseek-ai/dsh-permission-presets'
   config:
-    defaultPreset: danger-full-access
+    defaultPreset: workspace-write
     presets:
       read-only:
         sandbox: read-only
         approval: never
       workspace-write:
         sandbox: workspace-write
-        approval: never
-      danger-full-access:
-        sandbox: danger-full-access
         approval: never
 
 # 成人入口：cordis-*-runner 让模型自己写 JS 并以临时插件挂进宿主（官方注释写明在 Web 面上
@@ -78,3 +77,7 @@
 - {id: plugin-inventory, name: '@deepseek-ai/dsh-host-plugin-inventory', disabled: true}
 - {id: ui-plugin-manager, name: '@deepseek-ai/dsh-client-ui-plugin-manager', disabled: true}
 - {id: open-in-app, name: '@deepseek-ai/dsh-host-open-in-app', disabled: true}
+
+# 学生端禁止上传会话遥测与官方会话日志。反馈仍只保存在本地。
+- {id: session-telemetry-otel, name: '@deepseek-ai/dsh-session-telemetry-otel', disabled: true}
+- {id: session-log-deepseek, name: '@deepseek-ai/dsh-session-log-deepseek', disabled: true}
