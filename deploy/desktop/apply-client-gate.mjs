@@ -1454,6 +1454,67 @@ updateTextFile('apps/desktop/src/main.ts', (before) => {
   ].join('\n'))
 }, 'profile 与其它数据同用 userData/dsh-home')
 
+
+
+// ④o dsh-better-sidebar 的偏好层在 DSH 0.1.7 上是**坏的**（2026-09-25 追下来的第二层根因）。
+//    插件 ctx.inject(["settings"], ...) 里调用 sctx.settings.register(ns, PrefsSchema) ——
+//    那是 0.1.6 的 API；0.1.7 的 @deepseek-ai/dsh-settings 只导出 SettingsForms（configure/describe/
+//    update），**没有 register**。这句一抛，整个注入回调中断，settingsFace 永远是 undefined：
+//      · sidebar/api settings.get 返回 { value: undefined } → 客户端 parsePrefs 全用默认值；
+//      · 于是 browserAllowedLoopback 永远是空串（= 本机地址全部拦截），学生打不开 agent 起的本地预览；
+//      · 窗口/终端/沙箱等偏好同属一个 face，一起失效。
+//    修法：这一层退化成**只读视图** —— 直接把随包 config 当偏好返回（含 ④n 写的回环白名单），
+//    写入明确报错而不是静默失败。锚点漂了直接抛错，免得升版本后悄悄回到坏状态。
+//    ⚠️ 拼补丁字符串用 String.fromCharCode(9)/fromCharCode(10) 而不是反斜杠转义：
+//       在「生成补丁的补丁」里转义极易出错（踩过）。
+updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
+  if (before.includes('LINGDONG_SIDEBAR_PREFS_FALLBACK')) return before
+  const anchor = "      await runPnpm(['install', '--prod'], pluginDir)\n"
+  if (!before.includes(anchor)) {
+    report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 runPnpm(pluginDir) 锚点')
+    return before
+  }
+  const helper = [
+    '',
+    '/**',
+    ' * dsh-better-sidebar 的偏好层在 DSH 0.1.7 上失效（settings.register 已被移除）时的兜底。',
+    ' *',
+    ' * 插件用 0.1.6 的 sctx.settings.register(ns, schema) 注册偏好；0.1.7 的 SettingsForms 没有这个方法，',
+    ' * 那句一抛，插件对外就永远给「默认偏好」——其中 browserAllowedLoopback 默认空 = 本机地址全部拦截，',
+    ' * 学生因此打不开 agent 起的本地预览服务（2026-09-25 学生反馈）。改成只读视图：',
+    ' * 直接用随包 config（含 lingdong.patch.yml 里写的回环白名单）充当偏好，写入明确拒绝。',
+    ' * @param pluginDir - 刚装好的插件 profile 目录。',
+    ' */',
+    'function patchSidebarPrefs(pluginDir: string): void {',
+    "  const file = join(pluginDir, 'node_modules', 'dsh-better-sidebar', 'lib', 'index.js')",
+    "  const source = readFileSync(file, 'utf8')",
+    "  if (source.includes('LINGDONG_SIDEBAR_PREFS_FALLBACK')) return",
+    "  const tab = String.fromCharCode(9)",
+    "  const anchor = tab + tab + 'const scope = sctx.settings.register(ns, PrefsSchema);'",
+    '  if (!source.includes(anchor)) {',
+    "    throw new Error('desktop runtime: dsh-better-sidebar settings.register anchor not found (plugin upgraded?)')",
+    '  }',
+    '  const fallback = [',
+    "    tab + tab + '// LINGDONG_SIDEBAR_PREFS_FALLBACK：0.1.7 的 settings 服务没有 register(ns, schema)，',",
+    "    tab + tab + '// 这句会抛错并让整个偏好面失效 —— 退化成只读视图，用随包 config 当偏好。',",
+    "    tab + tab + 'if (typeof sctx.settings.register !== \"function\") {',",
+    "    tab + tab + tab + 'settingsFace = {',",
+    "    tab + tab + tab + tab + 'get: () => ({ value: config, revision: 0 }),',",
+    "    tab + tab + tab + tab + 'externalDisable: () => false,',",
+    "    tab + tab + tab + tab + 'update: async () => { throw new Error(\"dsh-better-sidebar: preferences are read-only in this deployment (DSH 0.1.7 removed settings.register)\") }',",
+    "    tab + tab + tab + '};',",
+    "    tab + tab + tab + 'return;',",
+    "    tab + tab + '}',",
+    "    '',",
+    "  ].join(String.fromCharCode(10))",
+    '  writeFileSync(file, source.replace(anchor, fallback + anchor))',
+    "  console.log('desktop runtime: patched dsh-better-sidebar preferences (read-only fallback)')",
+    '}',
+    '',
+  ].join('\n')
+  const call = "      await runPnpm(['install', '--prod'], pluginDir)\n      patchSidebarPrefs(pluginDir)\n"
+  return before.replace(anchor, helper + call)
+}, 'dsh-better-sidebar 偏好层在 0.1.7 上的只读兜底补丁')
 console.log(`检出：${checkout}${dryRun ? '（--dry-run）' : ''}`)
 for (const line of report) console.log('  ' + line)
 const failed = report.filter((line) => line.startsWith('!!'))

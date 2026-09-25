@@ -56,16 +56,23 @@
   name: '@deepseek-ai/dsh-user-approval'
   config:
     policy: 'never'
+# 2026-09-25：按产品要求恢复「完全访问权限」并设为默认（LINGDONG_DEFAULT_PRESET）。
+# ⚠️ 这一档 = sandbox: danger-full-access + approval: never：agent 可以读写**整台机器**（工作区外也算），
+#    而且我们的审批策略是 never（不弹确认）。孩子机上意味着其它班级目录、系统目录都在范围内。
+#    上游 base 里的定义就是这三档，我们之前只声明了前两档（等于把完全访问拿掉）。
 - id: permission
   name: '@deepseek-ai/dsh-permission-presets'
   config:
-    defaultPreset: workspace-write
+    defaultPreset: danger-full-access
     presets:
       read-only:
         sandbox: read-only
         approval: never
       workspace-write:
         sandbox: workspace-write
+        approval: never
+      danger-full-access:
+        sandbox: danger-full-access
         approval: never
 
 # 成人入口：cordis-*-runner 让模型自己写 JS 并以临时插件挂进宿主（官方注释写明在 Web 面上
@@ -84,6 +91,17 @@
 #     跑终端、驱动 agent），还会一键起 cloudflared 隧道把本机暴露到公网；学生端必须关。
 - {id: web-ui-skill-explorer, disabled: false}
 - {id: web-ui-remote-web-ui, disabled: true}
+# 侧栏「浏览器」的本地回环白名单：插件默认留空 = 本机地址全部拦截，学生就预览不了 agent 起的
+# 本地预览服务（http://127.0.0.1:8765 这类，见 2026-09-25 反馈）。裸主机名匹配任意端口，
+# 所以这三条等于放行本机所有端口；沙箱隔离（browserNoSandbox=false）保持开启。
+# ⚠️ 两条 id 都写：聚合包挂的是 web-ui-better-sidebar，独立包挂的是 better-sidebar，
+#    实际生效哪条取决于是哪个 bundle 先挂上（我们有意的顺序是聚合包优先）。
+- id: web-ui-better-sidebar
+  config:
+    browserAllowedLoopback: "127.0.0.1, localhost, [::1]"
+- id: better-sidebar
+  config:
+    browserAllowedLoopback: "127.0.0.1, localhost, [::1]"
 # 学生端禁止上传会话遥测与官方会话日志。反馈仍只保存在本地。
 - {id: session-telemetry-otel, name: '@deepseek-ai/dsh-session-telemetry-otel', disabled: true}
 - {id: session-log-deepseek, name: '@deepseek-ai/dsh-session-log-deepseek', disabled: true}

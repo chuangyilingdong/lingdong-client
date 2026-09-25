@@ -84,9 +84,21 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.6`（学生端反馈十条）已出包、**未发布**。
+2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.8`（反馈十条 + 本地预览 + 完全访问权限）已出包、**未发布**。
 
-### 2026-09-25 学生端反馈十条（`0.1.7-alpha.2.6`，未发布）
+### 2026-09-25 本地预览 + 完全访问权限（`0.1.7-alpha.2.8`，未发布）
+
+- 侧栏「浏览器」打不开本地预览（学生做出网页却看不了）两层根因都修了：
+  1) 它有个「本地回环白名单」默认留空 = 本机地址全拦 → `lingdong.patch.yml` 里放行 `127.0.0.1/localhost`；
+  2) 更关键：`dsh-better-sidebar@0.19.1` 的偏好层用的是 0.1.6 的 `settings.register`，**0.1.7 已没有这个方法**，
+     整个偏好面失效、客户端永远拿默认值 → 构建期 vendor 补丁把它退化成「只读、以随包 config 为准」
+     （`prepare-dsh.ts` 的 `patchSidebarPrefs()`；锚点漂了直接让构建失败）
+- 恢复「完全访问权限」并设为默认（上游 base 本来就有这一档，之前被我们的补丁删掉了）
+- 实测：侧栏浏览器加载 `http://127.0.0.1:8765` 成功（iframe 内正文 `LINGDONG-PREVIEW-OK`）；新会话访问模式显示「完全权限」
+- 安装包 `489956760` 字节 / SHA256 `8C51B79A33CA0F210B8B626913F60F8244FE7710DE3A7210423158C7625EB4E5`
+- 产物：`.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.8-win-x64-unsigned.exe`
+
+### 2026-09-25 学生端反馈十条（`0.1.7-alpha.2.6`，未发布，已被 .2.8 取代）
 
 - ① 开「技能中心」（dsh-web 的 opt-in 行）② 关「远程配对/远程控制」面板（完全控制凭据）
 - ③ 数据目录修好：profile 不再落到共享 `~/.dsh`，与 sessions/凭据同用 `userData/dsh-home`
