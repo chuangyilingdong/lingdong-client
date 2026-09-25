@@ -61,6 +61,9 @@ const expectations = [
   ['apps/desktop/scripts/prepare-dsh.ts', 'LINGDONG_PLUGIN_PROFILE'],
   ['apps/desktop/src/main.ts', 'LINGDONG_PLUGIN_RESOURCE'],
   ['packages/client/ui-conversation/src/client/lingdong-send-state.ts', 'lingdongSendLimitReached'],
+  ['apps/desktop/src/main.ts', 'dsh-app://127.0.0.1'],
+  ['apps/desktop/src/web-document.ts', "'dsh-app://127.0.0.1'"],
+  ['apps/desktop/src/preload-app.ts', "location.hostname === '127.0.0.1'"],
 ]
 for (const [path, marker] of expectations) {
   assert.equal(read(path).includes(marker), true, `missing marker ${marker} in ${path}`)

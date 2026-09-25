@@ -1273,6 +1273,56 @@ patch('apps/desktop/src/project-manager.ts',
   '    await this.withLock(async () => {',
   'applyRelease 的 profile 准备改成异步')
 
+
+// ④m 桌面壳的「应用源」改成回环形（2026-09-25，.2.4 修复）：`dsh-app://app/` → `dsh-app://127.0.0.1/`。
+//    为什么：`@linxin666/dsh-web-all` 里的 `@linxin666/dsh-remote-web-ui` 会注入一个 boot 钩子
+//    （`src/remote-channel-boot.ts`），把**同源**的 `/api`、`WebSocket`、`/sidebar`、`/git`、`/pet`
+//    全部重写成 `/remote/...`（配对网关），并带设备头；只有 `location.hostname` 是回环
+//    （`localhost`/`::1`/`127.x`）时才**跳过安装**。
+//    桌面壳原来用 `dsh-app://app`（hostname=`app`）—— 在插件眼里就是「远程访问」，于是钩子装上，
+//    所有本地 API 变成 403 `{code:"unpaired"}`：学生看到「新建会话失败…/api/session/create: HTTP 403」
+//    与「技能中心 加载失败：HTTP 403」（2026-09-25 实机截图）。
+//    改成回环形主机后：① 插件自己豁免、不再劫持；② `connection.isLoopback` 仍为 true
+//    （它原本靠插件设的 `__DSH_TRANSPORT__.ownsHost` 才为 true，现在由 hostname 直接给出）。
+//    实测：Electron 自定义协议（standard+secure）接受数字主机，`dsh-app://127.0.0.1/` 的
+//    origin/hostname/fetch 转发都正常。
+const SHELL_HOST = "'dsh-app://app'"
+const SHELL_HOST_URL = "'dsh-app://app/'"
+const SHELL_HOST_TPL = '`${SCHEME}://app/`'
+updateTextFile('apps/desktop/src/main.ts', (before) => {
+  let text = before
+  for (const [from, to] of [
+    [SHELL_HOST_TPL, '`${SCHEME}://127.0.0.1/`'],
+    ["assertDesktopSender(event, ['app'])", "assertDesktopSender(event, ['127.0.0.1'])"],
+    ["if (url.hostname === 'app') {", "if (url.hostname === '127.0.0.1') {"],
+    [SHELL_HOST, "'dsh-app://127.0.0.1'"],
+    [SHELL_HOST_URL, "'dsh-app://127.0.0.1/'"],
+  ]) {
+    if (!text.includes(from)) continue
+    text = text.split(from).join(to)
+  }
+  return text
+}, '桌面应用源改为回环形 dsh-app://127.0.0.1')
+
+for (const file of [
+  'apps/desktop/src/preload-app.ts',
+  'apps/desktop/src/microphone-permissions.ts',
+  'apps/desktop/src/mandatory-update-window.ts',
+  'apps/desktop/src/directory-picker.ts',
+]) {
+  updateTextFile(file, (before) => before
+    .split("location.hostname === 'app'").join("location.hostname === '127.0.0.1'")
+    .split("parsed.hostname === 'app'").join("parsed.hostname === '127.0.0.1'")
+    .split("assertDesktopSender(event, ['app'])").join("assertDesktopSender(event, ['127.0.0.1'])"),
+  '桌面应用源改为回环形（preload/IPC 判定同步）')
+}
+
+
+
+// ⚠️ 转发层也要跟着改：`forwardWebRequest` 自己的同源闸门（origin 必须是应用源）。
+updateTextFile('apps/desktop/src/web-document.ts', (before) => before
+  .split("origin !== 'dsh-app://app'").join("origin !== 'dsh-app://127.0.0.1'"),
+  '转发层接受新的应用源')
 console.log(`检出：${checkout}${dryRun ? '（--dry-run）' : ''}`)
 for (const line of report) console.log('  ' + line)
 const failed = report.filter((line) => line.startsWith('!!'))

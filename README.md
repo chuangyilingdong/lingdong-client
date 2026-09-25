@@ -84,9 +84,20 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.4`（预装插件 + todo 收口 + 次数用完禁用发送）已出包、**未发布**。
+2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.5`（预装插件 + todo 收口 + 次数禁用 + 修 403）已出包、**未发布**。
 
-### 2026-09-24 预装插件版（`0.1.7-alpha.2.4`，未发布）
+### 2026-09-25 修「新建会话 / 技能中心 403」（`0.1.7-alpha.2.5`，未发布）
+
+- 根因：`@linxin666/dsh-web-all` 里的 `@linxin666/dsh-remote-web-ui` 会注入 boot 钩子，把同源的
+  `/api`、`WebSocket` 改写成 `/remote/...`（配对通道）；它只在页面主机名是回环时豁免。
+  桌面壳原来用 `dsh-app://app`（hostname=`app`），钩子于是装上、所有本地 API 返回 403 `unpaired`
+- 修复：桌面壳应用源改为回环形 `dsh-app://127.0.0.1/`（preload / IPC / 转发层判定同步改）
+- 实测：`POST /api/session/create` → 200、`GET /api/pair/status` → 200、无 console error、
+  侧栏会话列表与「使用次数5/5」正常
+- 安装包 `490136681` 字节 / SHA256 `47D075EF37E9AE49B1385926B2F09061A3CEB500F365444167585D77EE6E60D0`
+- 产物：`.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.5-win-x64-unsigned.exe`
+
+### 2026-09-24 预装插件版（`0.1.7-alpha.2.4`，未发布，已被 .2.5 取代）
 
 - 预装 7 个第三方插件（dsh-web 聚合包、better-sidebar、at-file、find-plugin、modlens、context、browser bridge），
   随包一份闭包放 `resources/runtime/plugin-profile`，首次启动镜像成 profile 里的真实目录（硬链接，约 26 秒，之后跳过）
