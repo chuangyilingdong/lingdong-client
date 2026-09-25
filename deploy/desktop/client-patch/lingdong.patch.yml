@@ -78,6 +78,12 @@
 - {id: ui-plugin-manager, name: '@deepseek-ai/dsh-client-ui-plugin-manager', disabled: true}
 - {id: open-in-app, name: '@deepseek-ai/dsh-host-open-in-app', disabled: true}
 
+# LINGDONG_STUDENT_UI（2026-09-25）：
+#   - web-ui-skill-explorer：dsh-web 聚合包里默认 disabled 的「技能中心」，学生端要开。
+#   - web-ui-remote-web-ui：手机配对/远程控制面板 —— 配对设备是完全控制凭据（能读写工作区、
+#     跑终端、驱动 agent），还会一键起 cloudflared 隧道把本机暴露到公网；学生端必须关。
+- {id: web-ui-skill-explorer, disabled: false}
+- {id: web-ui-remote-web-ui, disabled: true}
 # 学生端禁止上传会话遥测与官方会话日志。反馈仍只保存在本地。
 - {id: session-telemetry-otel, name: '@deepseek-ai/dsh-session-telemetry-otel', disabled: true}
 - {id: session-log-deepseek, name: '@deepseek-ai/dsh-session-log-deepseek', disabled: true}

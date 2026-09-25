@@ -84,9 +84,20 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.5`（预装插件 + todo 收口 + 次数禁用 + 修 403）已出包、**未发布**。
+2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.6`（学生端反馈十条）已出包、**未发布**。
 
-### 2026-09-25 修「新建会话 / 技能中心 403」（`0.1.7-alpha.2.5`，未发布）
+### 2026-09-25 学生端反馈十条（`0.1.7-alpha.2.6`，未发布）
+
+- ① 开「技能中心」（dsh-web 的 opt-in 行）② 关「远程配对/远程控制」面板（完全控制凭据）
+- ③ 数据目录修好：profile 不再落到共享 `~/.dsh`，与 sessions/凭据同用 `userData/dsh-home`
+- ⑤ 去掉「上下文洞察」（dsh-context）⑥⑦ 账号名/退出登录与底部头像合并成一行，「意见反馈」随之消失
+- ⑧ 侧栏工作区树只显示当前课堂，旧课堂目录与会话不再出现
+- ⑨ 运行文案「深度求索中」→「小灵VibeCoding中」
+- ⑩ 补齐 0.1.6 旧图标名别名（`IconXxx16/14` → `*Medium`），修第三方插件 React #130（右侧面板打不开）
+- 安装包 `489955876` 字节 / SHA256 `4A21DABCB1AFA3A9D8089932E1C4B8366FE86160722694B1635F8D3034C07FF3`
+- 产物：`.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.6-win-x64-unsigned.exe`
+
+### 2026-09-25 修「新建会话 / 技能中心 403」（`0.1.7-alpha.2.5`，未发布，已被 .2.6 取代）
 
 - 根因：`@linxin666/dsh-web-all` 里的 `@linxin666/dsh-remote-web-ui` 会注入 boot 钩子，把同源的
   `/api`、`WebSocket` 改写成 `/remote/...`（配对通道）；它只在页面主机名是回环时豁免。

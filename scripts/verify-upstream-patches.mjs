@@ -64,6 +64,13 @@ const expectations = [
   ['apps/desktop/src/main.ts', 'dsh-app://127.0.0.1'],
   ['apps/desktop/src/web-document.ts', "'dsh-app://127.0.0.1'"],
   ['apps/desktop/src/preload-app.ts', "location.hostname === '127.0.0.1'"],
+  ['apps/desktop/src/main.ts', 'LINGDONG_DSH_HOME'],
+  ['apps/desktop/resources/gate/lingdong.patch.yml', 'web-ui-skill-explorer, disabled: false'],
+  ['apps/desktop/resources/gate/lingdong.patch.yml', 'web-ui-remote-web-ui, disabled: true'],
+  ['packages/client/ui-primitives/src/index.ts', 'LINGDONG_LEGACY_ICON_ALIASES'],
+  ['packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx', 'LINGDONG_CLASSROOM_WORKSPACES'],
+  ['packages/client/ui-settings-account/src/client/AccountMenu.tsx', 'LINGDONG_ACCOUNT_MERGE'],
+  ['packages/client/ui-chat/src/client/locale.ts', '小灵VibeCoding中'],
 ]
 for (const [path, marker] of expectations) {
   assert.equal(read(path).includes(marker), true, `missing marker ${marker} in ${path}`)
@@ -73,5 +80,9 @@ for (const [path, marker] of expectations) {
 for (const file of ['yuxianglin-dsh-bridge-browser-0.0.5.tgz']) {
   assert.equal(existsSync(join(checkout, 'apps/desktop/vendor-plugins', file)), true, 'missing packaged plugin ' + file)
 }
+
+// ⑤ 去掉「上下文洞察」：清单里不能再有 dsh-context。
+assert.equal(read('apps/desktop/src/project-manager.ts').includes("'dsh-context',"), false,
+  'dsh-context 仍然在预装清单里（反馈 ⑤ 要求删掉）')
 
 console.log(JSON.stringify({ name: 'verify-upstream-patches', pass: true, checkout }))

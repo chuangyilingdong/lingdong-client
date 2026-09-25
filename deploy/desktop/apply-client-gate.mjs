@@ -1127,7 +1127,7 @@ patch('apps/desktop/src/project-manager.ts',
     "  'dsh-context',",
     "  '@yuxianglin/dsh-bridge-browser',",
     '] as const',
-    '// 插件闭包的依赖清单：6 个走 registry；dsh-browser 没发布到 npm，用随包的 tarball。',
+    '// 插件闭包的依赖清单：5 个走 registry；dsh-browser 没发布到 npm，用随包的 tarball。',
     '// 由 prepare:dsh 装进 resources/runtime/plugin-profile（见 apply-client-gate.mjs 的 ④k）。',
     'export const LINGDONG_PLUGIN_DEPENDENCIES: Readonly<Record<string, string>> = {',
     "  '@linxin666/dsh-web-all': '^0.3.24',",
@@ -1323,6 +1323,137 @@ for (const file of [
 updateTextFile('apps/desktop/src/web-document.ts', (before) => before
   .split("origin !== 'dsh-app://app'").join("origin !== 'dsh-app://127.0.0.1'"),
   '转发层接受新的应用源')
+
+// ④n 学生端体验与兼容修补（2026-09-25，.2.6）。逐条对应反馈：
+//   ① 技能中心（dsh-web 的 opt-in 行）打开；② 远程配对面板关掉（完全控制凭据，不该给孩子）。
+//   ⑤ 去掉「上下文洞察」（dsh-context）；⑥⑦ 账号名/退出登录与底部头像合并成一行，顺带去掉「意见反馈」。
+//   ⑧ 侧栏只留当前课堂的工作区与会话（同级旧课堂目录不再出现）。
+//   ⑨ 「深度求索中」→「小灵VibeCoding中」。⑩ 旧图标名别名，修 dsh-better-sidebar 的 React #130。
+// ⑤ 去掉 dsh-context（「上下文洞察」）：清单与依赖一起摘。
+updateTextFile('apps/desktop/src/project-manager.ts', (before) => before
+  .split("  'dsh-context',\n").join('')
+  .split("  'dsh-context': '^0.55.0',\n").join(''),
+  '预装清单去掉 dsh-context（上下文洞察）')
+
+// ⑧ 侧栏工作区树只留当前课堂：同级目录（= 其它课堂）一律不显示，用户自己挑的其它目录照旧保留。
+updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx', (before) => {
+  if (before.includes('LINGDONG_CLASSROOM_WORKSPACES')) return before
+  const anchor = '  const workspaces = useWorkspaces(state => state.items)\n'
+  if (!before.includes(anchor)) {
+    report.push('!! WorkspaceBrowser.tsx：找不到 workspaces 锚点')
+    return before
+  }
+  const block = [
+    '  const rawWorkspaces = useWorkspaces(state => state.items)',
+    '  // LINGDONG_CLASSROOM_WORKSPACES：课堂工作区是同级的 `学生-课时名` 目录，旧课堂的就躺在旁边。',
+    '  // 学生进新课堂时不该看见上一节课的工作区与会话（2026-09-25 反馈 ⑧）：',
+    '  // 只保留当前课堂那一格，把它的**同级目录**滤掉，其它（学生自己挑的）目录不受影响。',
+    '  const workspaces = useMemo(() => {',
+    '    const bridge = (window as Window & { readonly lingdong?: { readonly context?: unknown } }).lingdong',
+    '    if (bridge?.context === undefined || classroomWorkspacePath === \'\') return rawWorkspaces',
+    '    const normalizePath = (value: string): string => {',
+    "      let path = value.split(String.fromCharCode(92)).join('/')",
+    "      while (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1)",
+    "      return path.toLocaleLowerCase('en-US')",
+    '    }',
+    "    const parentOf = (path: string): string => path.slice(0, path.lastIndexOf('/'))",
+    '    const current = normalizePath(classroomWorkspacePath)',
+    '    const parent = parentOf(current)',
+    '    return rawWorkspaces.filter((workspace) => {',
+    '      const path = normalizePath(workspace.path)',
+    '      if (path === current) return true',
+    '      return parentOf(path) !== parent',
+    '    })',
+    '  }, [classroomWorkspacePath, rawWorkspaces])',
+    '',
+  ].join('\n')
+  return before.replace(anchor, block)
+}, '侧栏工作区树只显示当前课堂')
+
+// ⑥⑦ 账号区合并成一行：隐藏上游账号启动器（它的菜单只有「设置/意见反馈」），
+//      身份+退出登录由我们自己的 footer 行承担。
+updateTextFile('packages/client/ui-settings-account/src/client/AccountMenu.tsx', (before) => {
+  if (before.includes('LINGDONG_ACCOUNT_MERGE')) return before
+  const anchor = '  return <div className={css.root}>'
+  if (!before.includes(anchor)) {
+    report.push('!! AccountMenu.tsx：找不到 return 锚点')
+    return before
+  }
+  return before.replace(anchor, [
+    '  // LINGDONG_ACCOUNT_MERGE：账号名/退出登录已经在侧栏 footer 那行（LingdongAccountPanel），',
+    '  // 再留一个头像启动器就是同一件事出现两次，而且它的菜单只有「设置/意见反馈」——学生端都不要。',
+    '  if (lingdongGate) return null',
+    anchor,
+  ].join('\n'))
+}, '账号启动器与 footer 账号行合并（顺带去掉「意见反馈」）')
+
+// ⑨ 运行中文案：深度求索中 → 小灵VibeCoding中
+updateTextFile('packages/client/ui-chat/src/client/locale.ts', (before) => before
+  .replace("'message.turnProcess.deepDivingFor': '深度求索中，用时{duration}'", "'message.turnProcess.deepDivingFor': '小灵VibeCoding中，用时{duration}'")
+  .replace("'chat.deepDiving': '深度求索中'", "'chat.deepDiving': '小灵VibeCoding中'"),
+  '运行文案改为「小灵VibeCoding中」')
+
+// ⑩ 旧图标名别名：dsh-better-sidebar@0.19.1 等第三方插件还在用 `IconXxx16/14`，
+//    0.1.7 已改名 `*Medium`；缺了就是 undefined，React 直接抛 #130（Element type is invalid），
+//    右侧「侧边对话 / 浏览器」整块打不开（2026-09-25 反馈 ⑩）。
+updateTextFile('packages/client/ui-primitives/src/index.ts', (before) => {
+  if (before.includes('LINGDONG_LEGACY_ICON_ALIASES')) return before
+  return before + [
+    '',
+    '// LINGDONG_LEGACY_ICON_ALIASES：0.1.6 时代的 `*14` / `*16` 图标名 → 0.1.7 的 `*Medium`。',
+    '// 第三方插件（dsh-better-sidebar 等）还没跟上改名，这里给一层兼容导出。',
+    "export { IconApiOutlineMedium as IconApiOutline14 } from './icons/index.tsx'",
+    "export { IconBrowseOutlineMedium as IconBrowseOutline16 } from './icons/index.tsx'",
+    "export { IconCheckOutlineMedium as IconCheckOutline16 } from './icons/index.tsx'",
+    "export { IconChevronDownOutlineMedium as IconChevronDownOutline14 } from './icons/index.tsx'",
+    "export { IconChevronLeftOutlineMedium as IconChevronLeftOutline14 } from './icons/index.tsx'",
+    "export { IconChevronRightOutlineMedium as IconChevronRightOutline14 } from './icons/index.tsx'",
+    "export { IconCloseFillMedium as IconCloseFill14 } from './icons/index.tsx'",
+    "export { IconCloseOutlineMedium as IconCloseOutline16 } from './icons/index.tsx'",
+    "export { IconCodeOutlineMedium as IconCodeOutline16 } from './icons/index.tsx'",
+    "export { IconCopyOutlineMedium as IconCopyOutline16 } from './icons/index.tsx'",
+    "export { IconDownloadOutlineMedium as IconDownloadOutline16 } from './icons/index.tsx'",
+    "export { IconEditOutlineMedium as IconEditOutline16 } from './icons/index.tsx'",
+    "export { IconFolderOpenMedium as IconFolderOpen16 } from './icons/index.tsx'",
+    "export { IconLinkOutlineMedium as IconLinkOutline14 } from './icons/index.tsx'",
+    "export { IconLinkOutlineMedium as IconLinkOutline16 } from './icons/index.tsx'",
+    "export { IconListPenOutlineMedium as IconListPenOutline16 } from './icons/index.tsx'",
+    "export { IconNewChatOutlineMedium as IconNewChatOutline16 } from './icons/index.tsx'",
+    "export { IconPanelLeftOutlineMedium as IconPanelLeftOutline16 } from './icons/index.tsx'",
+    "export { IconPlusOutlineMedium as IconPlusOutline16 } from './icons/index.tsx'",
+    "export { IconRefreshOutlineMedium as IconRefreshOutline14 } from './icons/index.tsx'",
+    "export { IconRefreshOutlineMedium as IconRefreshOutline16 } from './icons/index.tsx'",
+    "export { IconRightUpOutlineMedium as IconRightUpOutline16 } from './icons/index.tsx'",
+    "export { IconSearchOutlineMedium as IconSearchOutline16 } from './icons/index.tsx'",
+    "export { IconSendOutlineMedium as IconSendOutline16 } from './icons/index.tsx'",
+    "export { IconSettingsOutlineMedium as IconSettingsOutline16 } from './icons/index.tsx'",
+    "export { IconSparkleMedium as IconSparkle16 } from './icons/index.tsx'",
+    "export { IconStopFillMedium as IconStopFill16 } from './icons/index.tsx'",
+    "export { IconTrashOutlineMedium as IconTrashOutline16 } from './icons/index.tsx'",
+    "export { IconWarningOutlineMedium as IconWarningOutline16 } from './icons/index.tsx'",
+    '',
+  ].join('\n')
+}, '补齐旧图标名别名（修第三方插件 React #130）')
+
+// ③ 数据目录：`resolveDesktopPaths()` 走 resolveDshHome()，必须在它之前把 DSH_HOME 定下来，
+//    否则 profile 会落到共享的 %USERPROFILE%\.dsh（2026-09-25 反馈 ③）。
+updateTextFile('apps/desktop/src/main.ts', (before) => {
+  if (before.includes('LINGDONG_DSH_HOME')) return before
+  const anchor = '  const paths = resolveDesktopPaths()\n'
+  if (!before.includes(anchor)) {
+    report.push('!! apps/desktop/src/main.ts：找不到 resolveDesktopPaths 锚点')
+    return before
+  }
+  return before.replace(anchor, [
+    '  // LINGDONG_DSH_HOME：桌面端自己的数据目录。必须在任何 resolveDshHome() 之前设好 ——',
+    '  // 登录门里那句 `process.env.DSH_HOME = home` 跑在这之后，profile 会落到共享的 ~/.dsh，',
+    '  // 和 sessions/storages/lingdong.patch.yml（都在 userData/dsh-home）分家。',
+    "  process.env.DSH_HOME = (process.env.DSH_HOME ?? '').trim() !== '' ? process.env.DSH_HOME : join(app.getPath('userData'), 'dsh-home')",
+    anchor.trimEnd(),
+    '',
+  ].join('\n'))
+}, 'profile 与其它数据同用 userData/dsh-home')
+
 console.log(`检出：${checkout}${dryRun ? '（--dry-run）' : ''}`)
 for (const line of report) console.log('  ' + line)
 const failed = report.filter((line) => line.startsWith('!!'))
