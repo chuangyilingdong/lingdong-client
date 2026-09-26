@@ -324,6 +324,7 @@ updateTextFile('apps/desktop/src/preload-app.ts', (before) => {
   // 上游可能把 product 变量重构成 createProductApi()，这里兼容两种形态。
   const anchors = [
     "contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' ? createProductApi() : { protocolVersion: 1 })",
+    "contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' && process.isMainFrame ? createProductApi() : { protocolVersion: 1 })",
     "contextBridge.exposeInMainWorld('dshDesktop', location.protocol === `${SCHEME}:` && location.hostname === 'app' ? product : { protocolVersion: 1 })",
   ]
   const anchor = anchors.find((candidate) => before.includes(candidate))
