@@ -1517,6 +1517,35 @@ updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
   const call = "      await runPnpm(['install', '--prod'], pluginDir)\n      patchSidebarPrefs(pluginDir)\n"
   return before.replace(anchor, helper + call)
 }, 'dsh-better-sidebar 偏好层在 0.1.7 上的只读兜底补丁')
+// ④r 「打开文件」咽喉点兜底（2026-09-26，.2.10）：DSH 的 `fileAddressFor()` 会把工作区内的绝对路径
+//     降级成相对拼写，本意由侧栏插件用会话 cwd 还原；而 dsh-better-sidebar@0.19.1 在 0.1.7 上拿不到
+//     cwd，于是相对路径送到宿主被解析成盘根 —— 侧栏预览 fs-error（学生图3）、reveal 静默失败（图2）。
+//     在 ui-chat 的 openFile 唯一咽喉处改成「先拼绝对 + sessionFileAddress」，绕开降级，
+//     工具行 / 变更行 / @ 提及 这些入口一并覆盖。实现与取舍见 client-patch/lingdong-open-path.ts。
+const openPathHelperTarget = join(checkout, 'packages/client/ui-chat/src/client/lingdong-open-path.ts')
+if (!dryRun) {
+  mkdirSync(dirname(openPathHelperTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'lingdong-open-path.ts'), openPathHelperTarget)
+}
+report.push('✓  packages/client/ui-chat/src/client/lingdong-open-path.ts：已放入')
+
+updateTextFile('packages/client/ui-chat/src/client/apply.ts', (before) => {
+  if (before.includes('lingdongFileAddress')) return before
+  let text = before
+  const importLine = "import { fileAddressFor } from '@deepseek-ai/dsh-util-workspace-path'"
+  if (!text.includes(importLine)) {
+    report.push('!! packages/client/ui-chat/src/client/apply.ts：找不到 workspace-path import 锚点')
+    return before
+  }
+  text = text.replace(importLine, "import { lingdongFileAddress } from './lingdong-open-path.ts'")
+  const callLine = 'const url = fileAddressFor(sessionId, cwd, path)'
+  if (!text.includes(callLine)) {
+    report.push('!! packages/client/ui-chat/src/client/apply.ts：找不到 fileAddressFor 调用锚点')
+    return before
+  }
+  return text.replace(callLine, 'const url = lingdongFileAddress(sessionId, cwd, path)')
+}, '交付/文件打开的地址改为绝对路径（绕开降级）')
+
 // ④q 数据目录改名 + 老机器迁移（2026-09-25，.2.9）：Electron 的 userData 一直跟着**上游包名**
 //     走 —— `%APPDATA%\@deepseek-ai\dsh-desktop`；产品却叫「灵动ai创作客户端」。学生的登录态、
 //     会话、388MB 插件镜像全在那个"看不出是谁"的目录里，老师找数据 / 卸载清理都对不上。

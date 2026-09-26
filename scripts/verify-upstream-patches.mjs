@@ -76,6 +76,7 @@ const expectations = [
   ['packages/client/ui-settings-account/src/client/AccountMenu.tsx', 'LINGDONG_ACCOUNT_MERGE'],
   ['packages/client/ui-chat/src/client/locale.ts', '小灵VibeCoding中'],
   ['packages/client/ui-deliverables/src/client/LingdongWorkspacePath.ts', 'lingdongAbsolutePath'],
+  ['packages/client/ui-chat/src/client/lingdong-open-path.ts', 'lingdongFileAddress'],
   ['apps/desktop/src/main.ts', 'lingdongPrepareProfile'],
   ['apps/desktop/src/lingdong-user-data.ts', 'adoptLingdongUserData'],
 ]
