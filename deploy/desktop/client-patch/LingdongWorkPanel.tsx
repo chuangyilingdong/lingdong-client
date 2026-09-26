@@ -164,13 +164,6 @@ function pathBasename(raw: string): string {
 }
 
 const SUBMITTABLE_WORK_EXTENSIONS = new Set(['.htm', '.html', '.docx', '.xlsx', '.pptx'])
-const RECOGNIZED_WORK_EXTENSIONS = new Set([
-  ...SUBMITTABLE_WORK_EXTENSIONS,
-  '.pdf', '.md', '.txt', '.csv', '.json', '.js', '.mjs', '.cjs', '.jsx', '.ts', '.tsx', '.py',
-  '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.go', '.rs', '.lua', '.rb', '.php', '.sql',
-  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.mp3', '.wav', '.mp4', '.webm', '.mov', '.zip',
-])
-
 function extensionOf(raw: string): string {
   const extension = /\.([a-z0-9]+)$/iu.exec(pathBasename(raw))?.[1]
   return extension === undefined ? '' : '.' + extension.toLocaleLowerCase('en-US')
@@ -178,10 +171,6 @@ function extensionOf(raw: string): string {
 
 function isSubmittableWorkPath(raw: string): boolean {
   return SUBMITTABLE_WORK_EXTENSIONS.has(extensionOf(raw))
-}
-
-function isRecognizedWorkPath(raw: string): boolean {
-  return RECOGNIZED_WORK_EXTENSIONS.has(extensionOf(raw))
 }
 
 function displayPathFor(cwd: string, raw: string): string {
@@ -199,7 +188,7 @@ function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary:
   const cwd = summary.cwd?.trim() ?? ''
   if (cwd === '') return []
   const add = (rawPath: string): void => {
-    if (!isRecognizedWorkPath(rawPath)) return
+    if (!isSubmittableWorkPath(rawPath)) return
     const normalized = normalizedPath(rawPath)
     if (normalized === '') return
     const key = `${summary.id}\u0000${normalized}`
@@ -213,7 +202,7 @@ function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary:
       displayPath: displayPathFor(cwd, rawPath),
       updatedAt: summary.updatedAt,
       source: 'session',
-      submittable: isSubmittableWorkPath(rawPath),
+      submittable: true,
     })
   }
 
@@ -305,7 +294,7 @@ async function scanWorkspaceCandidates(
     const displayPath = asString(record?.displayPath) || pathBasename(rawPath)
     const title = asString(record?.title) || pathBasename(rawPath)
     const updatedAt = typeof record?.updatedAt === 'number' ? record.updatedAt : 0
-    if (rawPath === '' || !isRecognizedWorkPath(rawPath)) return []
+    if (rawPath === '' || !isSubmittableWorkPath(rawPath)) return []
     const normalized = normalizedPath(rawPath)
     return [{
       key: `workspace\u0000${normalized}`,
@@ -316,7 +305,7 @@ async function scanWorkspaceCandidates(
       displayPath,
       updatedAt,
       source: 'workspace',
-      submittable: isSubmittableWorkPath(rawPath),
+      submittable: true,
     }]
   })
 }
@@ -618,19 +607,18 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
           </div>
 
           {busy === 'scanning' && items.length === 0 && <div style={styles.state}>正在读取当前课堂工作区…</div>}
-          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>没有找到可识别的作品文件。</div>}
+          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>没有找到可提交的作品文件。</div>}
           {items.length > 0 && selectable.length === 0 && <div style={styles.state}>找到的作品都已经提交过，无需重复提交。</div>}
           {items.length > 0 && (
             <div style={styles.list}>
               {items.map(item => {
                 const isSubmitted = submittedKeys.has(item.key)
-                const unsupported = !item.submittable
                 return (
                 <label key={item.key} style={styles.item}>
                   <input
                     type="checkbox"
-                    checked={!isSubmitted && !unsupported && selected.has(item.key)}
-                    disabled={busy !== 'idle' || isSubmitted || unsupported}
+                    checked={!isSubmitted && selected.has(item.key)}
+                    disabled={busy !== 'idle' || isSubmitted}
                     onChange={event => {
                       const checked = event.currentTarget.checked
                       setSelected(current => {
@@ -643,7 +631,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
                   />
                   <span style={styles.itemBody}>
                     <span style={styles.itemTitle}>{item.sessionTitle}</span>
-                    <span style={styles.itemMeta}>{item.displayPath}{isSubmitted ? ' · 已提交，无需重复提交' : unsupported ? ' · 已识别，但平台暂不支持此文件类型' : ''}</span>
+                    <span style={styles.itemMeta}>{item.displayPath}{isSubmitted ? ' · 已提交，无需重复提交' : ''}</span>
                   </span>
                 </label>
                 )

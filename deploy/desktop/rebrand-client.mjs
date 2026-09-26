@@ -137,6 +137,21 @@ for (const name of ['icon-windows.png', 'icon-macos.png', 'icon.png']) {
   changes.push([`resources/${name}`, `已换成灵动ai图标（${after.length} 字节）`]);
 }
 
+// ⑤a Windows 托盘图标：上游 icon-windows.svg 是 DeepSeek 鲸鱼。托盘不会读 icon.png，
+// 因此必须单独换成灵动ai图标；否则任务栏/托盘里仍会看到一个鲸鱼。
+const trayIconSource = path.join(here, 'client-patch', 'gate', 'tray-windows.ico')
+const trayIconTarget = path.join(checkout, 'apps/desktop/resources/tray-windows.ico')
+{
+  const before = fs.existsSync(trayIconTarget) ? fs.readFileSync(trayIconTarget) : null
+  const after = fs.readFileSync(trayIconSource)
+  if (before === null || !before.equals(after)) {
+    if (!dryRun) fs.copyFileSync(trayIconSource, trayIconTarget)
+    changes.push(['resources/tray-windows.ico', `已换成灵动ai图标（${after.length} 字节）`])
+  } else {
+    changes.push(['resources/tray-windows.ico', '已是灵动ai图标（跳过）'])
+  }
+}
+
 // ⑤b 安装器资源：NSIS 的欢迎页图标、字标、卸载器侧栏。
 //    上游这五张图原来还写死 DeepSeek 鲸鱼/HARNESS；只换应用图标不够，安装器第一眼仍是上游品牌。
 const installerBrandSource = path.join(here, 'assets', 'installer');

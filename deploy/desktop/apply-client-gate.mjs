@@ -490,48 +490,34 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
       text = `${text.slice(0, start)}${next}${text.slice(end)}`
     }
   }
+  const oldFilterComment = '  // 只显示当前课堂工作区里的会话；浏览器测试没有 bridge 时保留上游列表行为。'
+  const oldFilterStart = text.indexOf(oldFilterComment)
+  if (oldFilterStart >= 0) {
+    const oldFilterEnd = text.indexOf('  }, [classroomStartedAt, classroomWorkspacePath, rawList])', oldFilterStart)
+    if (oldFilterEnd >= 0) text = text.slice(0, oldFilterStart) + '  // 课堂过滤只收工作区行；其它工作区里的会话照常显示，避免切到新会话后回不去。\n  const list = rawList\n' + text.slice(oldFilterEnd + '  }, [classroomStartedAt, classroomWorkspacePath, rawList])'.length + 1)
+  }
+  text = text.replace('  const [classroomStartedAt, setClassroomStartedAt] = useState<number | undefined>(undefined)\n', '')
+  text = text.replace("      const raw = context?.classroom?.startedAt\n      const value = typeof raw === 'string' ? Date.parse(raw) : Number.NaN\n      setClassroomStartedAt(Number.isFinite(value) ? value : undefined)\n", '')
   if (!text.includes('const rawList = useSessions(state => state)')) {
     text = text.replace(
       '  const list = useSessions(state => state)\n',
       `  const rawList = useSessions(state => state)
-  const [classroomStartedAt, setClassroomStartedAt] = useState<number | undefined>(undefined)
   const [classroomWorkspacePath, setClassroomWorkspacePath] = useState('')
   useEffect(() => {
     let alive = true
     const bridge = (window as Window & {
       readonly lingdong?: { readonly context?: () => Promise<{
-        readonly classroom?: { readonly startedAt?: unknown } | null
         readonly workspacePath?: unknown
       } | undefined> }
     }).lingdong
     void bridge?.context?.().then(context => {
       if (!alive) return
-      const raw = context?.classroom?.startedAt
-      const value = typeof raw === 'string' ? Date.parse(raw) : Number.NaN
-      setClassroomStartedAt(Number.isFinite(value) ? value : undefined)
       setClassroomWorkspacePath(typeof context?.workspacePath === 'string' ? context.workspacePath.trim() : '')
     }).catch(() => undefined)
     return () => { alive = false }
   }, [])
-  // 只显示当前课堂工作区里的会话；浏览器测试没有 bridge 时保留上游列表行为。
-  const list = useMemo(() => {
-    if (typeof window === 'undefined') return rawList
-    const bridge = (window as Window & { readonly lingdong?: { readonly context?: unknown } }).lingdong
-    if (bridge?.context === undefined) return rawList
-    if (classroomWorkspacePath === '') return { ...rawList, ids: [], byId: {} }
-    const normalize = (value: string): string => {
-      let path = value.split(String.fromCharCode(92)).join('/')
-      while (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1)
-      return path.toLocaleLowerCase('en-US')
-    }
-  const samePath = (left: unknown, right: string): boolean => typeof left === 'string' && normalize(left) === normalize(right)
-    const byId = Object.fromEntries(Object.entries(rawList.byId).filter(([, session]) => {
-      const value = session as { readonly blank?: unknown; readonly updatedAt?: unknown; readonly cwd?: unknown }
-      if (!samePath(value.cwd, classroomWorkspacePath)) return false
-      return value.blank === true || typeof value.updatedAt !== 'number' || classroomStartedAt === undefined || value.updatedAt >= classroomStartedAt
-    })) as typeof rawList.byId
-    return { ...rawList, ids: rawList.ids.filter(id => byId[id] !== undefined), byId }
-  }, [classroomStartedAt, classroomWorkspacePath, rawList])
+  // 课堂过滤只收工作区行；其它工作区里的会话照常显示，避免切到新会话后回不去。
+  const list = rawList
 `,
     )
   }
@@ -1175,9 +1161,8 @@ patch('apps/desktop/src/project-manager.ts',
     "  'dsh-find-plugin',",
     "  '@liustack/modlens',",
     "  'dsh-context',",
-    "  '@yuxianglin/dsh-bridge-browser',",
     '] as const',
-    '// 插件闭包的依赖清单：4 个走 registry；dsh-browser 没发布到 npm，用随包的 tarball。',
+    '// 插件闭包的依赖清单：4 个走 registry。',
     '// 由 prepare:dsh 装进 resources/runtime/plugin-profile（见 apply-client-gate.mjs 的 ④k）。',
     'export const LINGDONG_PLUGIN_DEPENDENCIES: Readonly<Record<string, string>> = {',
     "  '@linxin666/dsh-web-all': '^0.3.24',",
@@ -1186,7 +1171,6 @@ patch('apps/desktop/src/project-manager.ts',
     "  'dsh-find-plugin': '^0.3.7',",
     "  '@liustack/modlens': '^3.26.3',",
     "  'dsh-context': '^0.55.0',",
-    "  '@yuxianglin/dsh-bridge-browser': 'file:./vendor-plugins/yuxianglin-dsh-bridge-browser-0.0.5.tgz',",
     '}',
   ].join('\n'),
   '预装插件清单与依赖')
@@ -1589,17 +1573,21 @@ updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
   //    entry 永远删不掉）。.2.9 第一版就是这么错的，所以这里把名字和邻居一起匹配。
   text = text.split("  'dsh-better-sidebar',\n  'dsh-at-file',\n").join("  'dsh-better-sidebar',\n")
   text = text.split("  'dsh-at-file': '^0.6.3',\n").join('')
+  text = text.split("  '@liustack/modlens',\n  '@yuxianglin/dsh-bridge-browser',\n").join("  '@liustack/modlens',\n")
+  text = text.split("  '@yuxianglin/dsh-bridge-browser': 'file:./vendor-plugins/yuxianglin-dsh-bridge-browser-0.0.5.tgz',\n").join('')
   const comments = [
     '// LINGDONG_RETIRED_PLUGIN_BUNDLES：**已经**从预装清单里摘掉的插件，升级时顺手从 profile',
     '// manifest 里删名 —— 只加不减的话，旧机器会留着一条已经不随包分发的 entry，宿主每轮都',
     '// failed to import（那正是学生看到的报错来源）。',
     '//   · dsh-context：.2.6 起删（「上下文洞察」产品取舍）；',
-    '//   · dsh-at-file：.2.9 起删（0.6.3 的 settingsNamespace 在 0.1.7 上不兼容）。',
+    '//   · dsh-at-file：.2.9 起删（0.6.3 的 settingsNamespace 在 0.1.7 上不兼容）；',
+    '//   · @yuxianglin/dsh-bridge-browser：rc.2.1 起删（真正的 Chrome 扩展未随包，学生端会出现“连不上桥”）。',
   ].join('\n')
   const list = [
     'const LINGDONG_RETIRED_PLUGIN_BUNDLES = [',
     "  'dsh-context',",
     "  'dsh-at-file',",
+    "  '@yuxianglin/dsh-bridge-browser',",
     '] as const',
     '',
   ].join('\n')

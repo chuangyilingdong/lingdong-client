@@ -86,7 +86,16 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
 2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.9`（坏插件摘除 + 首启预热 + 交付文件绝对路径 + 数据目录改名）已出包、**未发布**。
 
-2026-09-26 已完成 **0.1.7-rc.2 底座移植**（含 `dsh-better-sidebar@0.21.1` overrides）：补丁 dry-run、上游补丁校验、TypeScript 编译、正式出包与桩平台回归均通过。`0.1.7-rc.2.1` 已出包、**未发布**；安装包 `420937033` 字节 / SHA256 `B109E4E3C40DC3557056B572D4AD7BD35C9A9BD25E13A78772A8F56D42683143`。
+2026-09-26 已完成 **0.1.7-rc.2 底座移植**（含 `dsh-better-sidebar@0.21.1` overrides）：补丁 dry-run、上游补丁校验、TypeScript 编译、正式出包与桩平台回归均通过。`0.1.7-rc.2.2` 已出包、**未发布**；安装包 `420799281` 字节 / SHA256 `BD6458037632A4C3C445D7FF72B94B817F603E54AC8FB2ABAFE89DE2E2130B74`。
+
+本轮继续修复学生端：
+
+- 交作品面板只列出可提交的 HTML/Word/Excel/PPT，JS、SVG、Markdown 等资源不再作为“不可提交文件”占列表（仍会随 HTML 自动收集提交）。
+- 课堂过滤只收同级旧课堂工作区，不再隐藏学生自己新建工作区里的会话；切到新会话后可正常切回正在跑的任务。
+- 移除 `@yuxianglin/dsh-bridge-browser`：桌面包只有桥服务，真正需要单独安装的 Chrome/Firefox 扩展没有随包，学生端会看到“连不上桥”；原生侧栏浏览器不受影响。
+- 课堂工作区自动生成自包含网页约定（`AGENTS.md`）：不依赖扩展、外部 CDN 或本机预装库，资源和入口优先使用工作区相对路径。
+- Windows 托盘图标改用全新灵动ai图标，不再沿用上游 DeepSeek 鲸鱼。
+- 发送次数仍以平台为准；平台修正在 `apps/server/src/services/vibecodingLessonSettings.js`，已虚高的 `session_students.vibecoding_sends` 必须重置或调大上限，否则不会自动下降。
 
 ### 2026-09-25 可用性收口（`0.1.7-alpha.2.9`，未发布）
 

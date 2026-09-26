@@ -13,6 +13,7 @@ const copies = [
   ['deploy/desktop/client-patch/platform-gate.ts', 'apps/desktop/src/platform-gate.ts'],
   ['deploy/desktop/client-patch/LingdongUpdater.ts', 'apps/desktop/src/LingdongUpdater.ts'],
   ['deploy/desktop/client-patch/lingdong-office-engine.mjs', 'apps/desktop/scripts/lingdong-office-engine.mjs'],
+  ['deploy/desktop/client-patch/gate/tray-windows.ico', 'apps/desktop/resources/tray-windows.ico'],
   ['deploy/desktop/client-patch/LingdongClassroomWorkspace.ts', 'packages/client/ui-workspace/src/client/LingdongClassroomWorkspace.ts'],
   ['deploy/desktop/client-patch/LingdongWorkPanel.tsx', 'packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx'],
   ['deploy/desktop/client-patch/HtmlPreviewBytes.ts', 'packages/client/ui-sidebar-documentpreview/src/client/html/bytes.ts'],
@@ -102,10 +103,13 @@ const bundlesHead = projectManager.indexOf('const LINGDONG_PLUGIN_BUNDLES = [')
 const bundlesTail = projectManager.indexOf('] as const', bundlesHead)
 assert.equal(bundlesHead >= 0 && bundlesTail > bundlesHead, true, '找不到 LINGDONG_PLUGIN_BUNDLES')
 const bundlesBlock = projectManager.slice(bundlesHead, bundlesTail)
-for (const name of ['dsh-context', 'dsh-at-file']) {
+for (const name of ['dsh-context', 'dsh-at-file', '@yuxianglin/dsh-bridge-browser']) {
   assert.equal(bundlesBlock.includes(name), false, `${name} 仍在预装清单里`)
   assert.equal(projectManager.includes(`  '${name}',`), true,
     `${name} 不在 LINGDONG_RETIRED_PLUGIN_BUNDLES 里（升级时删不掉旧 entry）`)
 }
+
+assert.equal(read('packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx').includes('RECOGNIZED_WORK_EXTENSIONS'), false,
+  '交作品面板不应再注册不可提交的文件类型')
 
 console.log(JSON.stringify({ name: 'verify-upstream-patches', pass: true, checkout }))
