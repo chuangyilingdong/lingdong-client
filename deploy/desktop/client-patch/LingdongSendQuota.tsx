@@ -1,15 +1,15 @@
 /**
  * 灵动ai 课堂上下文：发送按钮前显示「课包 › 课时 · 老师」和「已用/上限」。
  *
- * 平台是唯一计数方：客户端只读 `client-context.classroom / sends`，不自己加减。
- * 数据源在 `./lingdong-send-state.ts`（发送按钮与提交闸门读同一份快照，见那个文件的文件头）；
- * 这里只负责显示。超限由平台网关返回 429，提示语原样显示平台给的 `error.message`。
+ * 计数口径（学生 2026-09-26 要求）：**就数客户端自己的点击次数**，不再拿平台的 `sends.used` 当显示值。
+ * 数据源在 `./lingdong-send-state.ts`（发送按钮与提交闸门读同一份）；这里只负责显示。
+ * `classroom`、`limit` 仍然来自平台的 `client-context`；真正超限由平台网关 429 兜底。
  */
 import { useEffect } from 'react'
 import type { Context } from '@deepseek-ai/cordis'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import {
-  refreshLingdongCourseState, useLingdongCourseState,
+  lingdongLocalSendUsage, refreshLingdongCourseState, useLingdongCourseState,
   type LingdongClassroom, type LingdongCourseState,
 } from './lingdong-send-state.ts'
 
@@ -36,8 +36,8 @@ export function LingdongSendQuota(props: LingdongSendQuotaProps) {
   const state = useLingdongCourseState()
   const phase = readPhase(props)
   useEffect(() => {
-    // 进入 submitting 后轻量重取一次；平台一旦接受发送，数字很快从 0 变 1。
-    // 仍然只相信平台返回值，客户端不自行加一。
+    // 进入 submitting 后轻量重取一次：把课堂/上限/老师这些平台字段刷新。
+    // 显示的次数不看平台，由 recordLingdongSend() 在本机点击时加一。
     if (phase !== 'submitting') return
     const timer = window.setTimeout(() => { void refreshLingdongCourseState() }, 450)
     return () => { window.clearTimeout(timer) }
@@ -46,7 +46,7 @@ export function LingdongSendQuota(props: LingdongSendQuotaProps) {
   if (state === null) return null
   const limit = state.sends?.limit ?? null
   if (limit === null) return null
-  const used = Math.min(state.sends?.used ?? 0, limit)
+  const used = Math.min(lingdongLocalSendUsage(), limit)
   const exhausted = used >= limit
 
   return (

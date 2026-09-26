@@ -44,6 +44,7 @@ interface LingdongDesktopBridge {
 type Listener = () => void
 
 const listeners = new Set<Listener>()
+const LINGDONG_SEND_COUNT_PREFIX = 'lingdong.classroom-sends.'
 let snapshot: LingdongCourseState | null = null
 let refreshing: Promise<void> | null = null
 let detachGlobals: (() => void) | null = null
@@ -85,6 +86,51 @@ function normalizeSends(value: unknown): LingdongSends | null {
 
 function emit(): void {
   for (const listener of [...listeners]) listener()
+}
+
+function sendCountKey(state: LingdongCourseState | null): string | undefined {
+  const classroom = state?.classroom
+  const id = classroom?.id?.trim()
+  if (id !== undefined && id !== '') return LINGDONG_SEND_COUNT_PREFIX + id
+  const fallback = classroom?.lessonTitle?.trim() || classroom?.title?.trim()
+  return fallback === undefined || fallback === '' ? undefined : LINGDONG_SEND_COUNT_PREFIX + fallback
+}
+
+function readStoredSendCount(key: string): number | undefined {
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw === null) return undefined
+    const value = Number(raw)
+    return Number.isFinite(value) && value >= 0 ? Math.floor(value) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * 本机在本节课点过多少次发送。
+ *
+ * 口径（学生 2026-09-26 明确要求）：**就按客户端自己的点击次数算**，不再拿平台的
+ * 数当显示值——平台那边曾经把 2 次显示成 1 次，学生看不懂。计数存在
+ * localStorage 里、按课堂 id 分键，所以客户端重启不会归零。
+ *
+ * 平台仍然是最终门禁（网关 429）：如果学生换了电脑/浏览器，本地计数会低于平台，
+ * 平台该拦还是会拦，只是提示话术由平台给。
+ */
+export function lingdongLocalSendUsage(): number {
+  const key = sendCountKey(snapshot)
+  if (key === undefined) return 0
+  return readStoredSendCount(key) ?? 0
+}
+
+/** Count one allowed user submission. Tool rounds do not pass through submit(). */
+export function recordLingdongSend(): void {
+  const key = sendCountKey(snapshot)
+  if (key === undefined) return
+  const next = lingdongLocalSendUsage() + 1
+  try { window.localStorage.setItem(key, String(next)) } catch { return }
+  snapshot = snapshot === null ? null : { ...snapshot }
+  emit()
 }
 
 function attachGlobals(): () => void {
@@ -152,14 +198,14 @@ export function refreshLingdongCourseState(): Promise<void> {
 export function lingdongSendLimitReached(): boolean {
   const sends = snapshot?.sends
   if (sends === null || sends === undefined || sends.limit === null) return false
-  return sends.used >= sends.limit
+  return lingdongLocalSendUsage() >= sends.limit
 }
 
 /** 客户端自己拦住时给学生看的一句话；网关 429 的文案仍然由平台给。 */
 export function lingdongSendLimitNotice(): string {
   const sends = snapshot?.sends
   if (sends === null || sends === undefined || sends.limit === null) return '本节课的发送次数已用完。'
-  return `本节课的发送次数已用完（已用 ${sends.used}/${sends.limit}），不能再发送了。`
+  return `本节课的发送次数已用完（已用 ${lingdongLocalSendUsage()}/${sends.limit}），不能再发送了。`
 }
 
 /** `InputBar` 用：次数用完时禁用发送按钮。 */

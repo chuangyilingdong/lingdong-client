@@ -86,16 +86,19 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
 2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.9`（坏插件摘除 + 首启预热 + 交付文件绝对路径 + 数据目录改名）已出包、**未发布**。
 
-2026-09-26 已完成 **0.1.7-rc.2 底座移植**（含 `dsh-better-sidebar@0.21.1` overrides）：补丁 dry-run、上游补丁校验、TypeScript 编译、正式出包与桩平台回归均通过。`0.1.7-rc.2.2` 已出包、**未发布**；安装包 `420799281` 字节 / SHA256 `BD6458037632A4C3C445D7FF72B94B817F603E54AC8FB2ABAFE89DE2E2130B74`。
+2026-09-26 已完成 **0.1.7-rc.2 底座移植**（含 `dsh-better-sidebar@0.21.1` overrides）：补丁 dry-run、上游补丁校验、TypeScript 编译、正式出包与桩平台回归均通过。`0.1.7-rc.2.4` 已出包、**未发布**；安装包 `420801688` 字节 / SHA256 `D3346AA172172211ED968F7FE6515549364C0458DA8533E11BDF1414B26DAF89`。
 
 本轮继续修复学生端：
 
 - 交作品面板只列出可提交的 HTML/Word/Excel/PPT，JS、SVG、Markdown 等资源不再作为“不可提交文件”占列表（仍会随 HTML 自动收集提交）。
-- 课堂过滤只收同级旧课堂工作区，不再隐藏学生自己新建工作区里的会话；切到新会话后可正常切回正在跑的任务。
+- 课堂过滤按“当前课堂目录 + 课堂开始时间”隐藏旧会话；学生自己新建工作区里的会话照常保留，切到新会话后可正常切回正在跑的任务。
 - 移除 `@yuxianglin/dsh-bridge-browser`：桌面包只有桥服务，真正需要单独安装的 Chrome/Firefox 扩展没有随包，学生端会看到“连不上桥”；原生侧栏浏览器不受影响。
 - 课堂工作区自动生成自包含网页约定（`AGENTS.md`）：不依赖扩展、外部 CDN 或本机预装库，资源和入口优先使用工作区相对路径。
 - Windows 托盘图标改用全新灵动ai图标，不再沿用上游 DeepSeek 鲸鱼。
-- 发送次数仍以平台为准；平台修正在 `apps/server/src/services/vibecodingLessonSettings.js`，已虚高的 `session_students.vibecoding_sends` 必须重置或调大上限，否则不会自动下降。
+- 侧栏 HTML 预览修好了：插件的 `/sidebar/html` 路由把沙箱 iframe 读自己的相对资源（`styles.css` / `app.js` / 图片）也当成跨站请求 403 了，
+  导致预览只剩一坨没有样式的 HTML；现在只放行“同一个预览路由的静态子资源”，沙箱与 CSP 不变。
+  模型侧归因与实测记录在 `deploy/desktop/client-patch/lingdong-sidebar-html-route.mjs` 文件头（Chromium 对沙箱 iframe 子资源打的是 `sec-fetch-site: cross-site`）。
+- 发送次数改为**客户端自己算**：按本堂课点击发送按钮的次数（Enter/按钮共用一个 submit 入口，工具轮不计），计数存在本机 `localStorage`、按课堂 id 分键，不再拿平台的 `sends.used` 当显示值（平台曾把 2 次显示成 1 次）。平台网关 429 仍然是最终门禁。
 
 ### 2026-09-25 可用性收口（`0.1.7-alpha.2.9`，未发布）
 

@@ -103,6 +103,9 @@ report.push('✓  apps/desktop/src/LingdongUpdater.ts：已放入')
 if (!dryRun) copyFileSync(join(patchDir, 'lingdong-office-engine.mjs'), join(checkout, 'apps/desktop/scripts/lingdong-office-engine.mjs'))
 if (!dryRun) copyFileSync(join(patchDir, 'lingdong-office-engine.d.mts'), join(checkout, 'apps/desktop/scripts/lingdong-office-engine.d.mts'))
 report.push('✓  apps/desktop/scripts/lingdong-office-engine.mjs：已放入（含类型声明）')
+if (!dryRun) copyFileSync(join(patchDir, 'lingdong-sidebar-html-route.mjs'), join(checkout, 'apps/desktop/scripts/lingdong-sidebar-html-route.mjs'))
+if (!dryRun) copyFileSync(join(patchDir, 'lingdong-sidebar-html-route.d.mts'), join(checkout, 'apps/desktop/scripts/lingdong-sidebar-html-route.d.mts'))
+report.push('✓  apps/desktop/scripts/lingdong-sidebar-html-route.mjs：已放入（含类型声明）')
 
 // ②b UI：侧栏预设/作品面板 + 会话输入隐藏桥。
 // 旧版本把两个面板挂在输入框 dock 上；这里先原地清掉旧 import/plugin/文件，再写新结构。
@@ -490,36 +493,66 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
       text = `${text.slice(0, start)}${next}${text.slice(end)}`
     }
   }
-  const oldFilterComment = '  // 只显示当前课堂工作区里的会话；浏览器测试没有 bridge 时保留上游列表行为。'
-  const oldFilterStart = text.indexOf(oldFilterComment)
-  if (oldFilterStart >= 0) {
-    const oldFilterEnd = text.indexOf('  }, [classroomStartedAt, classroomWorkspacePath, rawList])', oldFilterStart)
-    if (oldFilterEnd >= 0) text = text.slice(0, oldFilterStart) + '  // 课堂过滤只收工作区行；其它工作区里的会话照常显示，避免切到新会话后回不去。\n  const list = rawList\n' + text.slice(oldFilterEnd + '  }, [classroomStartedAt, classroomWorkspacePath, rawList])'.length + 1)
-  }
-  text = text.replace('  const [classroomStartedAt, setClassroomStartedAt] = useState<number | undefined>(undefined)\n', '')
-  text = text.replace("      const raw = context?.classroom?.startedAt\n      const value = typeof raw === 'string' ? Date.parse(raw) : Number.NaN\n      setClassroomStartedAt(Number.isFinite(value) ? value : undefined)\n", '')
-  if (!text.includes('const rawList = useSessions(state => state)')) {
-    text = text.replace(
-      '  const list = useSessions(state => state)\n',
-      `  const rawList = useSessions(state => state)
+  const sessionState = `  // LINGDONG_CLASSROOM_SESSION_FILTER：只隐藏“当前课堂工作区里、课堂开始前”的旧会话；
+  // 其它工作区（学生自己新建的文件夹等）的会话必须保留，否则切到新会话后回不去。
+  const [classroomStartedAt, setClassroomStartedAt] = useState<number | undefined>(undefined)
   const [classroomWorkspacePath, setClassroomWorkspacePath] = useState('')
   useEffect(() => {
     let alive = true
     const bridge = (window as Window & {
       readonly lingdong?: { readonly context?: () => Promise<{
+        readonly classroom?: { readonly startedAt?: unknown } | null
         readonly workspacePath?: unknown
       } | undefined> }
     }).lingdong
     void bridge?.context?.().then(context => {
       if (!alive) return
+      const raw = context?.classroom?.startedAt
+      const value = typeof raw === 'string' ? Date.parse(raw) : Number.NaN
+      setClassroomStartedAt(Number.isFinite(value) ? value : undefined)
       setClassroomWorkspacePath(typeof context?.workspacePath === 'string' ? context.workspacePath.trim() : '')
     }).catch(() => undefined)
     return () => { alive = false }
-  }, [])
-  // 课堂过滤只收工作区行；其它工作区里的会话照常显示，避免切到新会话后回不去。
-  const list = rawList
-`,
+  }, [])`
+  const sessionFilter = `  // LINGDONG_CLASSROOM_SESSION_FILTER：只隐藏“当前课堂工作区里、课堂开始前”的旧会话；
+  // 其它工作区（学生自己新建的文件夹等）的会话必须保留，否则切到新会话后回不去。
+  const list = useMemo(() => {
+    const bridge = (window as Window & { readonly lingdong?: { readonly context?: unknown } }).lingdong
+    if (bridge?.context === undefined || classroomWorkspacePath === '') return rawList
+    const normalize = (value: string): string => {
+      let path = value.split(String.fromCharCode(92)).join('/')
+      while (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1)
+      return path.toLocaleLowerCase('en-US')
+    }
+    const samePath = (left: unknown, right: string): boolean => typeof left === 'string' && normalize(left) === normalize(right)
+    return {
+      ...rawList,
+      ids: rawList.ids.filter(id => {
+        const value = rawList.byId[id] as { readonly blank?: unknown; readonly updatedAt?: unknown; readonly cwd?: unknown } | undefined
+        if (value === undefined) return false
+        if (!samePath(value.cwd, classroomWorkspacePath)) return true
+        return value.blank === true || typeof value.updatedAt !== 'number' || classroomStartedAt === undefined || value.updatedAt >= classroomStartedAt
+      }),
+    }
+  }, [classroomStartedAt, classroomWorkspacePath, rawList])`
+  const oldFilterComment = '  // 只显示当前课堂工作区里的会话；浏览器测试没有 bridge 时保留上游列表行为。'
+  const oldFilterStart = text.indexOf(oldFilterComment)
+  if (text.includes('LINGDONG_CLASSROOM_SESSION_FILTER')) {
+    // Already migrated by this patch.
+  } else if (oldFilterStart >= 0) {
+    const oldEndMarker = '  }, [classroomStartedAt, classroomWorkspacePath, rawList])'
+    const oldFilterEnd = text.indexOf(oldEndMarker, oldFilterStart)
+    if (oldFilterEnd >= 0) text = text.slice(0, oldFilterStart) + sessionFilter + text.slice(oldFilterEnd + oldEndMarker.length + 1)
+  } else if (!text.includes('const rawList = useSessions(state => state)')) {
+    text = text.replace(
+      '  const list = useSessions(state => state)\n',
+      '  const rawList = useSessions(state => state)\n' + sessionState + '\n' + sessionFilter + '\n',
     )
+  } else if (text.includes('  const list = rawList\n')) {
+    if (!text.includes('const [classroomStartedAt')) {
+      text = text.replace('  const rawList = useSessions(state => state)\n', '  const rawList = useSessions(state => state)\n' + sessionState + '\n')
+    }
+    text = text.replace('  // 课堂过滤只收工作区行；其它工作区里的会话照常显示，避免切到新会话后回不去。\n  const list = rawList\n', sessionFilter + '\n')
   }
   if (!text.includes('const sidebarOwner = {')) {
     text = text.replace(
@@ -985,25 +1018,52 @@ updateTextFile('packages/client/ui-conversation/src/client/skeleton/InputBar.tsx
 
 updateTextFile('packages/client/ui-conversation/src/client/input/facade.ts', (before) => {
   let text = before
-  if (!text.includes('LINGDONG_SEND_LIMIT_IMPORT')) {
+  const oldImport = "import { lingdongSendLimitNotice, lingdongSendLimitReached } from '../lingdong-send-state.ts'"
+  const newImport = "import { lingdongSendLimitNotice, lingdongSendLimitReached, recordLingdongSend } from '../lingdong-send-state.ts'"
+  if (text.includes(oldImport)) text = text.replace(oldImport, newImport)
+  else if (!text.includes('recordLingdongSend')) {
     const anchor = "} from '@deepseek-ai/dsh-client-store'"
     if (!text.includes(anchor)) {
       report.push('!! .../input/facade.ts：找不到 client-store import 锚点')
       return before
     }
-    text = text.replace(anchor, anchor + "\n// LINGDONG_SEND_LIMIT_IMPORT\nimport { lingdongSendLimitNotice, lingdongSendLimitReached } from '../lingdong-send-state.ts'")
+    text = text.replace(anchor, anchor + "\n// LINGDONG_SEND_LIMIT_IMPORT\n" + newImport)
   }
+  const guard = [
+    "    if (lingdongSendLimitReached()) {",
+    "      this.notify('error', lingdongSendLimitNotice())",
+    '      return',
+    '    }',
+  ].join('\n')
+  // 一次真正的用户提交记一次：空回车（空草稿且没有附件）不是发送，不能计数。
+  const counter = [
+    '',
+    "    // LINGDONG_SEND_COUNT_CLICK：一次真正的用户提交只记一次；空回车不算，工具轮不经过 submit。",
+    "    if (this.snapshot.draft.trim() !== '' || this.attachmentIds.length > 0) recordLingdongSend()",
+  ].join('\n')
   if (!text.includes('LINGDONG_SEND_LIMIT_GUARD')) {
     const anchor = "  submit(mode: InputSubmitMode = 'queue'): void {"
     if (!text.includes(anchor)) {
       report.push('!! .../input/facade.ts：找不到 submit 锚点')
       return before
     }
-    text = text.replace(anchor, anchor + "\n    // LINGDONG_SEND_LIMIT_GUARD：次数用完时 Enter 与按钮都走这里，先拦住再发。\n    // 平台仍然是唯一门禁（网关 429）；这一层只是不让学生白按一下。\n    if (lingdongSendLimitReached()) {\n      this.notify('error', lingdongSendLimitNotice())\n      return\n    }")
+    text = text.replace(anchor, anchor + "\n    // LINGDONG_SEND_LIMIT_GUARD：次数用完时 Enter 与按钮都走这里，先拦住再发。\n    // 平台仍然是最终门禁（网关 429）；客户端这里只按本机点击次数显示与提前拦。\n" + guard + counter)
+  } else if (!text.includes("if (this.snapshot.draft.trim() !== '' || this.attachmentIds.length > 0) recordLingdongSend()")) {
+    const legacy = '\n    // LINGDONG_SEND_COUNT_CLICK：一次用户提交只记一次，工具轮不会经过 submit。\n    recordLingdongSend()'
+    if (text.includes(legacy)) {
+      // 旧形态（无条件计数）迁移到带内容判断的形态。
+      text = text.replace(legacy, counter)
+    } else if (text.includes('\n    recordLingdongSend()')) {
+      text = text.replace('\n    recordLingdongSend()', counter)
+    } else if (text.includes(guard)) {
+      text = text.replace(guard, guard + counter)
+    } else {
+      report.push('!! .../input/facade.ts：找到旧闸门但找不到可迁移块')
+      return before
+    }
   }
   return text
 }, '提交闸门在次数用完时拦住')
-
 // ④j todo 收口（2026-09-24，.2.4）：任务已经结束、模型却没有再写一次 todo_write 时，
 //    计划面板会一直停在「N 进行中 · M 待处理」（学生截图）。在 turn/end(completed) 把剩下的项收口。
 updateTextFile('packages/todo/tool-todo/src/index.ts', (before) => {
@@ -1124,6 +1184,33 @@ updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
   }
   return text
 }, '预装插件闭包装进 resources/runtime/plugin-profile')
+
+// ④l 侧栏 HTML 预览读得到自己的相对资源（2026-09-26，rc.2.4）。
+//     症状：侧栏预览只剩没有样式的 HTML（链接是蓝紫色下划线、<ul> 带圆点、首屏挤成一列），
+//     同一个文件在系统浏览器里完全正常。
+//     根因：插件的 /sidebar/html 路由复用了自己的信任闸门，而沙箱 iframe 读
+//     styles.css / app.js 时 Chromium 打的是 sec-fetch-site: cross-site（不透明源）—— 闸门 403。
+//     实测与修法见 client-patch/lingdong-sidebar-html-route.mjs 文件头。
+updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
+  let text = before
+  const importAnchor = "import { patchLingdongOfficeEngine } from './lingdong-office-engine.mjs'"
+  if (!text.includes(importAnchor)) {
+    report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 lingdong-office-engine import 锚点')
+    return before
+  }
+  if (!text.includes('lingdong-sidebar-html-route.mjs')) {
+    text = text.replace(importAnchor, importAnchor + "\nimport { patchLingdongSidebarHtmlRoute } from './lingdong-sidebar-html-route.mjs'")
+  }
+  if (!text.includes('patchLingdongSidebarHtmlRoute(pluginDir)')) {
+    const anchor = "      await runPnpm(['install', '--prod'], pluginDir)"
+    if (!text.includes(anchor)) {
+      report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到插件闭包 pnpm install 锚点')
+      return before
+    }
+    text = text.replace(anchor, anchor + '\n      patchLingdongSidebarHtmlRoute(pluginDir)')
+  }
+  return text
+}, '侧栏 HTML 预览路由补丁接到预装插件闭包上')
 
 updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
   let text = before
