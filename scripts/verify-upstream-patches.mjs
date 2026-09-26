@@ -75,6 +75,9 @@ const expectations = [
   ['packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx', 'LINGDONG_CLASSROOM_WORKSPACES'],
   ['packages/client/ui-settings-account/src/client/AccountMenu.tsx', 'LINGDONG_ACCOUNT_MERGE'],
   ['packages/client/ui-chat/src/client/locale.ts', '小灵VibeCoding中'],
+  ['packages/client/ui-deliverables/src/client/LingdongWorkspacePath.ts', 'lingdongAbsolutePath'],
+  ['apps/desktop/src/main.ts', 'lingdongPrepareProfile'],
+  ['apps/desktop/src/lingdong-user-data.ts', 'adoptLingdongUserData'],
 ]
 for (const [path, marker] of expectations) {
   assert.equal(read(path).includes(marker), true, `missing marker ${marker} in ${path}`)
@@ -85,8 +88,18 @@ for (const file of ['yuxianglin-dsh-bridge-browser-0.0.5.tgz']) {
   assert.equal(existsSync(join(checkout, 'apps/desktop/vendor-plugins', file)), true, 'missing packaged plugin ' + file)
 }
 
-// ⑤ 去掉「上下文洞察」：清单里不能再有 dsh-context。
-assert.equal(read('apps/desktop/src/project-manager.ts').includes("'dsh-context',"), false,
-  'dsh-context 仍然在预装清单里（反馈 ⑤ 要求删掉）')
+// ⑤/① 去掉「上下文洞察」dsh-context 与坏掉的 dsh-at-file：两条都必须**不在**预装清单里，
+// 但要在「已摘掉」名单（LINGDONG_RETIRED_PLUGIN_BUNDLES）里 —— 升级时靠它把旧机器 profile
+// manifest 里那两条已经不随包分发的 entry 删掉，否则宿主每轮都 failed to import。
+const projectManager = read('apps/desktop/src/project-manager.ts')
+const bundlesHead = projectManager.indexOf('const LINGDONG_PLUGIN_BUNDLES = [')
+const bundlesTail = projectManager.indexOf('] as const', bundlesHead)
+assert.equal(bundlesHead >= 0 && bundlesTail > bundlesHead, true, '找不到 LINGDONG_PLUGIN_BUNDLES')
+const bundlesBlock = projectManager.slice(bundlesHead, bundlesTail)
+for (const name of ['dsh-context', 'dsh-at-file']) {
+  assert.equal(bundlesBlock.includes(name), false, `${name} 仍在预装清单里`)
+  assert.equal(projectManager.includes(`  '${name}',`), true,
+    `${name} 不在 LINGDONG_RETIRED_PLUGIN_BUNDLES 里（升级时删不掉旧 entry）`)
+}
 
 console.log(JSON.stringify({ name: 'verify-upstream-patches', pass: true, checkout }))

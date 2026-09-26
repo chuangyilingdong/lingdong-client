@@ -84,8 +84,32 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 ## 现在到哪一步了
 
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
-2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.8`（反馈十条 + 本地预览 + 完全访问权限）已出包、**未发布**。
+2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.9`（坏插件摘除 + 首启预热 + 交付文件绝对路径 + 数据目录改名）已出包、**未发布**。
 
+### 2026-09-25 可用性收口（`0.1.7-alpha.2.9`，未发布）
+
+学生实机反馈（图1 次数 8/8、图2「在文件管理器中显示」点了没反应、图3 侧栏预览报 `fs-error`）逐条落地：
+
+- **交付文件预览 / 「在文件管理器中显示」（图2、图3 同一根因）**：DSH 的
+  `dsh-resource://file/session/<id>/<相对路径>` 要由渲染端用会话 cwd 拼绝对路径，
+  `dsh-better-sidebar@0.19.1` 拿不到 cwd 时把相对路径原样往下送，宿主把 `/index.html`
+  按盘根解析成 `C:\index.html` → 预览 400、reveal 静默失败（对运行中的宿主 curl 复核：
+  同一 sessionId 相对 400 / 绝对 200）。修法：调用点拼绝对路径（会话 cwd 优先、课堂工作区兜底，
+  `client-patch/LingdongWorkspacePath.ts`），reveal 直接走我们的 `lingdong:show-in-folder` IPC。
+- **摘掉 `dsh-at-file`**（0.6.3 的 settingsNamespace 在 0.1.7 上 `failed to import`，@ 文件本来就是坏的），
+  并让 `enablePreinstalledPlugins()` 会**删**旧 entry（`LINGDONG_RETIRED_PLUGIN_BUNDLES`），
+  升级机器上不再每轮刷 failed to import。
+- **首启 26–28 秒插件镜像改预热**：在更新检查/登录门之前就开跑，起宿主时再 await，别再让学生干等。
+- **数据目录改名**：`%APPDATA%\@deepseek-ai\dsh-desktop` → `%APPDATA%\灵动ai创作客户端`
+  （`client-patch/lingdong-user-data.ts`），老机器一次性**原子 rename** 迁移，失败原地退回老目录。
+- ⚠️ **底座升级（0.1.7-alpha.2 → 0.1.7-rc.2 + better-sidebar 0.21.1）**：rc.2 worktree 与 rebrand
+  已就绪，`apply-client-gate.mjs` 还有 9 处锚点要移植（`ui-model-selection` 的 `directory.ts` 是整体
+  重写），必须配真机回归，单独一轮做 —— 详见交接文档 §0.1.7-alpha.2.9 E。
+- 安装包 `489513794` 字节 / SHA256 `AA974EE5D2C0FE49B557D404B1D5C54032F169863D38269036961C965C4CD690`
+  （比 .2.8 小 ~443KB：摘掉 `dsh-at-file` 的闭包），**未发布**；产物在
+  `.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.9-win-x64-unsigned.exe`
+- ⚠️ 真机回归未做：首次启动会迁移数据目录（见下），净机器 + 覆盖升级各跑一次再说发布。
+- 平台侧「发送次数虚高」的根因与改动清单见 [`docs/平台侧改动清单-发送次数计数-20260925.md`](docs/平台侧改动清单-发送次数计数-20260925.md)（客户端只显示平台给的数，这条要平台仓改）。
 ### 2026-09-25 本地预览 + 完全访问权限（`0.1.7-alpha.2.8`，未发布）
 
 - 侧栏「浏览器」打不开本地预览（学生做出网页却看不了）两层根因都修了：

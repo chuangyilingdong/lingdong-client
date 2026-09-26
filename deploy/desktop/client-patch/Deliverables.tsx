@@ -13,6 +13,7 @@ import type { NS } from './locales.ts'
 import { changesSummaryUrl, type ChangesReviewCoordinates } from '../changes.ts'
 import { presentedFileUrl } from '../presented.ts'
 import { PresentedFileCard } from './PresentedFileCard.tsx'
+import { lingdongAbsolutePath, useLingdongWorkspaceRoot } from './LingdongWorkspacePath.ts'
 import css from './Deliverables.module.css'
 
 interface DeliverablesMatch { changes: ChangesTurnData | null; presented: readonly PresentedPath[] }
@@ -72,6 +73,7 @@ export function Deliverables({
   matched: DeliverablesMatch
 } & PropsLocale<typeof NS> & Pick<SessionStandardProps, 'sessionId'> & Pick<GlobalStandardProps, 'useSessions'> & InjectFace<DeliverablesInjected> & PropsRenderSlots<'deliverables.file.actions'>) {
   const [expanded, setExpanded] = useState(false)
+  const workspace = useLingdongWorkspaceRoot()
   const showCodeDiff = useShowCodeDiff(value => value)
   const cwd = useSessions(state => state.byId[sessionId]?.cwd)
   const states = usePresentedOpen(value => value)
@@ -108,7 +110,9 @@ export function Deliverables({
         {presented.map(file => <PresentedFileCard key={`${file.seq}:${file.index}`} file={file} cwd={cwd}
           phase={states[presentedFileUrl(sessionId, file.seq, file.index)]}
           host={host === 'error' ? null : host} t={t}
-          onPreview={() => { openFile(file.path) }}
+          // 交付文件的 path 是**相对会话工作区**的（模型写文件时怎么拼就怎么留）；
+          // 侧栏宿主路由只接受绝对路径，所以这里先拼绝对再交给 openFile。
+          onPreview={() => { openFile(lingdongAbsolutePath(cwd, file.path, workspace.root)) }}
           onAction={(action) => {
             void openPresented(sessionId, file.seq, file.index, action)
           }}

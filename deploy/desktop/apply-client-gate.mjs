@@ -1127,7 +1127,7 @@ patch('apps/desktop/src/project-manager.ts',
     "  'dsh-context',",
     "  '@yuxianglin/dsh-bridge-browser',",
     '] as const',
-    '// 插件闭包的依赖清单：5 个走 registry；dsh-browser 没发布到 npm，用随包的 tarball。',
+    '// 插件闭包的依赖清单：4 个走 registry；dsh-browser 没发布到 npm，用随包的 tarball。',
     '// 由 prepare:dsh 装进 resources/runtime/plugin-profile（见 apply-client-gate.mjs 的 ④k）。',
     'export const LINGDONG_PLUGIN_DEPENDENCIES: Readonly<Record<string, string>> = {',
     "  '@linxin666/dsh-web-all': '^0.3.24',",
@@ -1331,7 +1331,9 @@ updateTextFile('apps/desktop/src/web-document.ts', (before) => before
 //   ⑨ 「深度求索中」→「小灵VibeCoding中」。⑩ 旧图标名别名，修 dsh-better-sidebar 的 React #130。
 // ⑤ 去掉 dsh-context（「上下文洞察」）：清单与依赖一起摘。
 updateTextFile('apps/desktop/src/project-manager.ts', (before) => before
-  .split("  'dsh-context',\n").join('')
+  // ⚠️ 只在预装清单那一段里摘：下面的 LINGDONG_RETIRED_PLUGIN_BUNDLES 也有 'dsh-context' 这行，
+  //    裸 split 会连它一起删（.2.9 踩过），锚点必须带上前后邻居。
+  .split("  '@liustack/modlens',\n  'dsh-context',\n").join("  '@liustack/modlens',\n")
   .split("  'dsh-context': '^0.55.0',\n").join(''),
   '预装清单去掉 dsh-context（上下文洞察）')
 
@@ -1515,8 +1517,148 @@ updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
   const call = "      await runPnpm(['install', '--prod'], pluginDir)\n      patchSidebarPrefs(pluginDir)\n"
   return before.replace(anchor, helper + call)
 }, 'dsh-better-sidebar 偏好层在 0.1.7 上的只读兜底补丁')
+// ④q 数据目录改名 + 老机器迁移（2026-09-25，.2.9）：Electron 的 userData 一直跟着**上游包名**
+//     走 —— `%APPDATA%\@deepseek-ai\dsh-desktop`；产品却叫「灵动ai创作客户端」。学生的登录态、
+//     会话、388MB 插件镜像全在那个"看不出是谁"的目录里，老师找数据 / 卸载清理都对不上。
+//     改成产品名，并在**任何 getPath('userData') 之前**做一次性迁移；迁移失败原地退回老目录
+//     （绝不让学生丢登录态）。实现与取舍见 client-patch/lingdong-user-data.ts 文件头。
+const userDataHelperTarget = join(checkout, 'apps/desktop/src/lingdong-user-data.ts')
+if (!dryRun) {
+  mkdirSync(dirname(userDataHelperTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'lingdong-user-data.ts'), userDataHelperTarget)
+}
+report.push('✓  apps/desktop/src/lingdong-user-data.ts：已放入')
+
+patch('apps/desktop/src/main.ts',
+  "import { join } from 'node:path'",
+  "import { adoptLingdongUserData } from './lingdong-user-data.ts'\nimport { join } from 'node:path'",
+  '数据目录改名：引入')
+
+patch('apps/desktop/src/main.ts',
+  'let focusPrimaryWindow = (): void => {}',
+  "// ⚠️ 必须在任何 app.getPath('userData') 之前跑（见 lingdong-user-data.ts 文件头）。\nadoptLingdongUserData()\nlet focusPrimaryWindow = (): void => {}",
+  '数据目录改名：落地')
+
+// ④p 学生端可用性收口（2026-09-25，.2.9）。逐条对应这一轮学生实机反馈：
+//   ① dsh-at-file@0.6.3 用的是 0.1.5/0.1.6 的 settingsNamespace，在 DSH 0.1.7 上宿主日志直接
+//      failed to import（@ 文件功能本来就是坏的）。产品口径「坏功能先移除」→ 从预装清单摘掉；
+//      并且升级时要把旧机器 profile manifest 里的那条**也删掉**（enablePreinstalledPlugins
+//      原来只会补、不会删，旧机器会一直留着一条已经不随包分发的 entry）。
+//   ② 首启要把插件闭包（~388MB / 1.7 万文件）镜像进 profile，实测 26-28 秒，卡在「登录之后、
+//      宿主起来之前」——学生看到的是点完登录干等半分钟。改成提前预热：在更新检查与登录门之前就
+//      开跑，把这段等待藏进那几屏；真正要起宿主时再 await（见 main.ts 里那段注记）。
+//   ③ 交付文件的预览与「在文件管理器中显示」都必须拿绝对路径。DSH 的 file-address 是「相对会话
+//      工作区的路径」，dsh-better-sidebar 在渲染端用会话摘要的 cwd 把它拼成绝对路径；cwd 一缺
+//      就退化成 /index.html，宿主的 requireAbsolute 又把它解析成 C:\index.html —— 于是侧栏预览
+//      报 fs-error: cannot resolve target，reveal 静默失败（两处都见过）。我们在调用点用课堂
+//      工作区兜底，见 client-patch/LingdongWorkspacePath.ts。
+const workspacePathHelperTarget = join(checkout, 'packages/client/ui-deliverables/src/client/LingdongWorkspacePath.ts')
+if (!dryRun) {
+  mkdirSync(dirname(workspacePathHelperTarget), { recursive: true })
+  copyFileSync(join(patchDir, 'LingdongWorkspacePath.ts'), workspacePathHelperTarget)
+}
+report.push('✓  packages/client/ui-deliverables/src/client/LingdongWorkspacePath.ts：已放入')
+
+updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
+  let text = before
+  // ⚠️ 摘哪一条都必须用「带前后邻居」的锚点：裸 split("  'dsh-at-file',\n") 会把下面的
+  //    LINGDONG_RETIRED_PLUGIN_BUNDLES 里同名那行一起删掉（自愈块会被清空 → 旧机器上的坏
+  //    entry 永远删不掉）。.2.9 第一版就是这么错的，所以这里把名字和邻居一起匹配。
+  text = text.split("  'dsh-better-sidebar',\n  'dsh-at-file',\n").join("  'dsh-better-sidebar',\n")
+  text = text.split("  'dsh-at-file': '^0.6.3',\n").join('')
+  const comments = [
+    '// LINGDONG_RETIRED_PLUGIN_BUNDLES：**已经**从预装清单里摘掉的插件，升级时顺手从 profile',
+    '// manifest 里删名 —— 只加不减的话，旧机器会留着一条已经不随包分发的 entry，宿主每轮都',
+    '// failed to import（那正是学生看到的报错来源）。',
+    '//   · dsh-context：.2.6 起删（「上下文洞察」产品取舍）；',
+    '//   · dsh-at-file：.2.9 起删（0.6.3 的 settingsNamespace 在 0.1.7 上不兼容）。',
+  ].join('\n')
+  const list = [
+    'const LINGDONG_RETIRED_PLUGIN_BUNDLES = [',
+    "  'dsh-context',",
+    "  'dsh-at-file',",
+    '] as const',
+    '',
+  ].join('\n')
+  const head = 'const LINGDONG_RETIRED_PLUGIN_BUNDLES = ['
+  const tail = '] as const\n'
+  const at = text.indexOf(head)
+  if (at >= 0) {
+    // 自愈：名单被别的补丁动过（条目丢了）就整块重写，保证两条都在。
+    const commentAt = text.indexOf('// LINGDONG_RETIRED_PLUGIN_BUNDLES：')
+    const start = commentAt >= 0 && commentAt < at ? commentAt : at
+    const end = text.indexOf(tail, at)
+    if (end >= 0) text = text.slice(0, start) + comments + '\n' + list + text.slice(end + tail.length)
+  } else {
+    const anchor = '] as const\n// 插件闭包的依赖清单'
+    if (!text.includes(anchor)) {
+      report.push('!! apps/desktop/src/project-manager.ts：找不到预装清单锚点')
+      return before
+    }
+    text = text.replace(anchor, '] as const\n' + comments + '\n' + list + '// 插件闭包的依赖清单')
+  }
+  return text
+}, '预装清单摘掉 dsh-at-file')
+
+updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
+  // 幂等：已经改过的机器直接跳过（旧写法里没有 LINGDONG_RETIRED_PLUGIN_BUNDLES 这一句）。
+  if (before.includes('LINGDONG_RETIRED_PLUGIN_BUNDLES as readonly string[]')) return before
+  const anchor = [
+    '  const current = manifest.dsh?.profile?.bundles ?? []',
+    '  const missing = LINGDONG_PLUGIN_BUNDLES.filter(name => !current.includes(name))',
+    '  if (missing.length === 0) return',
+    '  // 聚合包必须排在 dsh-better-sidebar 之前（见清单注释），所以按清单顺序重建尾段：',
+    '  // 保留原有条目、去掉待插入项，再把清单整体接在末尾。',
+    '  const kept = current.filter(name => !(LINGDONG_PLUGIN_BUNDLES as readonly string[]).includes(name))',
+    '  const bundles = [...kept, ...LINGDONG_PLUGIN_BUNDLES]',
+  ].join('\n')
+  const replacement = [
+    '  const current = manifest.dsh?.profile?.bundles ?? []',
+    '  // 聚合包必须排在 dsh-better-sidebar 之前（见清单注释），所以按清单顺序重建尾段：',
+    '  // 保留原有条目、去掉待插入项（含已摘掉的 LINGDONG_RETIRED_PLUGIN_BUNDLES），再把清单接在末尾。',
+    '  const kept = current.filter(name => !(LINGDONG_PLUGIN_BUNDLES as readonly string[]).includes(name)',
+    '    && !(LINGDONG_RETIRED_PLUGIN_BUNDLES as readonly string[]).includes(name))',
+    '  const bundles = [...kept, ...LINGDONG_PLUGIN_BUNDLES]',
+    '  if (bundles.length === current.length && bundles.every((name, index) => name === current[index])) return',
+  ].join('\n')
+  if (!before.includes(anchor)) {
+    report.push('!! apps/desktop/src/project-manager.ts：找不到 enablePreinstalledPlugins 锚点')
+    return before
+  }
+  return before.replace(anchor, replacement)
+}, '升级时把摘掉的插件从旧清单里删除')
+
+patch('apps/desktop/src/main.ts',
+  '  if (await runLingdongUpdater()) { app.quit(); return }',
+  [
+    '  // 灵动ai 预装插件预热（2026-09-25，.2.9）：首启要把插件闭包镜像进 profile，实测 26-28 秒，',
+    '  // 而且卡在「登录之后、宿主起来之前」。这段时间学生本来就在更新检查/登录页/等上课页上，',
+    '  // 所以这里提前开跑把等待藏起来；真正要起宿主时（reconcileBackend）再 await 它。',
+    '  // 为什么要有这个包装：applyRelease 用的是**进程级 profile 文件锁**，同一个进程里再调一次',
+    '  // 会直接抛「another profile operation is active」——所以进程内只跑一次，失败则不缓存以便重试。',
+    '  let lingdongProfilePrepare: Promise<void> | undefined',
+    '  const lingdongPrepareProfile = (): Promise<void> => {',
+    '    lingdongProfilePrepare ??= manager.applyRelease().catch((error: unknown) => {',
+    '      lingdongProfilePrepare = undefined',
+    '      throw error',
+    '    })',
+    '    return lingdongProfilePrepare',
+    '  }',
+    '  // 失败只记一行：预热不是启动的必要条件，正常启动路径会重试并把真正的错误暴露出来。',
+    '  void lingdongPrepareProfile().catch((error: unknown) => {',
+    "    console.warn('[lingdong] 预装插件预热失败，交给正常启动路径重试', error)",
+    '  })',
+    '  if (await runLingdongUpdater()) { app.quit(); return }',
+  ].join('\n'),
+  '④p 预装插件预热')
+
+patch('apps/desktop/src/main.ts',
+  '        await manager.applyRelease()',
+  '        await lingdongPrepareProfile()',
+  '④p 启动路径复用预热结果')
 console.log(`检出：${checkout}${dryRun ? '（--dry-run）' : ''}`)
 for (const line of report) console.log('  ' + line)
+
 const failed = report.filter((line) => line.startsWith('!!'))
 console.log(failed.length ? `\n!! ${failed.length} 处需要人工看一眼（多半是上游漂了）` : '\n登录门已接入。')
 if (failed.length > 0) process.exitCode = 1

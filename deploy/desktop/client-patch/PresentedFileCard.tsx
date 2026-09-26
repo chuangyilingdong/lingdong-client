@@ -1,6 +1,6 @@
 /** File identity and explicit default-app or file-manager actions for one delivery. */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
+import { isAbsoluteWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
 import {
   Menu, FileTypeIcon, fileExtension, IconRightUpOutlineMedium,
   IconChevronDownOutlineMedium, IconFolderOpenOutlineMedium,
@@ -8,6 +8,7 @@ import {
 import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { PresentedAction, PresentedHost } from '../presented.ts'
 import type { PresentedOpenPhase } from './present-open.ts'
+import { lingdongAbsolutePath, useLingdongWorkspaceRoot } from './LingdongWorkspacePath.ts'
 import { basename, type PresentedPath } from './turn-deliverables.ts'
 import type { NS } from './locales.ts'
 import css from './Deliverables.module.css'
@@ -32,6 +33,7 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
   onAction?: (action: PresentedAction) => void
   actions?: ReactNode
 } & PropsLocale<typeof NS>) {
+  const workspace = useLingdongWorkspaceRoot()
   const [menuOpen, setMenuOpen] = useState(false)
   const previewRef = useRef<HTMLButtonElement>(null)
   const autoOpened = useRef(false)
@@ -39,9 +41,11 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
   // 代码完成并交付 HTML 时自动把右侧预览打开；用户仍可手动关闭。
   useEffect(() => {
     if (autoOpened.current || host?.available !== true || !/\.html?$/iu.test(file.path)) return
+    // 相对路径要等兜底工作区就绪再开：一次 IPC 的功夫，否则会拿相对路径去撞宿主的绝对路径断言。
+    if (!isAbsoluteWorkspacePath(file.path) && cwd === undefined && !workspace.ready) return
     autoOpened.current = true
     onPreview()
-  }, [file.path, host, onPreview])
+  }, [file.path, host, onPreview, cwd, workspace.ready])
   const pending = phase === 'opening' || phase === 'revealing'
   const menuDisabled = pending || host === null || !host.available
   if (menuDisabled && menuOpen) setMenuOpen(false)
@@ -58,12 +62,15 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
     const bridge = (window as Window & {
       readonly lingdong?: { readonly showInFolder?: (path: string) => Promise<{ ok: boolean; message?: string }> }
     }).lingdong
-    if (bridge?.showInFolder === undefined || cwd === undefined) {
+    // 绝对路径是宿主路由的硬要求：会话 cwd 缺失时用课堂工作区兜底；
+    // 仍然拼不出绝对路径（浏览器测试）才退回宿主链路。
+    const absolute = lingdongAbsolutePath(cwd, file.path, workspace.root)
+    if (bridge?.showInFolder === undefined || !isAbsoluteWorkspacePath(absolute)) {
       onAction?.('reveal')
       return
     }
     try {
-      const result = await bridge.showInFolder(resolveWorkspacePath(cwd, file.path))
+      const result = await bridge.showInFolder(absolute)
       if (result.ok !== true) onAction?.('reveal')
     } catch {
       onAction?.('reveal')
@@ -77,7 +84,7 @@ export function PresentedFileCard({ file, cwd, phase, host, onPreview, onAction,
       : reveal === 'directory' && phase === 'revealing' ? 'presented.directoryOpening'
         : reveal === 'directory' && phase === 'revealError' ? 'presented.directoryError' : `presented.${phase}`)
   return <div className={css.file} data-presented-file>
-    <button type="button" className={css.cardPreview} title={resolveWorkspacePath(cwd, file.path)}
+    <button type="button" className={css.cardPreview} title={lingdongAbsolutePath(cwd, file.path, workspace.root)}
       aria-label={t('presented.previewCard', { name: file.path })} onClick={onPreview} />
     <span className={css.fileIcon}><FileTypeIcon path={file.path} size={20} /></span>
     <div className={css.fileBody}>
