@@ -12,6 +12,7 @@ const same = (left, right) => readFileSync(left).equals(readFileSync(right))
 const copies = [
   ['deploy/desktop/client-patch/platform-gate.ts', 'apps/desktop/src/platform-gate.ts'],
   ['deploy/desktop/client-patch/LingdongUpdater.ts', 'apps/desktop/src/LingdongUpdater.ts'],
+  ['deploy/desktop/client-patch/lingdong-office-engine.mjs', 'apps/desktop/scripts/lingdong-office-engine.mjs'],
   ['deploy/desktop/client-patch/LingdongClassroomWorkspace.ts', 'packages/client/ui-workspace/src/client/LingdongClassroomWorkspace.ts'],
   ['deploy/desktop/client-patch/LingdongWorkPanel.tsx', 'packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx'],
   ['deploy/desktop/client-patch/HtmlPreviewBytes.ts', 'packages/client/ui-sidebar-documentpreview/src/client/html/bytes.ts'],
@@ -54,12 +55,15 @@ const expectations = [
   ['packages/client/ui-conversation/src/client/skeleton/InputBar.tsx', 'lingdongExhausted'],
   ['packages/client/ui-conversation/src/client/input/facade.ts', 'LINGDONG_SEND_LIMIT_GUARD'],
   ['packages/todo/tool-todo/src/index.ts', 'LINGDONG_TODO_CLOSE'],
+  ['apps/desktop/src/project-manager.ts', "'dsh-better-sidebar': '0.21.1'"],
   ['apps/desktop/src/project-manager.ts', 'function enablePreinstalledPlugins('],
   ['apps/desktop/src/project-manager.ts', 'materializePreinstalledPlugins(this.paths.profile, this.runtime.plugins)'],
   ['apps/desktop/src/project-manager.ts', '@yuxianglin/dsh-bridge-browser'],
   ['apps/desktop/scripts/prepare-dsh.ts', 'LINGDONG_VENDOR_PLUGINS'],
   ['apps/desktop/scripts/prepare-dsh.ts', 'LINGDONG_PLUGIN_PROFILE'],
-  ['apps/desktop/scripts/prepare-dsh.ts', 'LINGDONG_SIDEBAR_PREFS_FALLBACK'],
+  ['apps/desktop/scripts/prepare-dsh.ts', 'patchLingdongOfficeEngine(DSH_OUTPUT_ROOT'],
+  ['apps/desktop/scripts/lingdong-office-engine.mjs', "for (const name of ['index.js', 'cli.js'])"],
+  ['apps/desktop/scripts/prepare-dsh.ts', 'overrides:\\n  dsh-better-sidebar: 0.21.1'],
   ['apps/desktop/src/main.ts', 'LINGDONG_PLUGIN_RESOURCE'],
   ['packages/client/ui-conversation/src/client/lingdong-send-state.ts', 'lingdongSendLimitReached'],
   ['apps/desktop/src/main.ts', 'dsh-app://127.0.0.1'],
@@ -70,7 +74,6 @@ const expectations = [
   ['apps/desktop/resources/gate/lingdong.patch.yml', 'web-ui-remote-web-ui, disabled: true'],
   ['apps/desktop/resources/gate/lingdong.patch.yml', 'defaultPreset: danger-full-access'],
   ['apps/desktop/resources/gate/lingdong.patch.yml', 'sandbox: danger-full-access'],
-  ['apps/desktop/resources/gate/lingdong.patch.yml', 'browserAllowedLoopback: "127.0.0.1, localhost, [::1]"'],
   ['packages/client/ui-primitives/src/index.ts', 'LINGDONG_LEGACY_ICON_ALIASES'],
   ['packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx', 'LINGDONG_CLASSROOM_WORKSPACES'],
   ['packages/client/ui-settings-account/src/client/AccountMenu.tsx', 'LINGDONG_ACCOUNT_MERGE'],
@@ -83,6 +86,8 @@ const expectations = [
 for (const [path, marker] of expectations) {
   assert.equal(read(path).includes(marker), true, `missing marker ${marker} in ${path}`)
 }
+assert.equal(read('apps/desktop/resources/gate/lingdong.patch.yml').includes('browserAllowedLoopback: "'), false,
+  'rc.2/0.21.1 已不接受 browserAllowedLoopback，补丁层不应再写这个配置键')
 
 // 预装插件的 tarball 必须随检出（dsh-browser 没发布到 npm，只能随包）。
 for (const file of ['yuxianglin-dsh-bridge-browser-0.0.5.tgz']) {

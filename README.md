@@ -24,8 +24,8 @@ Electron 壳（`apps/desktop`）+ 完整 dsh Web 应用（`packages/client/*`）
 | 项 | 值 |
 |---|---|
 | 仓库 | `https://github.com/deepseek-ai/deepseek-harness.git` |
-| 提交 | `00102833dfaee1da9f48a3a8eae9d34005a75218`（tag **`dsh-v0.1.7-alpha.2`**） |
-| 版本 | `0.1.7-alpha.2` |
+| 提交 | `477b4f420553e8a52c2fbccc464d7561b239c443`（tag **`dsh-v0.1.7-rc.2`**） |
+| 版本 | `0.1.7-rc.2` |
 | 检出位置 | `upstream/dsh-harness/`（**gitignore**，体积大、含构建缓存，不要提交） |
 
 升级上游时：改上面这个提交号 → 重跑两个补丁脚本 → 出包 → 在真机上过一遍登录/上课链路。
@@ -86,6 +86,8 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
 2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.9`（坏插件摘除 + 首启预热 + 交付文件绝对路径 + 数据目录改名）已出包、**未发布**。
 
+2026-09-26 已完成 **0.1.7-rc.2 底座移植**（含 `dsh-better-sidebar@0.21.1` overrides）：补丁 dry-run、上游补丁校验、TypeScript 编译、正式出包与桩平台回归均通过。`0.1.7-rc.2.1` 已出包、**未发布**；安装包 `420937033` 字节 / SHA256 `B109E4E3C40DC3557056B572D4AD7BD35C9A9BD25E13A78772A8F56D42683143`。
+
 ### 2026-09-25 可用性收口（`0.1.7-alpha.2.9`，未发布）
 
 学生实机反馈（图1 次数 8/8、图2「在文件管理器中显示」点了没反应、图3 侧栏预览报 `fs-error`）逐条落地：
@@ -102,9 +104,11 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 - **首启 26–28 秒插件镜像改预热**：在更新检查/登录门之前就开跑，起宿主时再 await，别再让学生干等。
 - **数据目录改名**：`%APPDATA%\@deepseek-ai\dsh-desktop` → `%APPDATA%\灵动ai创作客户端`
   （`client-patch/lingdong-user-data.ts`），老机器一次性**原子 rename** 迁移，失败原地退回老目录。
-- ⚠️ **底座升级（0.1.7-alpha.2 → 0.1.7-rc.2 + better-sidebar 0.21.1）**：rc.2 worktree 与 rebrand
-  已就绪，`apply-client-gate.mjs` 还有 9 处锚点要移植（`ui-model-selection` 的 `directory.ts` 是整体
-  重写），必须配真机回归，单独一轮做 —— 详见交接文档 §0.1.7-alpha.2.9 E。
+- ✅ **底座升级（0.1.7-alpha.2 → 0.1.7-rc.2 + better-sidebar 0.21.1）**：rc.2 的补丁锚点已全部移植，
+  `apply-client-gate.mjs --dry-run`、上游补丁校验、TypeScript 编译和正式出包全部通过；0.21.1 使用
+  0.1.7 的 `SettingsForms`，旧 `patchSidebarPrefs()` 兜底已删除。桩平台已验证登录门 → 课堂上下文 →
+  `showInFolder(absolute)` → 工具行文件打开（iframe 使用盘符绝对路径、正文 `LINGDONG-RC2-PREVIEW-OK`）
+  与旧会话模型 `deepseek-flash`（无 `MISSING_CREDENTIAL`）。
 - 安装包 `489513794` 字节 / SHA256 `AA974EE5D2C0FE49B557D404B1D5C54032F169863D38269036961C965C4CD690`
   （比 .2.8 小 ~443KB：摘掉 `dsh-at-file` 的闭包），**未发布**；产物在
   `.tmp\dsh-0.1.7-alpha.2\apps\desktop\.desktop-build\targets\win-x64\unsigned-artifacts\lingdong-client-0.1.7-alpha.2.9-win-x64-unsigned.exe`

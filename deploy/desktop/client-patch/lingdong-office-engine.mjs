@@ -15,11 +15,14 @@ export function patchLingdongOfficeEngine(dshRoot, platform, arch) {
     throw new Error(`lingdong office engine: missing prepared engine ${packageName} at ${engineRoot}`)
   }
 
-  const file = join(dshRoot, 'node_modules', '@deepseek-ai', 'libreoffice-kit', 'lib', 'index.js')
-  const before = readFileSync(file, 'utf8')
-  if (before.includes('LINGDONG_LIBREOFFICE_ENGINE_DIR')) return
   const anchor = `\tconst details = platform === "linux" ? report() : {};\n\tconst target = platformTarget(platform, arch, () => details);`
   const replacement = `${anchor}\n\tconst override = process.env.LINGDONG_LIBREOFFICE_ENGINE_DIR;\n\tif (typeof override === "string" && override !== "" && target !== void 0) {\n\t\tconst packageFile = join(override, "package.json");\n\t\tif (lstatSync(packageFile, { throwIfNoEntry: false }) !== void 0) return readEngine(packageFile, "native", target);\n\t}`
-  if (!before.includes(anchor)) throw new Error('lingdong office engine: resolver anchor missing')
-  writeFileSync(file, before.replace(anchor, replacement), 'utf8')
+  // rc.2 bundles the resolver into both the library and the CLI entry; both must honor the short path.
+  for (const name of ['index.js', 'cli.js']) {
+    const file = join(dshRoot, 'node_modules', '@deepseek-ai', 'libreoffice-kit', 'lib', name)
+    const before = readFileSync(file, 'utf8')
+    if (before.includes('LINGDONG_LIBREOFFICE_ENGINE_DIR')) continue
+    if (!before.includes(anchor)) throw new Error(`lingdong office engine: resolver anchor missing in ${name}`)
+    writeFileSync(file, before.replace(anchor, replacement), 'utf8')
+  }
 }

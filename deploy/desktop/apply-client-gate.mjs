@@ -36,7 +36,26 @@ const checkout = resolve(arg('--checkout', '.'))
 if (!existsSync(join(checkout, 'apps/desktop/package.json'))) throw new Error(`这不像上游检出：${checkout}`)
 
 const report = []
-const write = (file, text) => { if (!dryRun) writeFileSync(join(checkout, file), text); }
+// --dry-run 必须在内存里模拟前序补丁，否则后面的锚点仍在读原始文件，会把
+// 「依赖前一条补丁」误报成上游漂移。真实执行时同时写入磁盘并更新覆盖层。
+const virtualCheckoutFiles = new Map()
+const checkoutFile = file => resolve(checkout, file)
+const checkoutHasFile = file => virtualCheckoutFiles.has(checkoutFile(file)) || existsSync(checkoutFile(file))
+const readCheckoutText = (file) => {
+  const virtual = virtualCheckoutFiles.get(checkoutFile(file))
+  if (virtual !== undefined) return Buffer.isBuffer(virtual) ? virtual.toString('utf8') : virtual
+  return readFileSync(checkoutFile(file), 'utf8')
+}
+const write = (file, text) => {
+  virtualCheckoutFiles.set(checkoutFile(file), text)
+  if (!dryRun) writeFileSync(checkoutFile(file), text)
+}
+/** Copy a file and expose its new contents to later dry-run patch reads. */
+const copyIntoCheckout = (source, target) => {
+  const destination = resolve(target)
+  if (!dryRun) copyFileSync(source, destination)
+  virtualCheckoutFiles.set(destination, readFileSync(source))
+}
 /** 精确替换；命中 0 次或已改过都要看得见（上游升级后锚点可能漂）。
  *  ⚠️ `marker` 是**这条补丁的特征串**，用来判断是否已打过 —— 不能用"文件里有灵动ai"这种松散判断：
  *     加新补丁时会被误判成"已打过"而整个跳过（踩过）。
@@ -53,8 +72,8 @@ const write = (file, text) => { if (!dryRun) writeFileSync(join(checkout, file),
  */
 const patch = (file, anchor, replacement, note, marker) => {
   const full = join(checkout, file)
-  if (!existsSync(full)) { report.push(`!! ${file}：文件不存在`); return }
-  const before = readFileSync(full, 'utf8')
+  if (!checkoutHasFile(file)) { report.push(`!! ${file}：文件不存在`); return }
+  const before = readCheckoutText(file)
   const added = replacement.startsWith(anchor) ? replacement.slice(anchor.length).trim() : replacement
   const effectiveMarker = marker ?? (added.length >= 12 ? added.slice(0, 60) : replacement)
   if (before.includes(effectiveMarker)) {
@@ -69,16 +88,15 @@ const patch = (file, anchor, replacement, note, marker) => {
 // ① 随包分发的页面与补丁层
 const gateSource = join(patchDir, 'gate')
 const gateTarget = join(checkout, 'apps/desktop/resources/gate')
-if (!dryRun) {
-  mkdirSync(gateTarget, { recursive: true })
-  for (const name of readdirSync(gateSource)) copyFileSync(join(gateSource, name), join(gateTarget, name))
-  copyFileSync(join(patchDir, 'lingdong.patch.yml'), join(gateTarget, 'lingdong.patch.yml'))
-}
+if (!dryRun) mkdirSync(gateTarget, { recursive: true })
+for (const name of readdirSync(gateSource)) copyIntoCheckout(join(gateSource, name), join(gateTarget, name))
+copyIntoCheckout(join(patchDir, 'lingdong.patch.yml'), join(gateTarget, 'lingdong.patch.yml'))
 report.push(`✓  apps/desktop/resources/gate/：${dryRun ? '（--dry-run 未写入）' : readdirSync(gateTarget).join(' ')}`)
 
 // ② 登录门主进程模块
 if (!dryRun) mkdirSync(join(checkout, 'apps/desktop/src'), { recursive: true })
-if (!dryRun) copyFileSync(join(patchDir, 'platform-gate.ts'), join(checkout, 'apps/desktop/src/platform-gate.ts'))
+if (dryRun) copyIntoCheckout(join(patchDir, 'platform-gate.ts'), join(checkout, 'apps/desktop/src/platform-gate.ts'))
+else copyFileSync(join(patchDir, 'platform-gate.ts'), join(checkout, 'apps/desktop/src/platform-gate.ts'))
 report.push('✓  apps/desktop/src/platform-gate.ts：已放入')
 if (!dryRun) copyFileSync(join(patchDir, 'LingdongUpdater.ts'), join(checkout, 'apps/desktop/src/LingdongUpdater.ts'))
 report.push('✓  apps/desktop/src/LingdongUpdater.ts：已放入')
@@ -120,8 +138,8 @@ for (const oldName of ['LingdongPresetDock.tsx', 'LingdongWorkDock.tsx']) {
 
 const updateTextFile = (file, transform, note) => {
   const full = join(checkout, file)
-  if (!existsSync(full)) { report.push(`!! ${file}：文件不存在`); return }
-  const before = readFileSync(full, 'utf8')
+  if (!checkoutHasFile(file)) { report.push(`!! ${file}：文件不存在`); return }
+  const before = readCheckoutText(file)
   const after = transform(before)
   if (after === before) { report.push(`·  ${file}：已是最新（跳过）`); return }
   write(file, after)
@@ -174,12 +192,12 @@ updateTextFile('apps/desktop/src/platform-gate.ts', (before) => {
 updateTextFile('packages/client/ui-model-selection/src/client/directory.ts', (before) => {
   if (before.includes('LINGDONG_PLATFORM_MODEL_MIGRATION')) return before
   let text = before
-  const resolvedAnchor = '  private resolved = false\n'
-  if (!text.includes(resolvedAnchor)) {
-    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 resolved 锚点')
+  const disposedAnchor = '  private disposed = false\n'
+  if (!text.includes(disposedAnchor)) {
+    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 disposed 锚点')
     return before
   }
-  text = text.replace(resolvedAnchor, resolvedAnchor + [
+  text = text.replace(disposedAnchor, disposedAnchor + [
     '  /** LINGDONG_PLATFORM_MODEL_MIGRATION：旧会话的上游模型选择自动迁回平台网关。 */',
     '  private repairedSelection = false',
   ].join('\n') + '\n')
@@ -189,23 +207,33 @@ updateTextFile('packages/client/ui-model-selection/src/client/directory.ts', (be
     return before
   }
   text = text.replace(resetAnchor, resetAnchor + '    this.repairedSelection = false\n')
-  const currentAnchor = '    const current = projected.next ?? catalog.value.default\n'
-  if (!text.includes(currentAnchor)) {
-    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 current 锚点')
+  const intendedAnchor = [
+    '    const projected = modelSelectionProjection(this.projected.getSnapshot())',
+    '    const intended = projected?.next ?? catalog.value?.default',
+  ].join('\n')
+  if (!text.includes(intendedAnchor)) {
+    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 projected/intended 锚点')
     return before
   }
-  const replacement = [
-    '    const projectedSelection = projected.next',
-    "    const migrateToPlatform = projectedSelection !== undefined && projectedSelection !== null",
+  text = text.replace(intendedAnchor, [
+    '    const projected = modelSelectionProjection(this.projected.getSnapshot())',
+    '    const catalogValue = catalog.value',
+    '    const projectedSelection = projected?.next',
+    '    const migrateToPlatform = catalogValue !== null && projectedSelection !== undefined && projectedSelection !== null',
     "      && projectedSelection.provider !== 'platform-gateway'",
-    "      && catalog.value.default.provider === 'platform-gateway'",
+    "      && catalogValue.default.provider === 'platform-gateway'",
     '    if (migrateToPlatform && !this.repairedSelection && this.available()) {',
     '      this.repairedSelection = true',
-    '      void this.select(catalog.value.default).catch(() => undefined)',
+    '      void this.select(catalogValue.default).catch(() => undefined)',
     '    }',
-    '    const current = migrateToPlatform ? catalog.value.default : projectedSelection ?? catalog.value.default',
-  ].join('\n') + '\n'
-  return text.replace(currentAnchor, replacement)
+    '    const intended = migrateToPlatform ? catalogValue.default : projectedSelection ?? catalogValue?.default',
+  ].join('\n'))
+  const selectionAnchor = '    const selection = projected.next ?? catalog.value.default\n'
+  if (!text.includes(selectionAnchor)) {
+    report.push('!! packages/client/ui-model-selection/src/client/directory.ts：找不到 selection 锚点')
+    return before
+  }
+  return text.replace(selectionAnchor, '    const selection = migrateToPlatform ? catalog.value.default : projected.next ?? catalog.value.default\n')
 }, '旧会话模型选择迁回 platform-gateway')
 
 
@@ -363,11 +391,18 @@ updateTextFile('packages/client/ui-workspace/src/client/contract/slots.ts', (bef
   if (!text.includes("'sidebar.workspaces.lingdongPresets'")) {
     text = text.replace(directoryLine, single)
   }
-  const union = "'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.session.menu.item' | 'sidebar.workspaces.session.row.action'"
-  const extended = "'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.lingdongPresets' | 'sidebar.workspaces.lingdongWork' | 'sidebar.workspaces.session.menu.item' | 'sidebar.workspaces.session.row.action'"
-  if (!text.includes(extended)) {
-    if (text.includes(union)) text = text.replace(union, extended)
-    else text = text.replace("  & PropsRenderSlots<'sidebar.workspaces.directoryFlow'>", "  & PropsRenderSlots<'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.lingdongPresets' | 'sidebar.workspaces.lingdongWork'>")
+  const renderAnchor = `    | 'sidebar.workspaces.directoryFlow'${eol}`
+  if (!text.includes(`    | 'sidebar.workspaces.lingdongPresets'`)) {
+    if (text.includes(renderAnchor)) {
+      text = text.replace(renderAnchor, renderAnchor
+        + `    | 'sidebar.workspaces.lingdongPresets'${eol}`
+        + `    | 'sidebar.workspaces.lingdongWork'${eol}`)
+    } else {
+      const union = "'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.session.menu.item' | 'sidebar.workspaces.session.row.action'"
+      const extended = "'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.lingdongPresets' | 'sidebar.workspaces.lingdongWork' | 'sidebar.workspaces.session.menu.item' | 'sidebar.workspaces.session.row.action'"
+      if (text.includes(union)) text = text.replace(union, extended)
+      else text = text.replace("  & PropsRenderSlots<'sidebar.workspaces.directoryFlow'>", "  & PropsRenderSlots<'sidebar.workspaces.directoryFlow' | 'sidebar.workspaces.lingdongPresets' | 'sidebar.workspaces.lingdongWork'>")
+    }
   }
   if (!/  sessions\?: ISessions \| undefined\r?\n/u.test(text)) {
     if (/  sessions\??: ISessions(?: \| undefined)?\r?\n/u.test(text)) {
@@ -635,7 +670,14 @@ updateTextFile('apps/desktop/src/main.ts', (before) => {
 
 updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
   let current = before
-  const importAnchor = "import { selectOfficeEngine } from '../../../scripts/libreoffice-engine.ts'"
+  const importAnchor = [
+    "import { selectOfficeEngine } from '../../../scripts/libreoffice-packages.mjs'",
+    "import { selectOfficeEngine } from '../../../scripts/libreoffice-engine.ts'",
+  ].find(anchor => current.includes(anchor))
+  if (importAnchor === undefined) {
+    report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 Office engine import 锚点')
+    return before
+  }
   if (!current.includes("from './lingdong-office-engine.mjs'")) {
     current = current.replace(importAnchor, importAnchor + "\nimport { patchLingdongOfficeEngine } from './lingdong-office-engine.mjs'")
   }
@@ -688,7 +730,14 @@ updateTextFile('apps/desktop/src/main.ts', (before) => {
     if (!current.includes(from)) { report.push(`!! apps/desktop/src/main.ts：${note}：锚点没找到`); return }
     current = current.replace(from, to)
   }
-  replaceOnce('  if (!value.hasApiKey && !quitting) { enteredWorkspace = false; return showWelcome() }', '  if (!value.hasApiKey && quitting) return undefined', '摘掉退出后的 welcome')
+  const signOutWelcome = [
+    '              if (needsWelcome(value) && !quitting) {',
+    '                enteredWorkspace = false',
+    '                await showWelcome()',
+    '                if (welcomeWindow !== undefined && !welcomeWindow.isDestroyed()) welcomeWindow.webContents.send(WELCOME_IPC.state, state)',
+    '              }',
+  ].join('\n')
+  replaceOnce(signOutWelcome, '              if (!value.hasApiKey && quitting) return undefined', '摘掉退出后的 welcome')
   replaceOnce('if (!enteredWorkspace && needsWelcome({ loggedIn: state.loggedIn, hasApiKey: state.hasApiKey })) {', 'if (false) {', '初始窗口直接进工作区')
   current = current.replace('{ WELCOME_IPC, needsWelcome }', '{ WELCOME_IPC }')
 
@@ -1078,7 +1127,7 @@ updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
       '      // pnpm 11 对「有 install 脚本但没被批准」的依赖是硬失败（ERR_PNPM_IGNORED_BUILDS）。',
       '      // 这三个是插件带进来的可选原生加速/外部二进制下载，对孩子要跑的功能不是必须：显式列 false。',
       "      writeFileSync(join(pluginDir, 'pnpm-workspace.yaml'),",
-      "        'packages:\\n  - .\\n\\nnodeLinker: hoisted\\nautoInstallPeers: false\\nallowBuilds:\\n  cloudflared: false\\n  cpu-features: false\\n  ssh2: false\\n  node-pty: true\\n  koffi: true\\n  fs-ext: true\\n',",
+      "        'packages:\\n  - .\\n\\noverrides:\\n  dsh-better-sidebar: 0.21.1\\n\\nnodeLinker: hoisted\\nautoInstallPeers: false\\nallowBuilds:\\n  cloudflared: false\\n  cpu-features: false\\n  ssh2: false\\n  node-pty: true\\n  koffi: true\\n  fs-ext: true\\n',",
       '        { mode: 0o600 })',
       "      cpSync(join(APP_ROOT, 'vendor-plugins'), join(pluginDir, 'vendor-plugins'), { recursive: true })",
       "      await runPnpm(['install', '--prod'], pluginDir)",
@@ -1132,7 +1181,7 @@ patch('apps/desktop/src/project-manager.ts',
     '// 由 prepare:dsh 装进 resources/runtime/plugin-profile（见 apply-client-gate.mjs 的 ④k）。',
     'export const LINGDONG_PLUGIN_DEPENDENCIES: Readonly<Record<string, string>> = {',
     "  '@linxin666/dsh-web-all': '^0.3.24',",
-    "  'dsh-better-sidebar': '^0.19.1',",
+    "  'dsh-better-sidebar': '0.21.1',",
     "  'dsh-at-file': '^0.6.3',",
     "  'dsh-find-plugin': '^0.3.7',",
     "  '@liustack/modlens': '^3.26.3',",
@@ -1329,7 +1378,7 @@ updateTextFile('apps/desktop/src/web-document.ts', (before) => before
 //   ① 技能中心（dsh-web 的 opt-in 行）打开；② 远程配对面板关掉（完全控制凭据，不该给孩子）。
 //   ⑤ 去掉「上下文洞察」（dsh-context）；⑥⑦ 账号名/退出登录与底部头像合并成一行，顺带去掉「意见反馈」。
 //   ⑧ 侧栏只留当前课堂的工作区与会话（同级旧课堂目录不再出现）。
-//   ⑨ 「深度求索中」→「小灵VibeCoding中」。⑩ 旧图标名别名，修 dsh-better-sidebar 的 React #130。
+//   ⑨ 「深度求索中」→「小灵VibeCoding中」。⑩ 旧图标名别名，修第三方插件从 primitives 取旧名的 React #130。
 // ⑤ 去掉 dsh-context（「上下文洞察」）：清单与依赖一起摘。
 updateTextFile('apps/desktop/src/project-manager.ts', (before) => before
   // ⚠️ 只在预装清单那一段里摘：下面的 LINGDONG_RETIRED_PLUGIN_BUNDLES 也有 'dsh-context' 这行，
@@ -1341,19 +1390,19 @@ updateTextFile('apps/desktop/src/project-manager.ts', (before) => before
 // ⑧ 侧栏工作区树只留当前课堂：同级目录（= 其它课堂）一律不显示，用户自己挑的其它目录照旧保留。
 updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.tsx', (before) => {
   if (before.includes('LINGDONG_CLASSROOM_WORKSPACES')) return before
-  const anchor = '  const workspaces = useWorkspaces(state => state.items)\n'
+  const anchor = '  const storedWorkspaces = useWorkspaces(state => state.items)\n'
   if (!before.includes(anchor)) {
-    report.push('!! WorkspaceBrowser.tsx：找不到 workspaces 锚点')
+    report.push('!! WorkspaceBrowser.tsx：找不到 storedWorkspaces 锚点')
     return before
   }
   const block = [
-    '  const rawWorkspaces = useWorkspaces(state => state.items)',
+    '  const storedWorkspaces = useWorkspaces(state => state.items)',
     '  // LINGDONG_CLASSROOM_WORKSPACES：课堂工作区是同级的 `学生-课时名` 目录，旧课堂的就躺在旁边。',
     '  // 学生进新课堂时不该看见上一节课的工作区与会话（2026-09-25 反馈 ⑧）：',
     '  // 只保留当前课堂那一格，把它的**同级目录**滤掉，其它（学生自己挑的）目录不受影响。',
-    '  const workspaces = useMemo(() => {',
+    '  const classroomWorkspaces = useMemo(() => {',
     '    const bridge = (window as Window & { readonly lingdong?: { readonly context?: unknown } }).lingdong',
-    '    if (bridge?.context === undefined || classroomWorkspacePath === \'\') return rawWorkspaces',
+    '    if (bridge?.context === undefined || classroomWorkspacePath === \'\') return storedWorkspaces',
     '    const normalizePath = (value: string): string => {',
     "      let path = value.split(String.fromCharCode(92)).join('/')",
     "      while (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1)",
@@ -1362,22 +1411,25 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
     "    const parentOf = (path: string): string => path.slice(0, path.lastIndexOf('/'))",
     '    const current = normalizePath(classroomWorkspacePath)',
     '    const parent = parentOf(current)',
-    '    return rawWorkspaces.filter((workspace) => {',
+    '    return storedWorkspaces.filter((workspace) => {',
     '      const path = normalizePath(workspace.path)',
     '      if (path === current) return true',
     '      return parentOf(path) !== parent',
     '    })',
-    '  }, [classroomWorkspacePath, rawWorkspaces])',
+    '  }, [classroomWorkspacePath, storedWorkspaces])',
     '',
   ].join('\n')
-  return before.replace(anchor, block)
+  return before
+    .replace(anchor, block)
+    .replace('    () => storedWorkspaces.map(workspace => ({', '    () => classroomWorkspaces.map(workspace => ({')
+    .replace('    [storedWorkspaces, defaultWorkspaceName],', '    [classroomWorkspaces, defaultWorkspaceName],')
 }, '侧栏工作区树只显示当前课堂')
 
 // ⑥⑦ 账号区合并成一行：隐藏上游账号启动器（它的菜单只有「设置/意见反馈」），
 //      身份+退出登录由我们自己的 footer 行承担。
 updateTextFile('packages/client/ui-settings-account/src/client/AccountMenu.tsx', (before) => {
   if (before.includes('LINGDONG_ACCOUNT_MERGE')) return before
-  const anchor = '  return <div className={css.root}>'
+  const anchor = '  return <div ref={anchor} className={css.root}>'
   if (!before.includes(anchor)) {
     report.push('!! AccountMenu.tsx：找不到 return 锚点')
     return before
@@ -1396,7 +1448,7 @@ updateTextFile('packages/client/ui-chat/src/client/locale.ts', (before) => befor
   .replace("'chat.deepDiving': '深度求索中'", "'chat.deepDiving': '小灵VibeCoding中'"),
   '运行文案改为「小灵VibeCoding中」')
 
-// ⑩ 旧图标名别名：dsh-better-sidebar@0.19.1 等第三方插件还在用 `IconXxx16/14`，
+// ⑩ 旧图标名别名：`@linxin666/dsh-web-all@0.3.24` 内的 git-graph / remote-web-ui 等还在用 `IconXxx16/14`，
 //    0.1.7 已改名 `*Medium`；缺了就是 undefined，React 直接抛 #130（Element type is invalid），
 //    右侧「侧边对话 / 浏览器」整块打不开（2026-09-25 反馈 ⑩）。
 updateTextFile('packages/client/ui-primitives/src/index.ts', (before) => {
@@ -1404,7 +1456,7 @@ updateTextFile('packages/client/ui-primitives/src/index.ts', (before) => {
   return before + [
     '',
     '// LINGDONG_LEGACY_ICON_ALIASES：0.1.6 时代的 `*14` / `*16` 图标名 → 0.1.7 的 `*Medium`。',
-    '// 第三方插件（dsh-better-sidebar 等）还没跟上改名，这里给一层兼容导出。',
+    '// 0.21.1 sidebar 已自带旧名图标；这里保留是给聚合包内仍从 primitives 导入旧名的插件兜底。',
     "export { IconApiOutlineMedium as IconApiOutline14 } from './icons/index.tsx'",
     "export { IconBrowseOutlineMedium as IconBrowseOutline16 } from './icons/index.tsx'",
     "export { IconCheckOutlineMedium as IconCheckOutline16 } from './icons/index.tsx'",
@@ -1459,65 +1511,6 @@ updateTextFile('apps/desktop/src/main.ts', (before) => {
 
 
 
-// ④o dsh-better-sidebar 的偏好层在 DSH 0.1.7 上是**坏的**（2026-09-25 追下来的第二层根因）。
-//    插件 ctx.inject(["settings"], ...) 里调用 sctx.settings.register(ns, PrefsSchema) ——
-//    那是 0.1.6 的 API；0.1.7 的 @deepseek-ai/dsh-settings 只导出 SettingsForms（configure/describe/
-//    update），**没有 register**。这句一抛，整个注入回调中断，settingsFace 永远是 undefined：
-//      · sidebar/api settings.get 返回 { value: undefined } → 客户端 parsePrefs 全用默认值；
-//      · 于是 browserAllowedLoopback 永远是空串（= 本机地址全部拦截），学生打不开 agent 起的本地预览；
-//      · 窗口/终端/沙箱等偏好同属一个 face，一起失效。
-//    修法：这一层退化成**只读视图** —— 直接把随包 config 当偏好返回（含 ④n 写的回环白名单），
-//    写入明确报错而不是静默失败。锚点漂了直接抛错，免得升版本后悄悄回到坏状态。
-//    ⚠️ 拼补丁字符串用 String.fromCharCode(9)/fromCharCode(10) 而不是反斜杠转义：
-//       在「生成补丁的补丁」里转义极易出错（踩过）。
-updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
-  if (before.includes('LINGDONG_SIDEBAR_PREFS_FALLBACK')) return before
-  const anchor = "      await runPnpm(['install', '--prod'], pluginDir)\n"
-  if (!before.includes(anchor)) {
-    report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到 runPnpm(pluginDir) 锚点')
-    return before
-  }
-  const helper = [
-    '',
-    '/**',
-    ' * dsh-better-sidebar 的偏好层在 DSH 0.1.7 上失效（settings.register 已被移除）时的兜底。',
-    ' *',
-    ' * 插件用 0.1.6 的 sctx.settings.register(ns, schema) 注册偏好；0.1.7 的 SettingsForms 没有这个方法，',
-    ' * 那句一抛，插件对外就永远给「默认偏好」——其中 browserAllowedLoopback 默认空 = 本机地址全部拦截，',
-    ' * 学生因此打不开 agent 起的本地预览服务（2026-09-25 学生反馈）。改成只读视图：',
-    ' * 直接用随包 config（含 lingdong.patch.yml 里写的回环白名单）充当偏好，写入明确拒绝。',
-    ' * @param pluginDir - 刚装好的插件 profile 目录。',
-    ' */',
-    'function patchSidebarPrefs(pluginDir: string): void {',
-    "  const file = join(pluginDir, 'node_modules', 'dsh-better-sidebar', 'lib', 'index.js')",
-    "  const source = readFileSync(file, 'utf8')",
-    "  if (source.includes('LINGDONG_SIDEBAR_PREFS_FALLBACK')) return",
-    "  const tab = String.fromCharCode(9)",
-    "  const anchor = tab + tab + 'const scope = sctx.settings.register(ns, PrefsSchema);'",
-    '  if (!source.includes(anchor)) {',
-    "    throw new Error('desktop runtime: dsh-better-sidebar settings.register anchor not found (plugin upgraded?)')",
-    '  }',
-    '  const fallback = [',
-    "    tab + tab + '// LINGDONG_SIDEBAR_PREFS_FALLBACK：0.1.7 的 settings 服务没有 register(ns, schema)，',",
-    "    tab + tab + '// 这句会抛错并让整个偏好面失效 —— 退化成只读视图，用随包 config 当偏好。',",
-    "    tab + tab + 'if (typeof sctx.settings.register !== \"function\") {',",
-    "    tab + tab + tab + 'settingsFace = {',",
-    "    tab + tab + tab + tab + 'get: () => ({ value: config, revision: 0 }),',",
-    "    tab + tab + tab + tab + 'externalDisable: () => false,',",
-    "    tab + tab + tab + tab + 'update: async () => { throw new Error(\"dsh-better-sidebar: preferences are read-only in this deployment (DSH 0.1.7 removed settings.register)\") }',",
-    "    tab + tab + tab + '};',",
-    "    tab + tab + tab + 'return;',",
-    "    tab + tab + '}',",
-    "    '',",
-    "  ].join(String.fromCharCode(10))",
-    '  writeFileSync(file, source.replace(anchor, fallback + anchor))',
-    "  console.log('desktop runtime: patched dsh-better-sidebar preferences (read-only fallback)')",
-    '}',
-    '',
-  ].join('\n')
-  const call = "      await runPnpm(['install', '--prod'], pluginDir)\n      patchSidebarPrefs(pluginDir)\n"
-  return before.replace(anchor, helper + call)
-}, 'dsh-better-sidebar 偏好层在 0.1.7 上的只读兜底补丁')
 // ④r 「打开文件」咽喉点兜底（2026-09-26，.2.10）：DSH 的 `fileAddressFor()` 会把工作区内的绝对路径
 //     降级成相对拼写，本意由侧栏插件用会话 cwd 还原；而 dsh-better-sidebar@0.19.1 在 0.1.7 上拿不到
 //     cwd，于是相对路径送到宿主被解析成盘根 —— 侧栏预览 fs-error（学生图3）、reveal 静默失败（图2）。
