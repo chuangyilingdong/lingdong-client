@@ -1,0 +1,53 @@
+name: Export macOS artifact chunks
+
+on:
+  push:
+    paths:
+      - '.github/workflows/export-mac-artifact.yml'
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      SOURCE_RUN_ID: '36320334473'
+      SOURCE_ARTIFACT: 'lingdong-client-0.1.7-rc.2.9-mac-arm64'
+      TARGET_VERSION: '0.1.7-rc.2.9'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download previous macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ env.SOURCE_ARTIFACT }}
+          run-id: ${{ env.SOURCE_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: downloaded
+
+      - name: Split DMG into Git-safe chunks
+        run: |
+          set -euo pipefail
+          dmg=$(find downloaded -type f -name '*-mac-arm64-unsigned.dmg' -print -quit)
+          test -n "$dmg"
+          rm -rf chunks
+          mkdir -p chunks
+          cp "$dmg" "chunks/lingdong-client-${TARGET_VERSION}-mac-arm64.dmg"
+          split -b 80m "chunks/lingdong-client-${TARGET_VERSION}-mac-arm64.dmg" "chunks/dmg-part-"
+          ls -lh chunks
+
+      - name: Push chunks to export branch
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B ci/mac-artifact
+          mkdir -p .ci/mac-artifact
+          cp chunks/* .ci/mac-artifact/
+          git add -f .ci/mac-artifact/*
+          git commit -m "ci: export mac dmg chunks for ${SOURCE_RUN_ID}"
+          git push --force origin HEAD:ci/mac-artifact
