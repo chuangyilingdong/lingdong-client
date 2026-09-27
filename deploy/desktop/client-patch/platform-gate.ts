@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
 
 /**
@@ -198,85 +198,34 @@ function readJson<T>(file: string): T | null {
     return text ? (JSON.parse(text) as T) : null
   } catch { return null }
 }
-interface StoredSession extends Partial<LingdongSession> {
-  readonly version?: number
-  readonly encrypted?: boolean
-  readonly value?: string
-}
-
 function dshHome(): string {
   const configured = String(process.env.DSH_HOME || '').trim()
   return configured || join(app.getPath('userData'), 'dsh-home')
 }
 
+/**
+ * 登录态**只存在内存里**：学生一关客户端，下次打开就得重新登录
+ * （学校共用机器：上一个学生走了，下一个必须登录自己的账号）。
+ * 不依赖“关闭时能不能清干净”：即使崩溃/强杀，磁盘上也没有登录态可继承。
+ */
+let memorySession: LingdongSession | null = null
+
 function readSession(): LingdongSession | null {
-  const stored = readJson<StoredSession>(sessionFile())
-  if (stored !== null) {
-    // Migrate the old plaintext session on first read.
-    if (typeof stored.token === 'string' && stored.token) {
-      const legacy: LingdongSession = stored.user === undefined ? { token: stored.token } : { token: stored.token, user: stored.user }
-      writeSession(legacy)
-      return legacy
-    }
-    if (stored.encrypted === true && typeof stored.value === 'string' && safeStorage.isEncryptionAvailable()) {
-      try {
-        const decoded = safeStorage.decryptString(Buffer.from(stored.value, 'base64'))
-        const session = JSON.parse(decoded) as LingdongSession
-        if (typeof session?.token === 'string' && session.token) return session
-      } catch { /* 解不开就试明文兜底 */ }
-    }
-  }
-  // 明文兜底（当年加密不可用时写的）：读到就返回，能加密就顺手升级回密文。
-  const plain = readJson<Partial<LingdongSession>>(plainSessionFile())
-  if (plain !== null && typeof plain.token === 'string' && plain.token) {
-    const legacy: LingdongSession = plain.user === undefined ? { token: plain.token } : { token: plain.token, user: plain.user }
-    if (safeStorage.isEncryptionAvailable()) writeSession(legacy)
-    return legacy
-  }
+  if (memorySession !== null && typeof memorySession.token === 'string' && memorySession.token) return memorySession
   return null
 }
 
-/**
- * 启动时读登录态：“文件在、但一时解不开”（凭据库还没就绪等）要重试，
- * 不能当成“没登录”直接让学生重新输密码。实测：关掉客户端再开会偶发命中这个竞态。
- */
-async function readSessionResilient(): Promise<LingdongSession | null> {
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const session = readSession()
-    if (session !== null) return session
-    if (!existsSync(sessionFile()) && !existsSync(plainSessionFile())) return null
-    await delayMilliseconds(600)
+/** 清掉历史版本（rc.2.9 之前）可能写在磁盘上的登录态。 */
+function forgetPersistedSession(): void {
+  for (const file of [sessionFile(), plainSessionFile()]) {
+    try { rmSync(file, { force: true }) } catch { /* best effort */ }
   }
-  return readSession()
 }
 
+
 function writeSession(session: LingdongSession | null): void {
-  const file = sessionFile()
-  const plainFile = plainSessionFile()
-  try {
-    if (session === null) {
-      rmSync(file, { force: true })
-      rmSync(plainFile, { force: true })
-      return
-    }
-    if (safeStorage.isEncryptionAvailable()) {
-      try {
-        const encrypted = safeStorage.encryptString(JSON.stringify(session)).toString('base64')
-        writeFileSync(file, JSON.stringify({ version: 1, encrypted: true, value: encrypted }), { mode: 0o600 })
-        rmSync(plainFile, { force: true })
-        return
-      } catch (error) {
-        console.error('灵动ai：加密保存登录态失败，改用明文兜底', error)
-      }
-    } else {
-      console.warn('灵动ai：系统凭据加密不可用，登录态改用明文保存（否则每次关客户端都要重新登录）')
-    }
-    // 兜底：加密不可用时写明文（0600），比“每次都要重新登录”实用。
-    writeFileSync(plainFile, JSON.stringify({ version: 1, token: session.token, user: session.user }), { mode: 0o600 })
-  } catch (error) {
-    // 写不进去也**绝不清除**原有登录态：宁可下次再试，也别把学生踢回登录页。
-    console.error('灵动ai：保存登录态失败（保留原有登录态）', error)
-  }
+  memorySession = session === null ? null : session
+  forgetPersistedSession()
 }
 
 async function call(path: string, { method = 'GET', body, token, timeoutMs = 15_000 }: { method?: string; body?: unknown; token?: string; timeoutMs?: number } = {}): Promise<any> {
@@ -512,16 +461,6 @@ function restartAtLogin(): void {
 }
 
 /**
- * 课堂结束（不是凭据失效）时重启回等待页，**不清登录态**。
- * 学生反馈“关客户端就要重新登录”：原来课程一结束就 clearLoginState，
- * 下次打开就只能重新输密码——这不是安全需要，只是体验伤害。
- */
-function restartKeepingLogin(reason: string): void {
-  console.warn(`灵动ai：${reason}，重启回等待页（保留登录态）`)
-  setImmediate(() => { app.relaunch(); app.quit() })
-}
-
-/**
  * 课堂结束 / 账号被顶 时回到等待页：只有**凭据真失效**才清登录态，
  * 课程结束只是没课了，不能把学生的登录也抹掉。网络抖动不会把学生踢出去。
  */
@@ -533,7 +472,7 @@ function watchClassroom(sessionId: string): void {
     if (session === null) return
     try {
       const context = await call(contextPath(sessionId), { token: session.token }) as Partial<LingdongContext>
-      if (!context.classroom) { stopped = true; restartKeepingLogin('这节课已经结束'); return }
+      if (!context.classroom) { stopped = true; restartAtLogin(); return }
     } catch (error) {
       const code = error instanceof PlatformRequestError ? error.code : undefined
       if (code === 'SESSION_SUPERSEDED' || code === 'RUNTIME_KEY_INVALID' || code === 'RUNTIME_KEY_EXPIRED') {
@@ -543,9 +482,8 @@ function watchClassroom(sessionId: string): void {
         return
       }
       if (code === 'RUNTIME_NO_ACTIVE_CLASSROOM') {
-        // 网关说没有可用课堂：只是下课了，保留登录态。
         stopped = true
-        restartKeepingLogin('平台说当前没有可进的课堂')
+        restartAtLogin()
         return
       }
     }
@@ -1306,6 +1244,8 @@ export async function runLingdongGate(
   resetHost: () => Promise<void>,
 ): Promise<GateOutcome> {
   let waiting: ((action: GateAction) => void) | null = null
+  // 升级上来的机器可能还存着旧版本写的登录态：先清掉。
+  forgetPersistedSession()
   let selectedSessionId = readClassroomContext().sessionId || ''
   const nextAction = (): Promise<GateAction> => new Promise((resolve) => { waiting = resolve })
 
@@ -1355,7 +1295,7 @@ export async function runLingdongGate(
   try {
     for (;;) {
       if (isQuitting()) return { kind: 'quit' }
-      const session = await readSessionResilient()
+      const session = readSession()
       if (session === null) {
         const action = await show('login.html').then(nextAction)
         if (action.action === 'logout') return { kind: 'quit' }

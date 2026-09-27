@@ -116,10 +116,9 @@ const expectations = [
   ['packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx', 'isNoiseWorkPath'],
   ['packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx', 'workTitleForCandidate'],
   // rc.2.9：关客户端不再掉登录（登录态兜底 + 网络抖动不清凭据）。
-  ['apps/desktop/src/platform-gate.ts', 'readSessionResilient'],
-  ['apps/desktop/src/platform-gate.ts', 'plainSessionFile'],
   ['apps/desktop/src/platform-gate.ts', 'isSessionInvalid'],
-  ['apps/desktop/src/platform-gate.ts', 'restartKeepingLogin'],
+  ['apps/desktop/src/platform-gate.ts', 'memorySession'],
+  ['apps/desktop/src/platform-gate.ts', 'forgetPersistedSession'],
   ['apps/desktop/resources/gate/waiting.html', "state.title || '老师还没有开始上课'"],
   // rc.2.9：AGENTS.md 要求模型用 present 交付入口文件。
   ['apps/desktop/src/platform-gate.ts', '用 `present` 工具把入口文件'],
