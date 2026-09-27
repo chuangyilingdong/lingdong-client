@@ -115,21 +115,31 @@ jobs:
         if: github.event_name == 'push'
         run: |
           set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           dmg=$(find dist-mac -type f -name '*.dmg' -print -quit)
           test -n "$dmg"
           rm -rf chunks
           mkdir -p chunks
           cp "$dmg" "chunks/lingdong-client-${LINGDONG_CLIENT_VERSION}-mac-arm64.dmg"
-          split -b 80m "chunks/lingdong-client-${LINGDONG_CLIENT_VERSION}-mac-arm64.dmg" "chunks/dmg-part-"
+          split -b 64m "chunks/lingdong-client-${LINGDONG_CLIENT_VERSION}-mac-arm64.dmg" "chunks/dmg-part-"
           ls -lh chunks
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git checkout -B ci/mac-artifact
           mkdir -p .ci/mac-artifact
-          cp chunks/* .ci/mac-artifact/
-          git add -f .ci/mac-artifact/*
-          git commit -m "ci: export mac dmg chunks ${GITHUB_RUN_ID}"
+          printf 'started run %s\n' "$GITHUB_RUN_ID" > .ci/mac-artifact/status.txt
+          git add -f .ci/mac-artifact/status.txt
+          git commit -m "ci: start mac dmg export ${GITHUB_RUN_ID}"
           git push --force origin HEAD:ci/mac-artifact
+          for part in chunks/dmg-part-*; do
+            cp "$part" .ci/mac-artifact/
+            git add -f ".ci/mac-artifact/$(basename "$part")"
+            git commit -m "ci: add $(basename "$part") ${GITHUB_RUN_ID}"
+            git push origin HEAD:ci/mac-artifact
+          done
+          printf 'complete run %s\n' "$GITHUB_RUN_ID" > .ci/mac-artifact/status.txt
+          git add -f .ci/mac-artifact/status.txt
+          git commit -m "ci: complete mac dmg export ${GITHUB_RUN_ID}"
+          git push origin HEAD:ci/mac-artifact
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
