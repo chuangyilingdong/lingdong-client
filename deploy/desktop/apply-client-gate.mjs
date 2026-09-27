@@ -338,6 +338,7 @@ updateTextFile('apps/desktop/src/preload-app.ts', (before) => {
   const block = `contextBridge.exposeInMainWorld('lingdong', {
   gate: (payload: unknown) => ipcRenderer.invoke('lingdong:gate', payload) as Promise<{ ok: boolean; message?: string }>,
   context: (options?: unknown) => ipcRenderer.invoke('lingdong:classroom-context', options) as Promise<unknown>,
+ contextSync: () => ipcRenderer.sendSync('lingdong:classroom-context-sync') as unknown,
   submitWorkBatch: (payload: unknown) => ipcRenderer.invoke('lingdong:submit-work-batch', payload) as Promise<unknown>,
   listWorks: () => ipcRenderer.invoke('lingdong:list-works') as Promise<unknown>,
   scanWorkFiles: () => ipcRenderer.invoke('lingdong:scan-work-files') as Promise<unknown>,
@@ -1245,7 +1246,6 @@ patch('apps/desktop/src/project-manager.ts',
     "  '@linxin666/dsh-web-all',",
     "  'dsh-better-sidebar',",
     "  'dsh-at-file',",
-    "  'dsh-find-plugin',",
     "  '@liustack/modlens',",
     "  'dsh-context',",
     '] as const',
@@ -1255,7 +1255,6 @@ patch('apps/desktop/src/project-manager.ts',
     "  '@linxin666/dsh-web-all': '^0.3.24',",
     "  'dsh-better-sidebar': '0.21.1',",
     "  'dsh-at-file': '^0.6.3',",
-    "  'dsh-find-plugin': '^0.3.7',",
     "  '@liustack/modlens': '^3.26.3',",
     "  'dsh-context': '^0.55.0',",
     '}',
@@ -1659,6 +1658,10 @@ updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
   //    LINGDONG_RETIRED_PLUGIN_BUNDLES 里同名那行一起删掉（自愈块会被清空 → 旧机器上的坏
   //    entry 永远删不掉）。.2.9 第一版就是这么错的，所以这里把名字和邻居一起匹配。
   text = text.split("  'dsh-better-sidebar',\n  'dsh-at-file',\n").join("  'dsh-better-sidebar',\n")
+  // 2026-09-27：dsh-find-plugin 也从预装里摘掉 —— 它只给模型加了一个搜 GitHub 插件的工具
+  // （find_dsh_plugin），学生用不到，网络不通就是一次报错。
+  text = text.split("  'dsh-better-sidebar',\n  'dsh-find-plugin',\n").join("  'dsh-better-sidebar',\n")
+  text = text.split("  'dsh-find-plugin': '^0.3.7',\n").join('')
   text = text.split("  'dsh-at-file': '^0.6.3',\n").join('')
   text = text.split("  '@liustack/modlens',\n  '@yuxianglin/dsh-bridge-browser',\n").join("  '@liustack/modlens',\n")
   text = text.split("  '@yuxianglin/dsh-bridge-browser': 'file:./vendor-plugins/yuxianglin-dsh-bridge-browser-0.0.5.tgz',\n").join('')
@@ -1669,12 +1672,14 @@ updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
     '//   · dsh-context：.2.6 起删（「上下文洞察」产品取舍）；',
     '//   · dsh-at-file：.2.9 起删（0.6.3 的 settingsNamespace 在 0.1.7 上不兼容）；',
     '//   · @yuxianglin/dsh-bridge-browser：rc.2.1 起删（真正的 Chrome 扩展未随包，学生端会出现“连不上桥”）。',
+    '//   · dsh-find-plugin：rc.2.5 起删（只给模型加了个搜 GitHub 插件的工具，学生用不到）。',
   ].join('\n')
   const list = [
     'const LINGDONG_RETIRED_PLUGIN_BUNDLES = [',
     "  'dsh-context',",
     "  'dsh-at-file',",
     "  '@yuxianglin/dsh-bridge-browser',",
+    "  'dsh-find-plugin',",
     '] as const',
     '',
   ].join('\n')

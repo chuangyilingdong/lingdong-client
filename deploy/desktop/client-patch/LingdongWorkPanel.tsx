@@ -517,6 +517,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
         path: asString(item.displayPath) || asString(item.path),
         warnings: strings(record.warnings),
         missing: strings(record.missing),
+        nearby: strings(record.nearby),
       }
     })
   }, [result])
@@ -663,6 +664,12 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
                       <strong>已交：</strong>{entry.title} · {entry.path}
                       {entry.warnings.length > 0 && <div>提醒：{entry.warnings.join('；')}</div>}
                       {entry.missing.length > 0 && <div>本地缺失：{entry.missing.join('；')}</div>}
+                      {entry.nearby.length > 0 && (
+                        <div>
+                          主产物同目录还有：{entry.nearby.join('、')}
+                          （这些素材没有随作品提交；如果页面里用到了，请让模型改成相对路径引用后再交）
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>

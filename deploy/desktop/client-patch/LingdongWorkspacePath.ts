@@ -19,9 +19,11 @@ import { isAbsoluteWorkspacePath, resolveWorkspacePath } from '@deepseek-ai/dsh-
 
 interface LingdongContextBridge {
   readonly context?: (options?: unknown) => Promise<unknown>
+  readonly contextSync?: () => unknown
 }
 
 let pending: Promise<string> | null = null
+let syncRoot = ''
 
 /** 只问一次登录门（读的是本地缓存的 client-context，不发网络请求）；拿不到就空串。 */
 function readWorkspaceRoot(): Promise<string> {
@@ -47,12 +49,29 @@ export interface LingdongWorkspaceRoot {
   readonly ready: boolean
 }
 
+/** 同步读一次课堂工作区（同步 IPC，读的是登录门写的本地缓存）。 */
+function readWorkspaceRootSync(): string {
+  if (syncRoot !== '' || typeof window === 'undefined') return syncRoot
+  const bridge = (window as Window & { readonly lingdong?: LingdongContextBridge }).lingdong
+  try {
+    const raw = bridge?.contextSync?.()
+    const value = (raw as { readonly workspacePath?: unknown } | null)?.workspacePath
+    if (typeof value === 'string' && value.trim() !== '') syncRoot = value.trim()
+  } catch { /* 拿不到就用异步那次 */ }
+  return syncRoot
+}
+
 /** 当前课堂工作区（拿不到时空串、ready 仍为 true）。用于给交付文件路径兜底。 */
 export function useLingdongWorkspaceRoot(): LingdongWorkspaceRoot {
-  const [state, setState] = useState<LingdongWorkspaceRoot>({ root: '', ready: false })
+  const [state, setState] = useState<LingdongWorkspaceRoot>(() => {
+    const sync = readWorkspaceRootSync()
+    return sync === '' ? { root: '', ready: false } : { root: sync, ready: true }
+  })
   useEffect(() => {
     let alive = true
-    void readWorkspaceRoot().then((root) => { if (alive) setState({ root, ready: true }) })
+    const sync = readWorkspaceRootSync()
+    if (sync !== '' && alive) setState({ root: sync, ready: true })
+    void readWorkspaceRoot().then((root) => { if (alive && root !== '') setState({ root, ready: true }) })
     return () => { alive = false }
   }, [])
   return state

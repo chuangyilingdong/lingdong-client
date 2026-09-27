@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { readFile, realpath, stat } from 'node:fs/promises'
+import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
@@ -80,6 +80,8 @@ interface PreparedWork {
   readonly name: string
   readonly files: readonly WorkFilePayload[]
   readonly missing: readonly string[]
+  /** 主产物同目录、没被引用也没随作品提交的素材（只作提示）。 */
+  readonly nearby: readonly string[]
 }
 interface WorkspaceFileCandidate {
   readonly path: string
@@ -109,7 +111,22 @@ const RECOGNIZED_WORK_EXTENSIONS = new Set([
   '.java', '.c', '.cpp', '.h', '.hpp', '.cs', '.go', '.rs', '.lua', '.rb', '.php', '.sql',
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg', '.mp3', '.wav', '.mp4', '.webm', '.mov', '.zip',
 ])
-const SCANNABLE_WORK_EXTENSIONS = new Set(['.css', '.htm', '.html', '.svg'])
+const SCANNABLE_WORK_EXTENSIONS = new Set(['.cjs', '.css', '.htm', '.html', '.js', '.jsx', '.mjs', '.svg'])
+/** 脚本 / 内联脚本里的 'a.png'、"data.json"、`bg.webp` 这类字面量。 */
+const SCRIPT_REFERENCE_PATTERN = /(['"`])([^'"`\n\r]{1,200}?\.[A-Za-z0-9]{1,6})\1/gu
+/** 这些扩展名的文件里，字符串常量也可能是素材路径。 */
+const SCRIPT_WORK_EXTENSIONS = new Set(['.cjs', '.htm', '.html', '.js', '.jsx', '.mjs', '.svg'])
+/** 脚本字面量只有落在这些扩展名上才当成素材路径（避免把 'v1.2' 之类当成缺失文件）。 */
+const SCRIPT_REFERENCE_EXTENSIONS = new Set([
+  '.bmp', '.cjs', '.css', '.csv', '.gif', '.htm', '.html', '.ico', '.jpeg', '.jpg', '.js', '.json',
+  '.mjs', '.mp3', '.mp4', '.ogg', '.otf', '.png', '.svg', '.ttf', '.txt', '.wav', '.webm', '.webp', '.woff', '.woff2',
+])
+/** 「主产物同目录还有这些素材」提示的扩展名（平台只存得下图片，其它会变空）。 */
+const NEARBY_HINT_EXTENSIONS = new Set([
+  '.bmp', '.css', '.gif', '.ico', '.jpeg', '.jpg', '.json', '.mp3', '.mp4', '.ogg', '.otf', '.png',
+  '.svg', '.ttf', '.wav', '.webm', '.webp', '.woff', '.woff2',
+])
+const NEARBY_HINT_LIMIT = 6
 /** 平台错误要保留业务 code；界面上仍展示平台原始 message。 */
 class PlatformRequestError extends Error {
   readonly code: string | undefined
@@ -458,6 +475,7 @@ interface WorkBatchSuccess {
   readonly data: unknown
   readonly warnings: readonly string[]
   readonly missing: readonly string[]
+  readonly nearby: readonly string[]
 }
 interface WorkBatchFailure {
   readonly item: WorkBatchItem
@@ -582,25 +600,45 @@ async function localReference(root: string, referrer: string, raw: string): Prom
   }
 }
 
-function collectReferenceValues(content: string, extension: string): string[] {
-  const values = new Set<string>()
+/** 一处待解析的引用：`strict` 为假时只“能取到就打包”，取不到不进「本地缺失」提示。 */
+interface CollectedReference {
+  readonly value: string
+  readonly strict: boolean
+}
+
+function collectReferences(content: string, extension: string): CollectedReference[] {
+  const values = new Map<string, boolean>()
+  const add = (value: string, strict: boolean): void => {
+    if (values.get(value) !== true) values.set(value, strict)
+  }
   if (extension === '.html' || extension === '.htm' || extension === '.svg') {
     for (const match of content.matchAll(/\b(?:src|href)\s*=\s*["']([^"']+)["']/giu)) {
       const value = match[1]
-      if (value !== undefined) values.add(value)
+      if (value !== undefined) add(value, true)
     }
   }
   if (extension === '.html' || extension === '.htm' || extension === '.css' || extension === '.svg') {
     for (const match of content.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/giu)) {
       const value = match[1]
-      if (value !== undefined) values.add(value)
+      if (value !== undefined) add(value, true)
     }
     for (const match of content.matchAll(/@import\s+["']([^"']+)["']/giu)) {
       const value = match[1]
-      if (value !== undefined) values.add(value)
+      if (value !== undefined) add(value, true)
     }
   }
-  return [...values]
+  // 脚本里用字符串拼出来的素材路径（打地鼠这类游戏常见的写法）。只有真的落在工作区里、
+  // 文件也存在的值才会被改写，所以顺手扫一遍不会误伤普通字符串。
+  if (SCRIPT_WORK_EXTENSIONS.has(extension)) {
+    for (const match of content.matchAll(SCRIPT_REFERENCE_PATTERN)) {
+      const value = match[2]
+      if (value === undefined || value.includes('${')) continue
+      if (!SCRIPT_REFERENCE_EXTENSIONS.has(value.slice(value.lastIndexOf('.')).toLocaleLowerCase('en-US'))) continue
+      // 脚本里的字面量只做“能取到就打包”，取不到不报缺失 —— 否则 'node.js' 这种普通字符串会刷屏。
+      add(value, false)
+    }
+  }
+  return [...values].map(([value, strict]) => ({ value, strict }))
 }
 
 function rewriteReferenceValues(content: string, extension: string, replacement: (value: string) => string | undefined): string {
@@ -614,6 +652,12 @@ function rewriteReferenceValues(content: string, extension: string, replacement:
       `${head}${quote}${replacement(value) ?? value}${quote})`)
     next = next.replace(/(@import\s+)(["'])([^"']+)(\2)/giu, (_whole, head: string, quote: string, value: string) =>
       `${head}${quote}${replacement(value) ?? value}${quote}`)
+  }
+  if (SCRIPT_WORK_EXTENSIONS.has(extension)) {
+    next = next.replace(SCRIPT_REFERENCE_PATTERN, (whole: string, quote: string, value: string) => {
+      const replaced = replacement(value)
+      return replaced === undefined ? whole : `${quote}${replaced}${quote}`
+    })
   }
   return next
 }
@@ -669,14 +713,14 @@ async function prepareWork(item: WorkBatchItem): Promise<PreparedWork> {
     const extension = extname(asset.absolute).toLocaleLowerCase('en-US')
     if (!SCANNABLE_WORK_EXTENSIONS.has(extension)) continue
     const replacements = new Map<string, string>()
-    for (const raw of collectReferenceValues(asset.text, extension)) {
-      const target = await localReference(root, asset.absolute, raw)
+    for (const reference of collectReferences(asset.text, extension)) {
+      const target = await localReference(root, asset.absolute, reference.value)
       if (target === null) {
-        if (!ignoredLocalReference(raw)) missing.add(raw)
+        if (reference.strict && !ignoredLocalReference(reference.value)) missing.add(reference.value)
         continue
       }
       const referenced = assets.get(target.absolute) ?? await addAsset(target.absolute, basename(target.absolute))
-      replacements.set(raw, `${referenced.name}${target.suffix}`)
+      replacements.set(reference.value, `${referenced.name}${target.suffix}`)
     }
     if (replacements.size > 0) {
       asset.text = rewriteReferenceValues(asset.text, extension, value => replacements.get(value))
@@ -688,7 +732,36 @@ async function prepareWork(item: WorkBatchItem): Promise<PreparedWork> {
     name: entry.name,
     files: [...assets.values()].map(asset => ({ name: asset.name, content: asset.content, binary: asset.binary })),
     missing: [...missing],
+    nearby: await nearbyAssets(dirname(entryPath), assets, reserved),
   }
+}
+
+/**
+ * 主产物同目录里「没被引用、也没随作品提交」的素材。
+ *
+ * 学生的作品里如果有 JS 拼出来的路径、或者干脆是手工放的图，客户端扫不到 —— 平台那边只会
+ * 存下图片，音视频/字体会变成空文件。与其让学生交完才发现图裂，不如在提交结果里点出来。
+ * @param directory - 主产物所在目录。
+ * @param assets - 已经随作品收集的素材（按真实路径）。
+ * @param reserved - 已用过的扁平文件名（提示里排除，避免和作品内文件混淆）。
+ * @returns 最多 {@link NEARBY_HINT_LIMIT} 个文件名。
+ */
+async function nearbyAssets(directory: string, assets: Map<string, WorkAsset>, reserved: Set<string>): Promise<string[]> {
+  const names = await readdir(directory).catch(() => [] as string[])
+  const found: string[] = []
+  for (const name of [...names].sort((left, right) => left.localeCompare(right))) {
+    if (found.length >= NEARBY_HINT_LIMIT) break
+    if (name.startsWith('.') || name === 'node_modules') continue
+    const extension = extname(name).toLocaleLowerCase('en-US')
+    if (!NEARBY_HINT_EXTENSIONS.has(extension)) continue
+    const real = await realpath(join(directory, name)).catch(() => '')
+    if (real === '' || assets.has(real)) continue
+    const info = await stat(real).catch(() => null)
+    if (info === null || !info.isFile()) continue
+    if (reserved.has(safeFlatName(name).toLocaleLowerCase('en-US'))) continue
+    found.push(name)
+  }
+  return found
 }
 
 function titleForWork(item: WorkBatchItem): string {
@@ -715,6 +788,7 @@ async function submitWork(token: string, item: WorkBatchItem): Promise<WorkBatch
     data,
     warnings: stringArray(record?.warnings),
     missing: [...new Set([...prepared.missing, ...stringArray(record?.missing)])],
+    nearby: prepared.nearby,
   }
 }
 
@@ -759,6 +833,16 @@ function scanWorkspaceFiles(context: LingdongContext, limit = 500): WorkspaceFil
 
 // 预设、发送次数在渲染时读它；handler 常驻应用生命周期。
 // ⚠️ 传 `{ refresh: true }` = **再去问一次平台**（发送次数得这么拿才准，见 refreshClassroomContext）。
+// LINGDONG_CONTEXT_SYNC：同步读本地缓存的课堂上下文。打开文件的地址要在**调用栈里**就拿到
+// 工作区根（openFile 是同步 API），异步问一次会留一个「还没问到 → 退回相对路径」的窗口，
+// 落在宿主那边就是把 /index.html 解析成 C:\index.html 的 fs-error。
+ipcMain.on('lingdong:classroom-context-sync', (event) => {
+  try {
+    event.returnValue = readClassroomContext()
+  } catch {
+    event.returnValue = null
+  }
+})
 ipcMain.handle('lingdong:classroom-context', async (_event, payload: unknown) => {
   const wantsRefresh = payload !== null && typeof payload === 'object' && (payload as { refresh?: unknown }).refresh === true
   return wantsRefresh ? await refreshClassroomContext() : readClassroomContext()

@@ -91,6 +91,12 @@
 #     跑终端、驱动 agent），还会一键起 cloudflared 隧道把本机暴露到公网；学生端必须关。
 - {id: web-ui-skill-explorer, disabled: false}
 - {id: web-ui-remote-web-ui, disabled: true}
+# 2026-09-27：关掉「创意工坊商店 / 社区插件 / 插件管理器」三张卡（聚合包插的行，默认是开的）。
+# 它们能从 npm / git / dsh-market.com 装第三方插件，还能按行改聚合包的 disabled —— 包括把
+# web-ui-remote-web-ui 打开（手机配对 = 完全控制凭据 + cloudflared 公网隧道）。学生端不需要这三张卡。
+- {id: web-ui-market, disabled: true}
+- {id: web-ui-community-plugins, disabled: true}
+- {id: web-ui-plugin-manager, disabled: true}
 # rc.2 已自带 ui-sidebar-browser，明确接受 HTTP/HTTPS 的 loopback 地址；0.21.1 也把浏览器
 # 页签委托给宿主该实现，且其 config schema 已没有 browserAllowedLoopback。不要再写这个字段，
 # 否则较严格的 Loader 配置校验可能把插件行判为无效。

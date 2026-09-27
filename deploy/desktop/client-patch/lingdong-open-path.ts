@@ -22,6 +22,7 @@ import { isAbsoluteWorkspacePath, resolveWorkspacePath, sessionFileAddress } fro
 
 interface LingdongContextBridge {
   readonly context?: (options?: unknown) => Promise<unknown>
+  readonly contextSync?: () => unknown
 }
 
 let pending: Promise<string> | null = null
@@ -46,7 +47,23 @@ function classroomRoot(): Promise<string> {
 
 /** 已解析到的课堂工作区（同步快照，供 `openFile` 这种同步调用点使用）。 */
 let resolvedRoot = ''
-void classroomRoot().then((root) => { resolvedRoot = root })
+
+/**
+ * 同步读一次课堂工作区（`contextSync` 走的是同步 IPC，读的是登录门写的本地缓存）。
+ * 冷启动第一次点「打开」时它已经在手上，不会再退回相对路径。
+ */
+function readRootSync(): string {
+  if (resolvedRoot !== '' || typeof window === 'undefined') return resolvedRoot
+  const bridge = (window as Window & { readonly lingdong?: LingdongContextBridge }).lingdong
+  try {
+    const raw = bridge?.contextSync?.()
+    const value = (raw as { readonly workspacePath?: unknown } | null)?.workspacePath
+    if (typeof value === 'string' && value.trim() !== '') resolvedRoot = value.trim()
+  } catch { /* 拿不到就等异步那次 */ }
+  return resolvedRoot
+}
+readRootSync()
+void classroomRoot().then((root) => { if (root !== '') resolvedRoot = root })
 
 /**
  * 把一次「打开文件」调用编成会话地址：能拼绝对就带绝对路径（不降级），否则退回上游语义。
@@ -57,7 +74,7 @@ void classroomRoot().then((root) => { resolvedRoot = root })
  */
 export function lingdongFileAddress(sessionId: string, cwd: string | undefined, path: string): string {
   if (isAbsoluteWorkspacePath(path)) return sessionFileAddress(sessionId, path)
-  const base = cwd !== undefined && cwd !== '' ? cwd : resolvedRoot
+  const base = cwd !== undefined && cwd !== '' ? cwd : readRootSync()
   if (base === '') return sessionFileAddress(sessionId, path)
   return sessionFileAddress(sessionId, resolveWorkspacePath(base, path))
 }

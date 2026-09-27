@@ -89,6 +89,22 @@ const expectations = [
   ['packages/client/ui-chat/src/client/lingdong-open-path.ts', 'lingdongFileAddress'],
   ['apps/desktop/src/main.ts', 'lingdongPrepareProfile'],
   ['apps/desktop/src/lingdong-user-data.ts', 'adoptLingdongUserData'],
+  // rc.2.5：学生端关掉插件市场 / 社区插件 / 插件管理器，摘掉 dsh-find-plugin。
+  ['apps/desktop/resources/gate/lingdong.patch.yml', 'web-ui-market, disabled: true'],
+  ['apps/desktop/resources/gate/lingdong.patch.yml', 'web-ui-community-plugins, disabled: true'],
+  ['apps/desktop/resources/gate/lingdong.patch.yml', 'web-ui-plugin-manager, disabled: true'],
+  // rc.2.5：预览沙箱的 Storage 兜底 + fetch 放行。
+  ['apps/desktop/scripts/lingdong-sidebar-html-route.mjs', 'lingdongPreviewBody'],
+  ['apps/desktop/scripts/lingdong-sidebar-html-route.mjs', 'lingdongPreviewCorsHeaders'],
+  // rc.2.5：交作品会扫脚本里的素材路径，并提示同目录未提交的素材。
+  ['apps/desktop/src/platform-gate.ts', 'SCRIPT_REFERENCE_PATTERN'],
+  ['apps/desktop/src/platform-gate.ts', 'nearbyAssets'],
+  ['packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx', 'nearby'],
+  // rc.2.5：课堂上下文同步 IPC，冷启动打开文件不再退回相对路径。
+  ['apps/desktop/src/platform-gate.ts', 'lingdong:classroom-context-sync'],
+  ['apps/desktop/src/preload-app.ts', 'contextSync'],
+  ['packages/client/ui-chat/src/client/lingdong-open-path.ts', 'readRootSync'],
+  ['packages/client/ui-deliverables/src/client/LingdongWorkspacePath.ts', 'readWorkspaceRootSync'],
 ]
 for (const [path, marker] of expectations) {
   assert.equal(read(path).includes(marker), true, `missing marker ${marker} in ${path}`)
@@ -109,7 +125,7 @@ const bundlesHead = projectManager.indexOf('const LINGDONG_PLUGIN_BUNDLES = [')
 const bundlesTail = projectManager.indexOf('] as const', bundlesHead)
 assert.equal(bundlesHead >= 0 && bundlesTail > bundlesHead, true, '找不到 LINGDONG_PLUGIN_BUNDLES')
 const bundlesBlock = projectManager.slice(bundlesHead, bundlesTail)
-for (const name of ['dsh-context', 'dsh-at-file', '@yuxianglin/dsh-bridge-browser']) {
+for (const name of ['dsh-context', 'dsh-at-file', '@yuxianglin/dsh-bridge-browser', 'dsh-find-plugin']) {
   assert.equal(bundlesBlock.includes(name), false, `${name} 仍在预装清单里`)
   assert.equal(projectManager.includes(`  '${name}',`), true,
     `${name} 不在 LINGDONG_RETIRED_PLUGIN_BUNDLES 里（升级时删不掉旧 entry）`)

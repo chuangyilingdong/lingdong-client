@@ -86,7 +86,7 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 侧栏预设、交作品、窗口标题、内测声明移除、安装器/卸载器全品牌图片都已完成并推送。
 2026-09-24 完成 DSH 0.1.7 升级、模型清单适配、登录门窗口修复与旧会话模型迁移；最新**已发布**包 **0.1.7-alpha.2.3**；`0.1.7-alpha.2.9`（坏插件摘除 + 首启预热 + 交付文件绝对路径 + 数据目录改名）已出包、**未发布**。
 
-2026-09-26 已完成 **0.1.7-rc.2 底座移植**（含 `dsh-better-sidebar@0.21.1` overrides）：补丁 dry-run、上游补丁校验、TypeScript 编译、正式出包与桩平台回归均通过。`0.1.7-rc.2.4` 已出包、**未发布**；安装包 `420801688` 字节 / SHA256 `D3346AA172172211ED968F7FE6515549364C0458DA8533E11BDF1414B26DAF89`。
+2026-09-26 已完成 **0.1.7-rc.2 底座移植**（含 `dsh-better-sidebar@0.21.1` overrides）：补丁 dry-run、上游补丁校验、TypeScript 编译、正式出包与桩平台回归均通过。`0.1.7-rc.2.4` 已出包（已被 rc.2.5 取代）；安装包 `420801688` 字节 / SHA256 `D3346AA172172211ED968F7FE6515549364C0458DA8533E11BDF1414B26DAF89`。
 
 本轮继续修复学生端：
 
@@ -99,6 +99,16 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
   导致预览只剩一坨没有样式的 HTML；现在只放行“同一个预览路由的静态子资源”，沙箱与 CSP 不变。
   模型侧归因与实测记录在 `deploy/desktop/client-patch/lingdong-sidebar-html-route.mjs` 文件头（Chromium 对沙箱 iframe 子资源打的是 `sec-fetch-site: cross-site`）。
 - 发送次数改为**客户端自己算**：按本堂课点击发送按钮的次数（Enter/按钮共用一个 submit 入口，工具轮不计），计数存在本机 `localStorage`、按课堂 id 分键，不再拿平台的 `sends.used` 当显示值（平台曾把 2 次显示成 1 次）。平台网关 429 仍然是最终门禁。
+
+### 2026-09-27 学生端收口（`0.1.7-rc.2.5`，未发布）；安装包 `420751376` 字节 / SHA256 `AA214E62C96E3ECE6CA92CA44CD2ECAD54F32BFE111BC1684C072C0C4AE4DC59`。
+
+体检（打包产物 + 今天真实学生会话日志 + Chromium 复现）后按风险清单做完四件事：
+
+- **关掉插件市场 / 社区插件 / 插件管理器**：聚合包 `@linxin666/dsh-web-all` 插的 `web-ui-market`、`web-ui-community-plugins`、`web-ui-plugin-manager` 默认是开的 —— 学生能一键装 npm / git / dsh-market.com 的第三方插件，也能按行把 `web-ui-remote-web-ui`（手机配对＝完全控制凭据 + cloudflared 公网隧道）打开。现在三行都 `disabled: true`。
+- **侧栏预览补齐「像真浏览器」**：除上一版放行相对资源外，再给 HTML 响应注入**内存 Storage 兜底**（不透明源里 `localStorage` 一读就抛，页面 JS 会整段挂掉），并放行预览页自己的 `fetch/XHR`（同路由 GET + `access-control-allow-origin`）。Chromium 沙箱实测：修前 `storage-threw:SecurityError | fetch-fail:TypeError`，修后 `storage-ok:v | fetch-ok:{"ok":true}`。
+- **交作品不再漏素材**：扫 `.js/.mjs/.cjs/.jsx`（含内联脚本）里的字符串路径（`img.src='a.png'` / `fetch('data.json')`），只有真落盘的文件才收集与改写，取不到的字面量不进「本地缺失」；提交结果里再提示「主产物同目录还有哪些素材没随作品提交」（平台只存得下图片，音视频/字体会变空）。
+- **打开文件没有冷启动窗口了**：新增同步 IPC `lingdong:classroom-context-sync`，`openFile` 在调用栈里就拿到课堂工作区根，不会再退回相对路径触发 `fs-error` / 「在文件管理器中显示」静默失败。
+- 摘掉 `dsh-find-plugin`（只给模型加了个搜 GitHub 插件的工具，学生用不到，网络不通就是一次报错），并写进「已摘掉」名单以便升级时清掉旧 entry。
 
 ### 2026-09-25 可用性收口（`0.1.7-alpha.2.9`，未发布）
 
