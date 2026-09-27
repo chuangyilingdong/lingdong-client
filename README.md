@@ -110,6 +110,13 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 - **打开文件没有冷启动窗口了**：新增同步 IPC `lingdong:classroom-context-sync`，`openFile` 在调用栈里就拿到课堂工作区根，不会再退回相对路径触发 `fs-error` / 「在文件管理器中显示」静默失败。
 - 摘掉 `dsh-find-plugin`（只给模型加了个搜 GitHub 插件的工具，学生用不到，网络不通就是一次报错），并写进「已摘掉」名单以便升级时清掉旧 entry。
 
+### 2026-09-27 学生端收口第二轮（`0.1.7-rc.2.7`，未发布）。安装包 `430363963` 字节 / SHA256 `7FEF2E6729C0665099F3C0CB957953AA65B0741C77894BA5A9A101F48F274824`。
+
+- **侧栏只看当前课堂的会话**：rc.2.3～2.6 只按「课堂开始时刻」过滤，别的课堂 / 别的目录（甚至另一个账号）的历史会话照样显示；现在只保留 cwd = 当前课堂工作区的会话（当前新会话、拿不到 cwd 的保留）。
+- **同一台电脑换账号登录不再串号**：
+  · 工作区按账号隔离 —— 课堂目录的 `.lingdong-classroom.json` 记 `accountId`，发现是别的账号在用就另开 `学生-登录名-课时` 目录（老目录不动、不迁移，学生旧作品不会看起来“消失”）；
+  · 发送次数计数键 = **账号 + 课堂 id**（localStorage），B 账号不再继承 A 的次数（换账号后本地计数从 0 开始，平台网关 429 仍是最终门禁）。
+- **登录门补一道预装插件清单保险**：`ensurePreinstalledBundles()`（防「插件包已经镜像进 profile、manifest 清单没更新」导致设计/PPT 视图不挂载）。
 ### 2026-09-27 设计 / PPT 插件预装（`0.1.7-rc.2.6`，未发布）。安装包 `430361930` 字节 / SHA256 `8B0046609ABE348F416E97D98A0CBF57C14D5FF679334F46FE1BFE17224EFF10`。
 
 把（自家的）iPolloWork DeepSeek Design 套件接进学生端，**只装设计 + PPT**：

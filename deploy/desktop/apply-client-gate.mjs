@@ -497,29 +497,26 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
       text = `${text.slice(0, start)}${next}${text.slice(end)}`
     }
   }
-  const sessionState = `  // LINGDONG_CLASSROOM_SESSION_FILTER：只隐藏“当前课堂工作区里、课堂开始前”的旧会话；
-  // 其它工作区（学生自己新建的文件夹等）的会话必须保留，否则切到新会话后回不去。
-  const [classroomStartedAt, setClassroomStartedAt] = useState<number | undefined>(undefined)
+  const sessionState = `  // LINGDONG_CLASSROOM_SESSION_FILTER_V2：侧栏只看当前课堂工作区的会话。
+  // 上一版只按“课堂开始时刻”过滤，结果把别的课堂 / 别的目录（甚至另一个账号）
+  // 的历史会话也留在列表里——学生一进新课堂就能看到旧作业（学生 2026-09-27 反馈。
   const [classroomWorkspacePath, setClassroomWorkspacePath] = useState('')
   useEffect(() => {
     let alive = true
     const bridge = (window as Window & {
       readonly lingdong?: { readonly context?: () => Promise<{
-        readonly classroom?: { readonly startedAt?: unknown } | null
         readonly workspacePath?: unknown
       } | undefined> }
     }).lingdong
     void bridge?.context?.().then(context => {
       if (!alive) return
-      const raw = context?.classroom?.startedAt
-      const value = typeof raw === 'string' ? Date.parse(raw) : Number.NaN
-      setClassroomStartedAt(Number.isFinite(value) ? value : undefined)
       setClassroomWorkspacePath(typeof context?.workspacePath === 'string' ? context.workspacePath.trim() : '')
     }).catch(() => undefined)
     return () => { alive = false }
   }, [])`
-  const sessionFilter = `  // LINGDONG_CLASSROOM_SESSION_FILTER：只隐藏“当前课堂工作区里、课堂开始前”的旧会话；
-  // 其它工作区（学生自己新建的文件夹等）的会话必须保留，否则切到新会话后回不去。
+  const sessionFilter = `  // LINGDONG_CLASSROOM_SESSION_FILTER_V2：只保留“当前课堂工作区”里的会话（+ 当前新会话 / 拿不到 cwd 的）。
+  // 为什么不再留别的目录：学生反复反馈“新课堂里还有以前课堂的历史”，而且同一台电脑换账号登录时
+  // 会继承前一个账号的会话组；工作区已经按账号隔离（见 platform-gate 的 ensureClassroomWorkspace）。
   const list = useMemo(() => {
     const bridge = (window as Window & { readonly lingdong?: { readonly context?: unknown } }).lingdong
     if (bridge?.context === undefined || classroomWorkspacePath === '') return rawList
@@ -532,17 +529,28 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
     return {
       ...rawList,
       ids: rawList.ids.filter(id => {
-        const value = rawList.byId[id] as { readonly blank?: unknown; readonly updatedAt?: unknown; readonly cwd?: unknown } | undefined
+        const value = rawList.byId[id] as { readonly blank?: unknown; readonly cwd?: unknown } | undefined
         if (value === undefined) return false
-        if (!samePath(value.cwd, classroomWorkspacePath)) return true
-        return value.blank === true || typeof value.updatedAt !== 'number' || classroomStartedAt === undefined || value.updatedAt >= classroomStartedAt
+        if (value.blank === true) return true
+        const cwd = typeof value.cwd === 'string' ? value.cwd.trim() : ''
+        // 拿不到 cwd 的会话保留：宁可多显示一条，也不能把学生正在跑的会话藏掉。
+        if (cwd === '') return true
+        return samePath(cwd, classroomWorkspacePath)
       }),
     }
-  }, [classroomStartedAt, classroomWorkspacePath, rawList])`
+  }, [classroomWorkspacePath, rawList])`
   const oldFilterComment = '  // 只显示当前课堂工作区里的会话；浏览器测试没有 bridge 时保留上游列表行为。'
   const oldFilterStart = text.indexOf(oldFilterComment)
-  if (text.includes('LINGDONG_CLASSROOM_SESSION_FILTER')) {
-    // Already migrated by this patch.
+  if (text.includes('LINGDONG_CLASSROOM_SESSION_FILTER_V2')) {
+    // 已经是最新形态。
+  } else if (text.includes('LINGDONG_CLASSROOM_SESSION_FILTER')) {
+    // v1（按课堂开始时刻）→ v2（只看当前课堂工作区）：两段一起换掉，避免留下未使用的 classroomStartedAt。
+    const v1Start = text.indexOf('  // LINGDONG_CLASSROOM_SESSION_FILTER')
+    const v1EndMarker = '  }, [classroomStartedAt, classroomWorkspacePath, rawList])'
+    const v1End = v1Start < 0 ? -1 : text.indexOf(v1EndMarker, v1Start)
+    if (v1Start >= 0 && v1End >= 0) {
+      text = text.slice(0, v1Start) + sessionState + '\n' + sessionFilter + text.slice(v1End + v1EndMarker.length)
+    }
   } else if (oldFilterStart >= 0) {
     const oldEndMarker = '  }, [classroomStartedAt, classroomWorkspacePath, rawList])'
     const oldFilterEnd = text.indexOf(oldEndMarker, oldFilterStart)
@@ -553,7 +561,7 @@ updateTextFile('packages/client/ui-workspace/src/client/rows/WorkspaceBrowser.ts
       '  const rawList = useSessions(state => state)\n' + sessionState + '\n' + sessionFilter + '\n',
     )
   } else if (text.includes('  const list = rawList\n')) {
-    if (!text.includes('const [classroomStartedAt')) {
+    if (!text.includes('const [classroomWorkspacePath')) {
       text = text.replace('  const rawList = useSessions(state => state)\n', '  const rawList = useSessions(state => state)\n' + sessionState + '\n')
     }
     text = text.replace('  // 课堂过滤只收工作区行；其它工作区里的会话照常显示，避免切到新会话后回不去。\n  const list = rawList\n', sessionFilter + '\n')

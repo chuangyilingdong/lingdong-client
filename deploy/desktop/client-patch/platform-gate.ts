@@ -34,7 +34,7 @@ const GATE_DIR = app.isPackaged
   : join(app.getAppPath(), 'resources', 'gate')
 const API_BASE = String(process.env.LINGDONG_API_BASE || 'https://aicyld.com').replace(/\/$/, '')
 
-interface LingdongUser { readonly displayName?: string; readonly login?: string }
+interface LingdongUser { readonly id?: string; readonly displayName?: string; readonly login?: string }
 interface LingdongSession { readonly token: string; readonly user?: LingdongUser }
 interface LingdongClassroom {
   readonly id: string
@@ -60,6 +60,9 @@ interface LingdongContext {
   readonly workspacePath?: string
   /** Historical/exception libraries can expose more than one active classroom; this is the chosen query key. */
   readonly sessionId: string
+  /** 登录账号（rc.2.7 起落盘）：同一台电脑换账号登录时，本地计数与工作区要能分开。 */
+  readonly userId?: string
+  readonly userLogin?: string
 }
 interface WorkFilePayload { readonly name: string; readonly content: string; readonly binary: boolean }
 interface WorkBatchItem {
@@ -360,7 +363,7 @@ function contextPath(sessionId = ''): string {
   return `/api/student/runtime/client-context${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`
 }
 
-function writeClassroomContext(context: LingdongContext, sessionId?: string): void {
+function writeClassroomContext(context: LingdongContext, sessionId?: string, user?: LingdongUser): void {
   const selected = String(sessionId || context.sessionId || context.classroom?.id || '')
   try {
     writeFileSync(join(app.getPath('userData'), 'lingdong-classroom.json'), JSON.stringify({
@@ -372,6 +375,8 @@ function writeClassroomContext(context: LingdongContext, sessionId?: string): vo
       sends: context.sends ?? null,
       message: context.message ?? '',
       workspacePath: context.workspacePath ?? '',
+      userId: context.userId ?? user?.id ?? '',
+      userLogin: context.userLogin ?? user?.login ?? '',
       sessionId: selected,
       updatedAt: new Date().toISOString(),
     }, null, 2))
@@ -391,10 +396,12 @@ function readClassroomContext(): LingdongContext {
       sends: parsed.sends ?? null,
       message: typeof parsed.message === 'string' ? parsed.message : '',
       workspacePath: typeof parsed.workspacePath === 'string' ? parsed.workspacePath : '',
+      userId: typeof parsed.userId === 'string' ? parsed.userId : '',
+      userLogin: typeof parsed.userLogin === 'string' ? parsed.userLogin : '',
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : '',
     }
   } catch {
-    return { classroom: null, classrooms: [], reason: null, upcoming: null, presets: [], sends: null, message: '', sessionId: '' }
+    return { classroom: null, classrooms: [], reason: null, upcoming: null, presets: [], sends: null, message: '', sessionId: '', userId: '', userLogin: '' }
   }
 }
 
@@ -420,6 +427,8 @@ async function refreshClassroomContext(): Promise<LingdongContext> {
       sends: hasClassroom ? (fresh.sends ?? null) : null,
       message: typeof fresh.message === 'string' ? fresh.message : '',
       workspacePath: cached.workspacePath || '',
+      userId: cached.userId || '',
+      userLogin: cached.userLogin || '',
       sessionId: cached.sessionId || fresh.classroom?.id || '',
     }
     writeClassroomContext(next)
@@ -956,18 +965,29 @@ function ensureClassroomWorkspace(context: LingdongContext, user?: LingdongUser)
     const lesson = safeWorkspaceSegment(context.classroom.lessonTitle || context.classroom.title, '课堂', 28)
     const classroomId = String(context.classroom.id || context.sessionId || '').trim() || shortClassId(JSON.stringify(context.classroom))
     const root = join(app.getPath('documents'), '灵动ai创作')
+    // rc.2.7：同一台电脑上换账号登录时，工作区必须分开 —— 否则后一个账号会看到
+    // 前一个账号的会话与作品（会话库是按机器共享的，只能靠 cwd 区分）。老注记（没有 accountId）保持原样，
+    // 不迁移已有目录，避免学生的作品看起来“消失”。
+    const accountId = String(user?.id || '').trim() || String(user?.login || '').trim()
+    const account = safeWorkspaceSegment(user?.login || accountId, '', 20)
     const base = join(root, `${student}-${lesson}`)
     const markerName = '.lingdong-classroom.json'
     let workspacePath = base
     if (existsSync(base)) {
-      const marker = readJson<{ readonly classroomId?: unknown }>(join(base, markerName))
+      const marker = readJson<{ readonly classroomId?: unknown; readonly accountId?: unknown }>(join(base, markerName))
       const entries = readdirSync(base).filter(name => name !== markerName)
       const sameClass = marker !== null && String(marker.classroomId || '') === classroomId
-      if (!sameClass && entries.length > 0) workspacePath = join(root, `${student}-${lesson}-${shortClassId(classroomId)}`)
+      const owner = marker === null ? '' : String(marker.accountId || '')
+      if (accountId !== '' && owner !== '' && owner !== accountId) {
+        workspacePath = join(root, `${student}-${account === '' ? shortClassId(accountId) : account}-${lesson}`)
+      } else if (!sameClass && entries.length > 0) {
+        workspacePath = join(root, `${student}-${lesson}-${shortClassId(classroomId)}`)
+      }
     }
     mkdirSync(workspacePath, { recursive: true })
     writeFileSync(join(workspacePath, markerName), JSON.stringify({
-      classroomId, student: user?.displayName || user?.login || '', lesson, createdAt: new Date().toISOString(),
+      classroomId, student: user?.displayName || user?.login || '', accountId, account: user?.login || '',
+      lesson, createdAt: new Date().toISOString(),
     }, null, 2))
     // 课堂页面的生成约定：学生端的浏览器预览不应依赖任何 Chrome 扩展 / 浏览器桥 / 外部 CDN。
     // 只在工作区没有自己的 AGENTS.md 时铺一份，避免覆盖学生或老师已有的项目规则。
@@ -990,6 +1010,41 @@ function ensureClassroomWorkspace(context: LingdongContext, user?: LingdongUser)
 }
 
 /** 铺好网关密钥与补丁层。**只有这节课真的在进行时**才会走到这里。 */
+/** rc.2.7：预装插件清单的**第二道保险**。
+ *
+ * 正常路径是 `project-manager.enablePreinstalledPlugins()`（在 applyRelease 里，登录之后、
+ * 宿主起来之前跑）。实测有机器出现过「插件闭包已经镜像进 profile、但 manifest 的
+ * bundles 清单没更新」→ 插件不挂载 → 学生看不到设计/PPT 视图。这里在**登录门**里再补一次：
+ * 只做增补（把该有的加上）与清理（把已摘掉的删掉），其它条目一律不动，失败也不拦启动。
+ *
+ * ⚠️ 这两个清单要与 `apps/desktop/src/project-manager.ts` 里的
+ *    LINGDONG_PLUGIN_BUNDLES / LINGDONG_RETIRED_PLUGIN_BUNDLES 保持一致。
+ */
+const LINGDONG_GATE_BUNDLES = ['deepseek-idesign', 'deepseek-ippt']
+const LINGDONG_GATE_RETIRED = ['dsh-context', 'dsh-at-file', '@yuxianglin/dsh-bridge-browser', 'dsh-find-plugin']
+
+/** 见 {@link LINGDONG_GATE_BUNDLES}：补齐桌面 profile 的预装插件清单。 */
+function ensurePreinstalledBundles(): void {
+  try {
+    const manifestPath = join(dshHome(), 'profiles', 'desktop', 'package.json')
+    if (!existsSync(manifestPath)) return
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { dsh?: { profile?: { bundles?: unknown } } }
+    const rawBundles = manifest.dsh?.profile?.bundles
+    const current = Array.isArray(rawBundles) ? rawBundles.filter((name): name is string => typeof name === 'string') : []
+    const missing = LINGDONG_GATE_BUNDLES.filter(name => !current.includes(name))
+    const kept = current.filter(name => !LINGDONG_GATE_RETIRED.includes(name))
+    const bundles = [...kept, ...missing]
+    if (bundles.length === current.length && bundles.every((name, index) => name === current[index])) return
+    writeFileSync(manifestPath, `${JSON.stringify({
+      ...manifest,
+      dsh: { ...manifest.dsh, profile: { ...manifest.dsh?.profile, bundles } },
+    }, undefined, 2)}\n`)
+    console.log('[lingdong] 预装插件清单已补齐：', bundles.join(', '))
+  } catch (error) {
+    console.warn('[lingdong] 预装插件清单补齐失败（不影响启动）', error)
+  }
+}
+
 function applyGateway(context: LingdongContext, user?: LingdongUser): void {
   const key = context.gateway?.key
   const baseUrl = context.gateway?.baseUrl
@@ -1010,8 +1065,9 @@ function applyGateway(context: LingdongContext, user?: LingdongUser): void {
   // Never persist the gateway key in an agent-readable file. The host receives it via env only.
   removeGatewayCredential(home)
   pointDefaultModelToGateway(home, defaultModel)
+  ensurePreinstalledBundles()
   const workspacePath = ensureClassroomWorkspace(context, user)
-  writeClassroomContext(workspacePath === undefined ? context : { ...context, workspacePath })
+  writeClassroomContext(workspacePath === undefined ? context : { ...context, workspacePath }, undefined, user)
 }
 
 /**

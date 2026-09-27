@@ -29,12 +29,19 @@ export interface LingdongClassroom {
   readonly teacherName?: string
 }
 
+/** 登录账号（rc.2.7 起）：同一台电脑换账号登录时用来分开本地计数。 */
+export interface LingdongAccount {
+  readonly id: string
+  readonly login: string
+}
+
 /** 一次 `client-context` 读取后客户端关心的那部分。 */
 export interface LingdongCourseState {
   readonly classroom: LingdongClassroom | null
   readonly upcoming: LingdongClassroom | null
   readonly sends: LingdongSends | null
   readonly message: string
+  readonly account: LingdongAccount | null
 }
 
 interface LingdongDesktopBridge {
@@ -91,9 +98,16 @@ function emit(): void {
 function sendCountKey(state: LingdongCourseState | null): string | undefined {
   const classroom = state?.classroom
   const id = classroom?.id?.trim()
-  if (id !== undefined && id !== '') return LINGDONG_SEND_COUNT_PREFIX + id
+  const account = state?.account
+  // 账号（优先 id，次选登录名）+ 课堂 id 一起做键：同一台电脑上 A/B 两个账号
+  // 不再互相继承发送次数。拿不到账号时保持原键（老机器不丢计数）。
+  const tag = account === null || account === undefined
+    ? ''
+    : (account.id.trim() || account.login.trim())
+  const prefix = tag === '' ? LINGDONG_SEND_COUNT_PREFIX : `${LINGDONG_SEND_COUNT_PREFIX}${tag}.`
+  if (id !== undefined && id !== '') return prefix + id
   const fallback = classroom?.lessonTitle?.trim() || classroom?.title?.trim()
-  return fallback === undefined || fallback === '' ? undefined : LINGDONG_SEND_COUNT_PREFIX + fallback
+  return fallback === undefined || fallback === '' ? undefined : prefix + fallback
 }
 
 function readStoredSendCount(key: string): number | undefined {
@@ -114,6 +128,7 @@ function readStoredSendCount(key: string): number | undefined {
  * 数当显示值——平台那边曾经把 2 次显示成 1 次，学生看不懂。计数存在
  * localStorage 里、按课堂 id 分键，所以客户端重启不会归零。
  *
+ * 计数键 = 账号 + 课堂 id（rc.2.7 起），避免同一台电脑上换账号后继承前一个账号的次数。
  * 平台仍然是最终门禁（网关 429）：如果学生换了电脑/浏览器，本地计数会低于平台，
  * 平台该拦还是会拦，只是提示话术由平台给。
  */
@@ -176,11 +191,14 @@ export function refreshLingdongCourseState(): Promise<void> {
       const raw = await read({ refresh: true })
       if (raw === null || typeof raw !== 'object') return
       const record = raw as Record<string, unknown>
+      const accountId = typeof record.userId === 'string' ? record.userId.trim() : ''
+      const accountLogin = typeof record.userLogin === 'string' ? record.userLogin.trim() : ''
       const next: LingdongCourseState = {
         classroom: classroomOf(record.classroom),
         upcoming: classroomOf(record.upcoming),
         sends: normalizeSends(record.sends),
         message: typeof record.message === 'string' ? record.message : '',
+        account: accountId === '' && accountLogin === '' ? null : { id: accountId, login: accountLogin },
       }
       const changed = JSON.stringify(next) !== JSON.stringify(snapshot)
       snapshot = next

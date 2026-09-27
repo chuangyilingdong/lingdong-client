@@ -100,6 +100,9 @@ const expectations = [
   // rc.2.5：交作品会扫脚本里的素材路径，并提示同目录未提交的素材。
   ['apps/desktop/src/platform-gate.ts', 'SCRIPT_REFERENCE_PATTERN'],
   ['apps/desktop/src/platform-gate.ts', 'nearbyAssets'],
+  // rc.2.7：登录门里再补一次预装插件清单（防“插件在、清单没更新”）。
+  ['apps/desktop/src/platform-gate.ts', 'ensurePreinstalledBundles'],
+  ['apps/desktop/src/platform-gate.ts', "LINGDONG_GATE_BUNDLES = ['deepseek-idesign', 'deepseek-ippt']"],
   ['packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx', 'nearby'],
   // rc.2.5：课堂上下文同步 IPC，冷启动打开文件不再退回相对路径。
   ['apps/desktop/src/platform-gate.ts', 'lingdong:classroom-context-sync'],
