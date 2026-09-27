@@ -17,7 +17,7 @@ on:
       - 'deploy/desktop/**'
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -51,6 +51,8 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build Apple Silicon DMG/ZIP
+        id: mac_build
+        continue-on-error: true
         env:
           CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
@@ -60,8 +62,9 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: |
+          set -o pipefail
           if [ "${GITHUB_EVENT_NAME}" = "push" ] || [ "${{ inputs.unsigned }}" = "true" ]; then
-            bash scripts/build-mac-arm64.sh --unsigned
+            bash scripts/build-mac-arm64.sh --unsigned 2>&1 | tee build.log
           else
             mkdir -p "$LINGDONG_CHECKOUT/apps/desktop"
             cat > "$LINGDONG_CHECKOUT/apps/desktop/.env.macos" <<EOF
@@ -79,8 +82,25 @@ jobs:
           APPLE_API_KEY_ID=${APPLE_API_KEY_ID}
           APPLE_API_ISSUER=${APPLE_API_ISSUER}
           EOF
-            bash scripts/build-mac-arm64.sh
+            bash scripts/build-mac-arm64.sh 2>&1 | tee build.log
           fi
+
+      - name: Publish unsigned build log
+        if: always() && github.event_name == 'push'
+        run: |
+          if [ ! -f build.log ]; then echo 'build.log was not created' > build.log; fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B ci/mac-debug
+          mkdir -p .ci
+          cp build.log .ci/mac-latest.log
+          git add -f .ci/mac-latest.log
+          git commit -m "ci: record mac build log ${GITHUB_RUN_ID}" || true
+          git push --force origin HEAD:ci/mac-debug
+
+      - name: Fail when unsigned build failed
+        if: steps.mac_build.outcome == 'failure' && (github.event_name == 'push' || inputs.unsigned == true)
+        run: exit 1
 
       - name: Collect artifacts
         run: |
