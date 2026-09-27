@@ -106,6 +106,9 @@ report.push('✓  apps/desktop/scripts/lingdong-office-engine.mjs：已放入（
 if (!dryRun) copyFileSync(join(patchDir, 'lingdong-sidebar-html-route.mjs'), join(checkout, 'apps/desktop/scripts/lingdong-sidebar-html-route.mjs'))
 if (!dryRun) copyFileSync(join(patchDir, 'lingdong-sidebar-html-route.d.mts'), join(checkout, 'apps/desktop/scripts/lingdong-sidebar-html-route.d.mts'))
 report.push('✓  apps/desktop/scripts/lingdong-sidebar-html-route.mjs：已放入（含类型声明）')
+if (!dryRun) copyFileSync(join(patchDir, 'lingdong-design-rebrand.mjs'), join(checkout, 'apps/desktop/scripts/lingdong-design-rebrand.mjs'))
+if (!dryRun) copyFileSync(join(patchDir, 'lingdong-design-rebrand.d.mts'), join(checkout, 'apps/desktop/scripts/lingdong-design-rebrand.d.mts'))
+report.push('✓  apps/desktop/scripts/lingdong-design-rebrand.mjs：已放入（含类型声明）')
 
 // ②b UI：侧栏预设/作品面板 + 会话输入隐藏桥。
 // 旧版本把两个面板挂在输入框 dock 上；这里先原地清掉旧 import/plugin/文件，再写新结构。
@@ -1200,7 +1203,7 @@ updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
     return before
   }
   if (!text.includes('lingdong-sidebar-html-route.mjs')) {
-    text = text.replace(importAnchor, importAnchor + "\nimport { patchLingdongSidebarHtmlRoute } from './lingdong-sidebar-html-route.mjs'")
+    text = text.replace(importAnchor, importAnchor + "\nimport { patchLingdongSidebarHtmlRoute } from './lingdong-sidebar-html-route.mjs'\nimport { patchLingdongDesignBranding } from './lingdong-design-rebrand.mjs'")
   }
   if (!text.includes('patchLingdongSidebarHtmlRoute(pluginDir)')) {
     const anchor = "      await runPnpm(['install', '--prod'], pluginDir)"
@@ -1208,7 +1211,20 @@ updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => {
       report.push('!! apps/desktop/scripts/prepare-dsh.ts：找不到插件闭包 pnpm install 锚点')
       return before
     }
-    text = text.replace(anchor, anchor + '\n      patchLingdongSidebarHtmlRoute(pluginDir)')
+    text = text.replace(anchor, anchor + '\n      patchLingdongSidebarHtmlRoute(pluginDir)\n      // 设计 / PPT 两个插件把 iPolloWork 牌子换成灵动ai（显示层 + 模板 logo）。\n      patchLingdongDesignBranding(pluginDir)')
+  }
+  // 已经打过 rc.2.5 那条的检出：把“设计/PPT 换牌”补上（两步都幂等）。
+  if (!text.includes('lingdong-design-rebrand.mjs')) {
+    const rebrandImport = "import { patchLingdongSidebarHtmlRoute } from './lingdong-sidebar-html-route.mjs'"
+    if (text.includes(rebrandImport)) {
+      text = text.replace(rebrandImport, rebrandImport + "\nimport { patchLingdongDesignBranding } from './lingdong-design-rebrand.mjs'")
+    }
+  }
+  if (!text.includes('patchLingdongDesignBranding(pluginDir)')) {
+    const rebrandCall = '      patchLingdongSidebarHtmlRoute(pluginDir)'
+    if (text.includes(rebrandCall)) {
+      text = text.replace(rebrandCall, rebrandCall + '\n      // 设计 / PPT 两个插件把 iPolloWork 牌子换成灵动ai（显示层 + 模板 logo）。\n      patchLingdongDesignBranding(pluginDir)')
+    }
   }
   return text
 }, '侧栏 HTML 预览路由补丁接到预装插件闭包上')
@@ -1245,15 +1261,19 @@ patch('apps/desktop/src/project-manager.ts',
     'const LINGDONG_PLUGIN_BUNDLES = [',
     "  '@linxin666/dsh-web-all',",
     "  'dsh-better-sidebar',",
+    "  'deepseek-idesign',",
+    "  'deepseek-ippt',",
     "  'dsh-at-file',",
     "  '@liustack/modlens',",
     "  'dsh-context',",
     '] as const',
-    '// 插件闭包的依赖清单：4 个走 registry。',
+    '// 插件闭包的依赖清单：6 个走 registry。',
     '// 由 prepare:dsh 装进 resources/runtime/plugin-profile（见 apply-client-gate.mjs 的 ④k）。',
     'export const LINGDONG_PLUGIN_DEPENDENCIES: Readonly<Record<string, string>> = {',
     "  '@linxin666/dsh-web-all': '^0.3.24',",
     "  'dsh-better-sidebar': '0.21.1',",
+    "  'deepseek-idesign': '^0.2.2',",
+    "  'deepseek-ippt': '^0.1.2',",
     "  'dsh-at-file': '^0.6.3',",
     "  '@liustack/modlens': '^3.26.3',",
     "  'dsh-context': '^0.55.0',",
@@ -1662,6 +1682,14 @@ updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
   // （find_dsh_plugin），学生用不到，网络不通就是一次报错。
   text = text.split("  'dsh-better-sidebar',\n  'dsh-find-plugin',\n").join("  'dsh-better-sidebar',\n")
   text = text.split("  'dsh-find-plugin': '^0.3.7',\n").join('')
+  // 2026-09-27（rc.2.6）：预装 iPolloWork 的「设计 / PPT」两个插件（视频插件不预装，它带一堆原生依赖）。
+  // 学生端不需要插件市场，走预装 + profile 镜像这条路。
+  if (!text.includes("  'deepseek-idesign',")) {
+    text = text.split("  'dsh-better-sidebar',\n").join("  'dsh-better-sidebar',\n  'deepseek-idesign',\n  'deepseek-ippt',\n")
+  }
+  if (!text.includes("'deepseek-idesign':")) {
+    text = text.split("  '@liustack/modlens': '^3.26.3',\n").join("  'deepseek-idesign': '^0.2.2',\n  'deepseek-ippt': '^0.1.2',\n  '@liustack/modlens': '^3.26.3',\n")
+  }
   text = text.split("  'dsh-at-file': '^0.6.3',\n").join('')
   text = text.split("  '@liustack/modlens',\n  '@yuxianglin/dsh-bridge-browser',\n").join("  '@liustack/modlens',\n")
   text = text.split("  '@yuxianglin/dsh-bridge-browser': 'file:./vendor-plugins/yuxianglin-dsh-bridge-browser-0.0.5.tgz',\n").join('')
@@ -1701,7 +1729,7 @@ updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
     text = text.replace(anchor, '] as const\n' + comments + '\n' + list + '// 插件闭包的依赖清单')
   }
   return text
-}, '预装清单摘掉 dsh-at-file')
+}, '预装清单摘掉 dsh-at-file、补上设计/PPT 插件')
 
 updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
   // 幂等：已经改过的机器直接跳过（旧写法里没有 LINGDONG_RETIRED_PLUGIN_BUNDLES 这一句）。

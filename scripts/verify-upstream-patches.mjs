@@ -14,6 +14,7 @@ const copies = [
   ['deploy/desktop/client-patch/LingdongUpdater.ts', 'apps/desktop/src/LingdongUpdater.ts'],
   ['deploy/desktop/client-patch/lingdong-office-engine.mjs', 'apps/desktop/scripts/lingdong-office-engine.mjs'],
   ['deploy/desktop/client-patch/lingdong-sidebar-html-route.mjs', 'apps/desktop/scripts/lingdong-sidebar-html-route.mjs'],
+  ['deploy/desktop/client-patch/lingdong-design-rebrand.mjs', 'apps/desktop/scripts/lingdong-design-rebrand.mjs'],
   ['deploy/desktop/client-patch/gate/tray-windows.ico', 'apps/desktop/resources/tray-windows.ico'],
   ['deploy/desktop/client-patch/LingdongClassroomWorkspace.ts', 'packages/client/ui-workspace/src/client/LingdongClassroomWorkspace.ts'],
   ['deploy/desktop/client-patch/LingdongWorkPanel.tsx', 'packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx'],
@@ -105,6 +106,13 @@ const expectations = [
   ['apps/desktop/src/preload-app.ts', 'contextSync'],
   ['packages/client/ui-chat/src/client/lingdong-open-path.ts', 'readRootSync'],
   ['packages/client/ui-deliverables/src/client/LingdongWorkspacePath.ts', 'readWorkspaceRootSync'],
+  // rc.2.6：预装设计 / PPT 插件（视频插件不预装）+ 把 iPolloWork 牌子换成灵动ai。
+  ['apps/desktop/src/project-manager.ts', "'deepseek-idesign'"],
+  ['apps/desktop/src/project-manager.ts', "'deepseek-ippt'"],
+  ['apps/desktop/src/project-manager.ts', "'deepseek-idesign': '^0.2.2'"],
+  ['apps/desktop/scripts/prepare-dsh.ts', 'patchLingdongDesignBranding(pluginDir)'],
+  ['apps/desktop/scripts/lingdong-design-rebrand.mjs', 'patchLingdongDesignBranding'],
+  ['apps/desktop/scripts/lingdong-design-rebrand.mjs', 'data-lingdong-brand-logo'],
 ]
 for (const [path, marker] of expectations) {
   assert.equal(read(path).includes(marker), true, `missing marker ${marker} in ${path}`)

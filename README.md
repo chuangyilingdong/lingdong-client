@@ -110,6 +110,16 @@ origin  github.com-peixunwangzhan-local:chuangyilingdong/lingdong-client.git
 - **打开文件没有冷启动窗口了**：新增同步 IPC `lingdong:classroom-context-sync`，`openFile` 在调用栈里就拿到课堂工作区根，不会再退回相对路径触发 `fs-error` / 「在文件管理器中显示」静默失败。
 - 摘掉 `dsh-find-plugin`（只给模型加了个搜 GitHub 插件的工具，学生用不到，网络不通就是一次报错），并写进「已摘掉」名单以便升级时清掉旧 entry。
 
+### 2026-09-27 设计 / PPT 插件预装（`0.1.7-rc.2.6`，未发布）。安装包 `430361930` 字节 / SHA256 `8B0046609ABE348F416E97D98A0CBF57C14D5FF679334F46FE1BFE17224EFF10`。
+
+把（自家的）iPolloWork DeepSeek Design 套件接进学生端，**只装设计 + PPT**：
+
+- 预装 `deepseek-idesign@0.2.2` + `deepseek-ippt@0.1.2`（进 plugin-profile 闭包，学生端不需要插件市场）；`deepseek-ivideo` 不装 —— 它是唯一带 puppeteer-core / onnxruntime-node / sharp 原生依赖的重包。
+- 品牌统一成灵动ai：显示层 `iPolloWork` → `灵动ai`、`DeepSeek iDesign / iPPT` → `灵动ai 设计 / 灵动ai PPT`、`DeepSeek Harness` → `灵动ai`，视图标签 `Design` → `设计`；模板里 21 + 4 个 `assets/ipollowork-logo.svg` 换成灵动ai 标记。只改显示层：路由 `/ipollowork-*`、频道名、模板 id `ipollowork.*`、CSS 变量 `--ipw-*`、代码标识符（`iPolloWorkState` 等）与 LICENSE / README 原文都不动。
+- 兼容性核查（基线 = 0.1.7-rc.2）：宿主半区 `inject: ["webServer", "workspaceRegistry"]` 两个服务都在；
+  宿主只依赖 Node 内置模块；客户端半区只注册 `conversation.view` 槽位；
+  Ask AI 只调 `setDraft()` 把提示词填进输入框 → 仍走我们的 `submit` 闸门（发送次数不会被绕过）；
+  PPT 的 PDF / PPTX 导出是浏览器端（自带 jspdf / pptxgenjs / html2canvas），不依赖 LibreOffice。
 ### 2026-09-25 可用性收口（`0.1.7-alpha.2.9`，未发布）
 
 学生实机反馈（图1 次数 8/8、图2「在文件管理器中显示」点了没反应、图3 侧栏预览报 `fs-error`）逐条落地：
