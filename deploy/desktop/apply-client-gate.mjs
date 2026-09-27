@@ -838,6 +838,20 @@ updateTextFile('apps/desktop/scripts/package-target.ts', (before) => {
   )
   const signedDirectoryAnchor = "    const appPath = join(buildPaths.artifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app')"
   const macVersionAnchor = "      version: resolveDesktopBuildVersion(environment, packageVersion(join(APP_ROOT, 'package.json'), 'desktop package')),"
+  text = text.replace(
+    [
+      "      await packagingStep(run.directory, 'macos-package', () => withMacOSSigningKeychain(environment,",
+      "        signingEnvironment => packageTarget(invocation, signingEnvironment, run)), secrets)",
+    ].join('\n'),
+    [
+      "      await packagingStep(run.directory, 'macos-package', async () => {",
+      '        if (invocation.unsigned) await packageTarget(invocation, environment, run)',
+      '        else await withMacOSSigningKeychain(environment,',
+      '          signingEnvironment => packageTarget(invocation, signingEnvironment, run))',
+      '      }, secrets)',
+    ].join('\n'),
+  )
+
   text = text.replace(macVersionAnchor,
     "      version: process.env.LINGDONG_CLIENT_VERSION?.trim() || resolveDesktopBuildVersion(environment, packageVersion(join(APP_ROOT, 'package.json'), 'desktop package')),")
   text = text.replace(signedDirectoryAnchor,

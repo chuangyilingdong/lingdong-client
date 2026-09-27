@@ -125,6 +125,7 @@ const expectations = [
   ['apps/desktop/scripts/package-macos.ts', 'lingdong-client-${version}-mac-${arch}'],
   ['apps/desktop/scripts/package-target.ts', 'LINGDONG_MAC_UNSIGNED'],
   ['apps/desktop/scripts/package-target.ts', 'process.env.LINGDONG_CLIENT_VERSION?.trim() || resolveDesktopBuildVersion'],
+  ['apps/desktop/scripts/package-target.ts', 'if (invocation.unsigned) await packageTarget(invocation, environment, run)'],
   ['apps/desktop/scripts/electron-builder-config.mjs', 'packagesMacOS && !unsigned'],
   ['apps/desktop/scripts/electron-builder-config.mjs', 'notarize: !unsigned'],
   ['apps/desktop/scripts/smoke-packaged-runtime.ts', 'unsigned artifacts require Windows or macOS arm64'],
