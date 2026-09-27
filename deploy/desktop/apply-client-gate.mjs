@@ -852,6 +852,9 @@ updateTextFile('apps/desktop/scripts/package-target.ts', (before) => {
     ].join('\n'),
   )
 
+  const targetEnvAnchor = "    DSH_DESKTOP_TARGET_ARCH: target.arch,\n  }"
+  text = text.replace(targetEnvAnchor,
+    "    DSH_DESKTOP_TARGET_ARCH: target.arch,\n    DSH_DESKTOP_UNSIGNED: invocation.unsigned ? '1' : '0',\n  }")
   text = text.replace(macVersionAnchor,
     "      version: process.env.LINGDONG_CLIENT_VERSION?.trim() || resolveDesktopBuildVersion(environment, packageVersion(join(APP_ROOT, 'package.json'), 'desktop package')),")
   text = text.replace(signedDirectoryAnchor,
@@ -863,6 +866,11 @@ updateTextFile('apps/desktop/scripts/package-target.ts', (before) => {
   }
   return text
 }, 'macOS 支持品牌路径与未签名本地产物')
+
+updateTextFile('apps/desktop/scripts/prepare-dsh.ts', (before) => before.replace(
+  "    if (process.platform === 'darwin') {",
+  "    if (process.platform === 'darwin' && process.env.DSH_DESKTOP_UNSIGNED !== '1') {",
+), 'macOS 未签名准备阶段跳过原生运行时签名')
 
 updateTextFile('apps/desktop/scripts/electron-builder-config.mjs', (before) => {
   let text = before
