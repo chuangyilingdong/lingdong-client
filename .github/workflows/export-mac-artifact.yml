@@ -14,6 +14,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
+      GITHUB_TOKEN: ${{ github.token }}
       SOURCE_RUN_ID: '36320334473'
       SOURCE_ARTIFACT: 'lingdong-client-0.1.7-rc.2.9-mac-arm64'
       TARGET_VERSION: '0.1.7-rc.2.9'
