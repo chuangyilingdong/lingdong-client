@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - '.github/workflows/export-mac-artifact.yml'
+      - 'scripts/export-mac-artifact-trigger.txt'
 
 permissions:
   actions: read
