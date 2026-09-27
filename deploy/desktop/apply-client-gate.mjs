@@ -1750,10 +1750,17 @@ report.push('✓  packages/client/ui-deliverables/src/client/LingdongWorkspacePa
 
 updateTextFile('apps/desktop/src/project-manager.ts', (before) => {
   let text = before
-  // ⚠️ 摘哪一条都必须用「带前后邻居」的锚点：裸 split("  'dsh-at-file',\n") 会把下面的
-  //    LINGDONG_RETIRED_PLUGIN_BUNDLES 里同名那行一起删掉（自愈块会被清空 → 旧机器上的坏
-  //    entry 永远删不掉）。.2.9 第一版就是这么错的，所以这里把名字和邻居一起匹配。
-  text = text.split("  'dsh-better-sidebar',\n  'dsh-at-file',\n").join("  'dsh-better-sidebar',\n")
+  // 只从 LINGDONG_PLUGIN_BUNDLES 数组块里摘 dsh-at-file；不能裸 split 全文件，否则会把下面的
+  // LINGDONG_RETIRED_PLUGIN_BUNDLES 里同名保留项一起删掉。也不能只匹配某个邻居：后续补丁会在
+  // dsh-better-sidebar 和 dsh-at-file 之间插入设计 / PPT 插件。
+  const atFileBundleHead = text.indexOf('const LINGDONG_PLUGIN_BUNDLES = [')
+  const atFileBundleTail = atFileBundleHead >= 0 ? text.indexOf('] as const', atFileBundleHead) : -1
+  if (atFileBundleHead >= 0 && atFileBundleTail > atFileBundleHead) {
+    const bundleBlock = text.slice(atFileBundleHead, atFileBundleTail)
+    text = text.slice(0, atFileBundleHead)
+      + bundleBlock.split("  'dsh-at-file',\n").join('')
+      + text.slice(atFileBundleTail)
+  }
   // 2026-09-27：dsh-find-plugin 也从预装里摘掉 —— 它只给模型加了一个搜 GitHub 插件的工具
   // （find_dsh_plugin），学生用不到，网络不通就是一次报错。
   text = text.split("  'dsh-better-sidebar',\n  'dsh-find-plugin',\n").join("  'dsh-better-sidebar',\n")
