@@ -813,6 +813,74 @@ updateTextFile('apps/desktop/scripts/smoke-packaged-runtime.ts', (before) => {
   text = text.split("'MacOS', 'DeepSeek Harness'").join(`'MacOS', '${exeName}'`)
   return text
 }, 'smoke 脚本按品牌后的可执行名校验')
+// ④a5b macOS：品牌换名后上游 package-macos 仍按 DeepSeek Harness.app / deepseek-harness-* 找产物；
+// 同时允许无 Apple 证书时出未签名 DMG/ZIP 做本机验收（正式分发仍必须签名+公证）。
+updateTextFile('apps/desktop/scripts/package-macos.ts', (before) => {
+  let text = before
+  text = text.replace("arch === 'arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app'", "arch === 'arm64' ? 'mac-arm64' : 'mac', '灵动ai创作客户端.app'")
+  text = text.replace('const base = `deepseek-harness-${version}-mac-${arch}`', 'const base = `lingdong-client-${version}-mac-${arch}`')
+  return text
+}, 'macOS DMG/ZIP 按灵动ai品牌命名')
+
+updateTextFile('apps/desktop/scripts/package-target.ts', (before) => {
+  let text = before
+  text = text.replace(
+    "if (values.unsigned && name !== 'win-x64') throw new Error('desktop package: --unsigned requires win-x64')",
+    "if (values.unsigned && name !== 'win-x64' && name !== 'mac-arm64') throw new Error('desktop package: --unsigned requires win-x64 or mac-arm64')",
+  )
+  text = text.replace(
+    "  if (target.platform === 'darwin' && !invocation.directory) {",
+    "  if (target.platform === 'darwin' && !invocation.directory && !invocation.unsigned) {",
+  )
+  text = text.replace(
+    "  } else if (target.platform === 'darwin') {",
+    "  } else if (target.platform === 'darwin' && !invocation.unsigned) {",
+  )
+  const signedDirectoryAnchor = "    const appPath = join(buildPaths.artifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', 'DeepSeek Harness.app')"
+  const macVersionAnchor = "      version: resolveDesktopBuildVersion(environment, packageVersion(join(APP_ROOT, 'package.json'), 'desktop package')),"
+  text = text.replace(macVersionAnchor,
+    "      version: process.env.LINGDONG_CLIENT_VERSION?.trim() || resolveDesktopBuildVersion(environment, packageVersion(join(APP_ROOT, 'package.json'), 'desktop package')),")
+  text = text.replace(signedDirectoryAnchor,
+    "    const appPath = join(buildPaths.artifacts, target.arch === 'arm64' ? 'mac-arm64' : 'mac', '灵动ai创作客户端.app')")
+  const unsignedAnchor = "  } else {\n    await signedStage('artifacts', () => execute(desktopElectronBuilderArguments(target, invocation.directory), electronBuilderEnv))"
+  if (text.includes(unsignedAnchor) && !text.includes('// LINGDONG_MAC_UNSIGNED')) {
+    text = text.replace(unsignedAnchor,
+      "  } else if (target.platform === 'darwin') {\n    // LINGDONG_MAC_UNSIGNED：只用于本机验收，不能作为学生分发包。\n    await execute([...desktopElectronBuilderArguments(target, invocation.directory), '--config.mac.notarize=false'], electronBuilderEnv)\n    await execute(['exec', 'tsx', 'scripts/smoke-packaged-runtime.ts', '--unsigned'], targetEnv)\n  } else {\n    await signedStage('artifacts', () => execute(desktopElectronBuilderArguments(target, invocation.directory), electronBuilderEnv))")
+  }
+  return text
+}, 'macOS 支持品牌路径与未签名本地产物')
+
+updateTextFile('apps/desktop/scripts/electron-builder-config.mjs', (before) => {
+  let text = before
+  text = text.replace(
+    "  if (unsigned && resolvedPlatform !== 'win32') throw new Error('desktop package: unsigned builds require Windows')",
+    "  if (unsigned && resolvedPlatform !== 'win32' && resolvedPlatform !== 'darwin') throw new Error('desktop package: unsigned builds require Windows or macOS')",
+  )
+  text = text.replace(
+    '  const macOSSigning = packagesMacOS ? resolveMacOSSigningEnvironment(env) : undefined\n  if (packagesMacOS) resolveMacOSNotarizationEnvironment(env)',
+    '  const macOSSigning = packagesMacOS && !unsigned ? resolveMacOSSigningEnvironment(env) : undefined\n  if (packagesMacOS && !unsigned) resolveMacOSNotarizationEnvironment(env)',
+  )
+  text = text.replace(
+    "      forceCodeSigning: true,\n      hardenedRuntime: true,",
+    "      forceCodeSigning: !unsigned,\n      hardenedRuntime: !unsigned,",
+  )
+  text = text.replace('      notarize: true,', '      notarize: !unsigned,')
+  text = text.replace('    dmg: {\n      sign: true,', '    dmg: {\n      sign: !unsigned,')
+  text = text.replace(
+    "    artifactBuildCompleted: artifact => {\n      if (!artifact.file.endsWith('.dmg')) return",
+    "    artifactBuildCompleted: artifact => {\n      if (unsigned || !artifact.file.endsWith('.dmg')) return",
+  )
+  text = text.replace(
+    '      verifyMacOSSignatureAfterSign(context, macOSSigning ?? resolveMacOSSigningEnvironment(env))',
+    '      if (!unsigned) verifyMacOSSignatureAfterSign(context, macOSSigning ?? resolveMacOSSigningEnvironment(env))',
+  )
+  return text
+}, 'macOS 支持未签名本地产物')
+
+updateTextFile('apps/desktop/scripts/smoke-packaged-runtime.ts', (before) => before.replace(
+  "if (values.unsigned && !windows) throw new Error('desktop smoke: unsigned artifacts require Windows')",
+  "if (values.unsigned && !windows && target !== 'mac-arm64') throw new Error('desktop smoke: unsigned artifacts require Windows or macOS arm64')",
+), 'smoke 允许 macOS 未签名产物')
 
 // smoke 直接跑 Host（不经过 Electron 主进程），所以要自己带上 main.ts 里设的短路径引擎变量；
 // 否则它从 asar 深路径加载原生 LibreOffice，会报 Unknown LibreOfficeKit exception 的假失败。

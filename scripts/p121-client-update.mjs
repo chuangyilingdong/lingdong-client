@@ -26,9 +26,11 @@ try {
     assert.match(updater, /received !== expectedSize/)
     assert.match(updater, /actualHash !== expectedHash/)
   })
-  check('确认后静默安装并重启', () => {
+  check('确认后 Windows 静默安装、macOS 打开 DMG 安装', () => {
     assert.match(updater, /\/S --updated/)
     assert.match(updater, /currentExecutable/)
+    assert.match(updater, /darwin' && process\.arch === 'arm64'/)
+    assert.match(updater, /spawn\('\/usr\/bin\/open'/)
     assert.match(updater, /app\.quit\(\)/)
     assert.match(apply, /runLingdongUpdater/)
   })
@@ -46,8 +48,8 @@ try {
     assert.match(read('deploy/desktop/client-patch/lingdong-office-engine.mjs'), /LINGDONG_LIBREOFFICE_ENGINE_DIR/)
   })
   check('发布会合并 manifest，不覆盖后台策略', () => {
-    assert.match(publish, /jq --arg version/)
-    assert.match(publish, /has\("enabled"\)/)
+    assert.match(publish, /JQ_ARGS/)
+    assert.match(publish, /\.enabled = \(if has/)
     assert.doesNotMatch(publish, /cat > manifest.json/)
   })
   check('classroom 为空时清掉缓存 presets/sends，不再回退 gateway', () => {
@@ -65,10 +67,12 @@ try {
     assert.match(read('deploy/desktop/client-patch/gate/update.html'), /__lingdongUpdate/)
   })
 
-  check('更新地址限制为平台 HTTPS 下载域且文件名可核对', () => {
+  check('更新地址限制为平台 HTTPS 下载域且文件名按平台核对', () => {
     assert.match(updater, /allowedUpdateUrl/)
     assert.match(updater, /url\.origin !== base\.origin/)
-    assert.match(updater, /expectedName = `lingdong-client-\$\{version\}-win-x64\.exe`/)
+    assert.match(updater, /expectedUpdateName/)
+    assert.match(updater, /lingdong-client-\$\{version\}-win-x64\.exe/)
+    assert.match(updater, /lingdong-client-\$\{version\}-mac-arm64\.dmg/)
   })
   check('安装器失败会写回结果并在下次启动提示', () => {
     assert.match(updater, /LINGDONG_UPDATE_EXIT/)
@@ -81,23 +85,23 @@ try {
     assert.match(patch, /session-log-deepseek.*disabled: true/)
     assert.match(read('deploy/desktop/client-patch/platform-gate.ts'), /DSH_TELEMETRY_DISABLED = '1'/)
   })
-  check('学生端默认限制在工作区且不再写 agent 可读网关凭据', () => {
+  check('学生端权限预设与产品口径一致，且不再写 agent 可读网关凭据', () => {
     const patch = read('deploy/desktop/client-patch/lingdong.patch.yml')
     const gate = read('deploy/desktop/client-patch/platform-gate.ts')
-    assert.match(patch, /defaultPreset: workspace-write/)
-    assert.doesNotMatch(patch, /defaultPreset: danger-full-access/)
+    assert.match(patch, /defaultPreset: danger-full-access/)
+    assert.match(patch, /workspace-write:/)
     assert.match(gate, /function removeGatewayCredential/)
     assert.doesNotMatch(gate, /writeGatewayCredential\(/)
   })
   check('会话按课堂工作区隔离', () => {
     assert.match(apply, /classroomWorkspacePath/)
-    assert.match(apply, /samePath\(value\.cwd, classroomWorkspacePath\)/)
+    assert.match(apply, /samePath\(cwd, classroomWorkspacePath\)/)
   })
   check('作品面板识别工作区文件并区分平台不支持类型', () => {
     const panel = read('deploy/desktop/client-patch/LingdongWorkPanel.tsx')
     assert.match(panel, /scanWorkFiles/)
-    assert.match(panel, /RECOGNIZED_WORK_EXTENSIONS/)
-    assert.match(panel, /平台暂不支持此文件类型/)
+    assert.match(panel, /SUBMITTABLE_WORK_EXTENSIONS/)
+    assert.match(panel, /submittable/)
   })
   check('HTML 预览打包本地图片和媒体资源', () => {
     assert.match(read('deploy/desktop/client-patch/HtmlPreviewPack.ts'), /img\[src\]/)
@@ -121,8 +125,13 @@ try {
 
   check('客户端版本独立于 DSH 基线且每次发布可递增', () => {
     const build = read('scripts/build-win.sh')
+    const buildMac = read('scripts/build-mac-arm64.sh')
     // 版本号本身每次发版都会变，这里只锁「可覆盖 + 语义化」的形状。
     assert.match(build, /LINGDONG_CLIENT_VERSION:-\d+\.\d+\.\d+/)
+    assert.match(buildMac, /LINGDONG_CLIENT_VERSION:-\d+\.\d+\.\d+/)
+    assert.match(buildMac, /package:mac:arm64/)
+    assert.match(buildMac, /--unsigned/)
+    assert.match(apply, /process\.env\.LINGDONG_CLIENT_VERSION\?\.trim\(\) \|\| resolveDesktopBuildVersion/)
     assert.match(build, /LINGDONG_DSH_BASE_VERSION/)
     assert.match(apply, /LINGDONG_DSH_BASE_VERSION/)
     assert.match(apply, /resolvedClientVersion/)

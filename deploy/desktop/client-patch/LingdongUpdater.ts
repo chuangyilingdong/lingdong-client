@@ -22,6 +22,8 @@ interface UpdateFile {
   readonly url?: unknown
 }
 
+type LingdongUpdateTarget = 'mac-arm64' | 'win-x64'
+
 interface UpdateManifest {
   readonly enabled?: unknown
   readonly version?: unknown
@@ -40,9 +42,20 @@ function bool(value: unknown, fallback = false): boolean {
   return typeof value === 'boolean' ? value : fallback
 }
 
-function updateTarget(): string | null {
+function updateTarget(): LingdongUpdateTarget | null {
   if (process.platform === 'win32' && process.arch === 'x64') return 'win-x64'
+  if (process.platform === 'darwin' && process.arch === 'arm64') return 'mac-arm64'
   return null
+}
+
+function expectedUpdateName(target: LingdongUpdateTarget, version: string): string {
+  return target === 'win-x64'
+    ? `lingdong-client-${version}-win-x64.exe`
+    : `lingdong-client-${version}-mac-arm64.dmg`
+}
+
+function updateExtension(target: LingdongUpdateTarget): 'dmg' | 'exe' {
+  return target === 'win-x64' ? 'exe' : 'dmg'
 }
 
 function gateDirectory(): string {
@@ -117,15 +130,16 @@ async function downloadAndVerify(
   window: BrowserWindow | null,
   file: UpdateFile,
   version: string,
+  target: LingdongUpdateTarget,
 ): Promise<string> {
   const name = text(file.name)
-  const expectedName = `lingdong-client-${version}-win-x64.exe`
+  const expectedName = expectedUpdateName(target, version)
   if (name !== expectedName) throw new Error(`更新清单文件名不匹配：期望 ${expectedName}`)
   const expectedHash = text(file.sha256).toLocaleLowerCase('en-US')
   if (!/^[a-f0-9]{64}$/u.test(expectedHash)) throw new Error('更新清单缺少有效的 SHA256')
   const expectedSize = Number(file.size)
 
-  const destination = join(app.getPath('temp'), `lingdong-client-${version}-${Date.now()}.exe`)
+  const destination = join(app.getPath('temp'), `lingdong-client-${version}-${Date.now()}.${updateExtension(target)}`)
   await rm(destination, { force: true }).catch(() => undefined)
   const controller = new AbortController()
   let handle: Awaited<ReturnType<typeof open>> | undefined
@@ -172,7 +186,19 @@ async function downloadAndVerify(
   }
 }
 
-async function launchInstallerAndRestart(installerPath: string): Promise<void> {
+async function launchInstallerAndRestart(installerPath: string, target: LingdongUpdateTarget): Promise<void> {
+  if (target === 'mac-arm64') {
+    await new Promise<void>((resolve, reject) => {
+      const child = spawn('/usr/bin/open', [installerPath], { detached: true, stdio: 'ignore' })
+      child.once('error', reject)
+      child.once('spawn', () => {
+        child.unref()
+        resolve()
+      })
+    })
+    return
+  }
+
   const script = join(app.getPath('temp'), `lingdong-client-update-${Date.now()}.cmd`)
   const result = join(app.getPath('temp'), 'lingdong-client-update-result.txt')
   const currentExecutable = process.execPath
@@ -203,6 +229,7 @@ async function launchInstallerAndRestart(installerPath: string): Promise<void> {
 
 /** @returns True when the app must quit and let the updater finish. */
 async function reportPreviousUpdateFailure(): Promise<void> {
+  if (process.platform !== 'win32') return
   const file = join(app.getPath('temp'), 'lingdong-client-update-result.txt')
   const value = await readFile(file, 'utf8').catch(() => '')
   if (value.trim() === '') return
@@ -244,11 +271,14 @@ export async function runLingdongUpdater(): Promise<boolean> {
   const minimum = valid(text(manifest.minVersion))
   const required = bool(manifest.mandatory) || (minimum !== null && gt(minimum, current))
   const note = text(manifest.note)
+  const installHint = target === 'mac-arm64'
+    ? '点击“立即更新”后，客户端会自动下载并打开安装包；把应用拖到“应用程序”并替换后，再重新打开客户端。'
+    : '点击“立即更新”后，客户端会自动下载、安装并重新启动。'
   const result = await dialog.showMessageBox({
     type: 'info',
     title: '发现新版本',
     message: `灵动ai创作客户端 ${version}`,
-    detail: `当前版本：${app.getVersion()}\n\n${note || '本次更新包含客户端功能与稳定性改进。'}\n\n点击“立即更新”后，客户端会自动下载、安装并重新启动。`,
+    detail: `当前版本：${app.getVersion()}\n\n${note || '本次更新包含客户端功能与稳定性改进。'}\n\n${installHint}`,
     buttons: required ? ['立即更新'] : ['立即更新', '稍后更新'],
     defaultId: 0,
     cancelId: required ? 0 : 1,
@@ -263,9 +293,22 @@ export async function runLingdongUpdater(): Promise<boolean> {
     await window.loadFile(join(gateDirectory(), 'update.html'))
     window.show()
     await reportUpdate(window, 0, '正在准备更新…')
-    const installer = await downloadAndVerify(window, file, version)
-    await reportUpdate(window, 100, '下载完成，正在安装并重启…')
-    await launchInstallerAndRestart(installer)
+    const installer = await downloadAndVerify(window, file, version, target)
+    if (target === 'mac-arm64') {
+      await reportUpdate(window, 100, '下载完成，正在打开安装包…')
+      await dialog.showMessageBox({
+        type: 'info',
+        title: '准备安装新版本',
+        message: `灵动ai创作客户端 ${version} 已下载并校验`,
+        detail: '接下来会打开安装包。请在安装窗口里把“灵动ai创作客户端”拖到“应用程序”，选择替换旧版本，完成后重新打开客户端。',
+        buttons: ['打开安装包'],
+        defaultId: 0,
+        noLink: true,
+      })
+    } else {
+      await reportUpdate(window, 100, '下载完成，正在安装并重启…')
+    }
+    await launchInstallerAndRestart(installer, target)
     allowClose = true
     setTimeout(() => app.quit(), 300)
     return true

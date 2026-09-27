@@ -120,6 +120,16 @@ const expectations = [
   ['apps/desktop/src/platform-gate.ts', 'memorySession'],
   ['apps/desktop/src/platform-gate.ts', 'forgetPersistedSession'],
   ['apps/desktop/resources/gate/waiting.html', "state.title || '老师还没有开始上课'"],
+  // macOS：DMG/ZIP 按灵动ai品牌命名，并支持无证书的本机验收包（正式发布仍需签名+公证）。
+  ['apps/desktop/scripts/package-macos.ts', '灵动ai创作客户端.app'],
+  ['apps/desktop/scripts/package-macos.ts', 'lingdong-client-${version}-mac-${arch}'],
+  ['apps/desktop/scripts/package-target.ts', 'LINGDONG_MAC_UNSIGNED'],
+  ['apps/desktop/scripts/package-target.ts', 'process.env.LINGDONG_CLIENT_VERSION?.trim() || resolveDesktopBuildVersion'],
+  ['apps/desktop/scripts/electron-builder-config.mjs', 'packagesMacOS && !unsigned'],
+  ['apps/desktop/scripts/electron-builder-config.mjs', 'notarize: !unsigned'],
+  ['apps/desktop/scripts/smoke-packaged-runtime.ts', 'unsigned artifacts require Windows or macOS arm64'],
+  ['apps/desktop/src/LingdongUpdater.ts', "spawn('/usr/bin/open'"],
+  ['apps/desktop/src/LingdongUpdater.ts', 'mac-arm64.dmg'],
   // rc.2.9：AGENTS.md 要求模型用 present 交付入口文件。
   ['apps/desktop/src/platform-gate.ts', '用 `present` 工具把入口文件'],
   // rc.2.5：课堂上下文同步 IPC，冷启动打开文件不再退回相对路径。

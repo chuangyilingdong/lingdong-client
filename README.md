@@ -49,6 +49,23 @@ pnpm --filter @deepseek-ai/dsh-desktop run package:win:x64:unsigned
 **打不通 GitHub release 资产时**（本机实测会卡在 `prepare:runtime` 的 `fetch failed`）：
 用 `scripts/electron-mirror.mjs` 离线出包 —— 见 `docs/交接-客户端-20260919.md` §三。
 
+## 出包（macOS Apple 芯片）
+
+正式 Mac 包**必须在 Apple Silicon macOS 主机**上构建，不能在 Windows 交叉打包：
+
+```bash
+# 正式包：先在 apps/desktop/.env.macos 配好 Developer ID + notarization 凭据
+bash scripts/build-mac-arm64.sh
+# 产物：apps/desktop/.desktop-build/targets/mac-arm64/artifacts/lingdong-client-*-mac-arm64.dmg
+
+# 只做本机验收、没有 Apple 证书时：
+bash scripts/build-mac-arm64.sh --unsigned
+# 产物在 .../unsigned-artifacts/；Gatekeeper 不允许这种包作为学生分发版
+```
+
+macOS 启动更新会下载并校验同源 DMG，然后打开安装窗口；学生需把应用拖到“应用程序”替换旧版。
+平台发布时使用 `deploy/desktop/publish-client.sh`，**Windows 安装包和 macOS DMG 要同版本一次传入**，
+脚本会在两个文件都上传校验成功后原子更新 `manifest.json`。
 ## 本地跑起来验证（不用出包）
 
 ```bash
