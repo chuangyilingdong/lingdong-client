@@ -102,6 +102,10 @@ const expectations = [
   ['apps/desktop/src/platform-gate.ts', 'nearbyAssets'],
   // rc.2.7：登录门里再补一次预装插件清单（防“插件在、清单没更新”）。
   ['apps/desktop/src/platform-gate.ts', 'ensurePreinstalledBundles'],
+  // rc.2.8：交作品时附一张封面（平台 cover 字段）。
+  ['apps/desktop/src/platform-gate.ts', 'captureWorkCover'],
+  ['apps/desktop/src/platform-gate.ts', 'renderCoverPng'],
+  ['apps/desktop/src/platform-gate.ts', 'COVER_MAX_BYTES'],
   ['apps/desktop/src/platform-gate.ts', "LINGDONG_GATE_BUNDLES = ['deepseek-idesign', 'deepseek-ippt']"],
   ['packages/client/ui-workspace/src/client/LingdongWorkPanel.tsx', 'nearby'],
   // rc.2.5：课堂上下文同步 IPC，冷启动打开文件不再退回相对路径。

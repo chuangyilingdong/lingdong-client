@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { readFile, readdir, realpath, stat } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { app, BrowserWindow, ipcMain, safeStorage, shell } from 'electron'
 import { WINDOWS_TITLEBAR_HEIGHT } from './windows-layout.ts'
@@ -773,6 +775,137 @@ async function nearbyAssets(directory: string, assets: Map<string, WorkAsset>, r
   return found
 }
 
+/** rc.2.8：交给平台的封面（`cover.content` 是 base64 PNG）。 */
+const COVER_WIDTH = 1280
+const COVER_HEIGHT = 720
+/** 平台约定：封面最大 1.5MB；超了就不传（作品照常提交）。 */
+const COVER_MAX_BYTES = Math.floor(1.5 * 1024 * 1024)
+/** 采集超时：页面里有死循环 / 挂住的外部资源时，绝不能把“交作品”卡死。 */
+const COVER_TIMEOUT_MS = 12_000
+
+/** 交作品时附带的封面，拿不到就返回 undefined（绝不拦提交）。 */
+async function captureWorkCover(item: WorkBatchItem): Promise<{ readonly content: string } | undefined> {
+  try {
+    const root = await realpath(resolve(item.cwd))
+    const entry = await resolveInside(root, item.path)
+    const extension = extname(entry).toLocaleLowerCase('en-US')
+    // 只有网页作品有"封面"可言；Word / Excel / PPT 交给平台自己出图。
+    if (extension !== '.html' && extension !== '.htm') return undefined
+    const png = await renderCoverPng(root, entry)
+    if (png === undefined) return undefined
+    if (png.byteLength > COVER_MAX_BYTES) {
+      console.warn(`[lingdong] 作品封面 ${png.byteLength} 字节，超过 1.5MB，跳过（作品照常提交）`)
+      return undefined
+    }
+    return { content: png.toString('base64') }
+  } catch (error) {
+    console.warn('[lingdong] 生成作品封面失败（作品照常提交）', error)
+    return undefined
+  }
+}
+
+/**
+ * 把作品页面渲染成 1280×720 PNG。
+ *
+ * 走**临时回环 HTTP 服务**而不是 file://：学生的页面常带 ES Module / fetch，
+ * file:// 下这些会被浏览器直接拒掉，截出来就是白屏或半成品。
+ * 采集用隐藏窗口（offscreen），等 load 完再等 450ms 让首屏动画/字体稳定。
+ */
+async function renderCoverPng(root: string, entry: string): Promise<Buffer | undefined> {
+  const server = createServer((request, response) => {
+    void (async () => {
+      try {
+        const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+        const relativePath = decodeURIComponent(url.pathname).replace(/^\/+/, '')
+        const candidate = resolve(root, relativePath === '' ? basename(entry) : relativePath)
+        if (candidate !== root && !isInside(root, candidate)) {
+          response.writeHead(403)
+          response.end()
+          return
+        }
+        const data = await readFile(candidate)
+        response.writeHead(200, { 'content-type': coverMimeType(candidate), 'cache-control': 'no-store' })
+        response.end(data)
+      } catch {
+        response.writeHead(404)
+        response.end()
+      }
+    })()
+  })
+  await new Promise<void>(resolveListen => { server.listen(0, '127.0.0.1', () => resolveListen()) })
+  const port = (server.address() as AddressInfo).port
+  const window = new BrowserWindow({
+    width: COVER_WIDTH,
+    height: COVER_HEIGHT,
+    show: false,
+    frame: false,
+    backgroundColor: '#ffffff',
+    webPreferences: {
+      offscreen: true,
+      sandbox: true,
+      contextIsolation: true,
+      nodeIntegration: false,
+      backgroundThrottling: false,
+    },
+  })
+  // 采集本身自己吾错（报错只打日志），这样超时丢下它也不会产生未处理的 promise。
+  const capture = (async (): Promise<Buffer | undefined> => {
+    try {
+      await window.loadURL(`http://127.0.0.1:${port}/${encodeURIComponent(basename(entry))}`)
+      await delayMilliseconds(450)
+      let image = await window.webContents.capturePage()
+      if (image.isEmpty()) {
+        // 离屏首帧偶尔是空的：再给一次机会。
+        await delayMilliseconds(350)
+        image = await window.webContents.capturePage()
+      }
+      if (image.isEmpty()) return undefined
+      const size = image.getSize()
+      if (size.width !== COVER_WIDTH || size.height !== COVER_HEIGHT) {
+        image = image.resize({ width: COVER_WIDTH, height: COVER_HEIGHT })
+      }
+      let png = image.toPNG()
+      if (png.byteLength > COVER_MAX_BYTES) {
+        png = image.resize({ width: 1024, height: 576 }).toPNG()
+      }
+      return png.byteLength > COVER_MAX_BYTES ? undefined : png
+    } catch (error) {
+      console.warn('[lingdong] 封面渲染失败（作品照常提交）', error)
+      return undefined
+    }
+  })()
+  try {
+    const raced = await Promise.race([
+      capture,
+      delayMilliseconds(COVER_TIMEOUT_MS).then(() => undefined),
+    ])
+    if (raced === undefined) console.warn('[lingdong] 封面采集超时，这次不带封面（作品照常提交）')
+    return raced
+  } finally {
+    window.destroy()
+    await new Promise<void>(resolveClose => { server.close(() => resolveClose()) })
+  }
+}
+
+function delayMilliseconds(milliseconds: number): Promise<void> {
+  return new Promise(resolveDelay => setTimeout(resolveDelay, milliseconds))
+}
+
+/** 临时预览服务的最小 MIME 表（够学生作品用）。 */
+function coverMimeType(path: string): string {
+  const extension = extname(path).toLocaleLowerCase('en-US')
+  return ({
+    '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+    '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8',
+    '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+    '.gif': 'image/gif', '.webp': 'image/webp', '.ico': 'image/x-icon', '.bmp': 'image/bmp',
+    '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.otf': 'font/otf',
+    '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.mp4': 'video/mp4', '.webm': 'video/webm',
+    '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8',
+  } as Record<string, string>)[extension] ?? 'application/octet-stream'
+}
+
 function titleForWork(item: WorkBatchItem): string {
   const title = item.sessionTitle.trim()
   return (title === '' ? basename(item.path) : `${title} · ${basename(item.path)}`).slice(0, 60)
@@ -780,14 +913,22 @@ function titleForWork(item: WorkBatchItem): string {
 
 async function submitWork(token: string, item: WorkBatchItem): Promise<WorkBatchSuccess> {
   const prepared = await prepareWork(item)
-  const body = {
+  const base = {
     name: prepared.name,
     title: titleForWork(item),
     copyrightConfirmed: true as const,
     files: prepared.files,
   }
+  // 平台 2026-09-27 起的可选字段：`cover.content` = base64 PNG。
+  // 封面是“有就更好”：拿不到、超 1.5MB、或者加上它会超过请求上限时，都丢掉封面而不拦提交。
+  const cover = await captureWorkCover(item)
+  let body: Record<string, unknown> = cover === undefined ? { ...base } : { ...base, cover }
   if (Buffer.byteLength(JSON.stringify(body), 'utf8') > MAX_WORK_REQUEST_BYTES) {
-    throw new PlatformRequestError('这个作品编码后太大了，请减少素材后再交。')
+    if (cover === undefined || Buffer.byteLength(JSON.stringify(base), 'utf8') > MAX_WORK_REQUEST_BYTES) {
+      throw new PlatformRequestError('这个作品编码后太大了，请减少素材后再交。')
+    }
+    console.warn('[lingdong] 加上封面会超过请求上限，这次不带封面（作品照常提交）')
+    body = { ...base }
   }
   const selectedSessionId = readClassroomContext().sessionId || ''
   const data = await call(`/api/student/runtime/submit-upload${selectedSessionId ? `?sessionId=${encodeURIComponent(selectedSessionId)}` : ''}`, { method: 'POST', token, body, timeoutMs: 60_000 })
