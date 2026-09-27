@@ -73,7 +73,7 @@ for artifact in "${ARTIFACTS[@]}"; do
   [ -n "$target" ] || { echo "!! 安装包文件名不符合契约：$name"; exit 2; }
   case "$version" in
     [0-9]*.[0-9]*.[0-9]*) ;;
-    *) echo "!! 从文件名解析出的版本号不合法：$version（文件名 $name）"; exit 2 ;;
+    *) echo "!! 从文件名解析出的版本号不合法：${version}（文件名 ${name}）"; exit 2 ;;
   esac
   NAMES+=("$name"); TARGETS+=("$target"); VERSIONS+=("$version")
   SIZES+=("$(file_size "$artifact")"); SHAS+=("$(file_sha256 "$artifact")")
@@ -103,7 +103,7 @@ for index in "${!ARTIFACTS[@]}"; do
   name="${NAMES[$index]}"
   remote_name=$(ssh "${SSH_OPTS[@]}" -o ConnectTimeout=10 "$HOST" "jq -r --arg target '$target' '.files[\$target].name // \"\"' '$REMOTE_DIR/manifest.json'")
   if [ "$remote_name" = "$name" ] && [ "${ALLOW_SAME_VERSION_REPUBLISH:-}" != "1" ]; then
-    echo "!! manifest 里 $target 已经是 $name；请升版本号，或显式设置 ALLOW_SAME_VERSION_REPUBLISH=1"
+    echo "!! manifest 里 ${target} 已经是 ${name}；请升版本号，或显式设置 ALLOW_SAME_VERSION_REPUBLISH=1"
     exit 1
   fi
 done
@@ -116,14 +116,14 @@ if [ "${#ARTIFACTS[@]}" -eq 1 ]; then
   if [ -n "$other_name" ]; then
     other_version="$(artifact_version "$other_name" || true)"
     if [ "$other_version" != "$version" ]; then
-      echo "!! 平台清单两端版本不一致：$target=$version，$other=$other_version"
+      echo "!! 平台清单两端版本不一致：${target}=${version}，${other}=${other_version}"
       echo "   平台顶层的 manifest.version 只有一个；请把 Windows 与 macOS 两个包一次性传给本脚本。"
       exit 1
     fi
   fi
 fi
 
-echo "=== ① 上传到 $REMOTE_DIR（发布目录之外，换代不冲） ==="
+echo "=== ① 上传到 ${REMOTE_DIR}（发布目录之外，换代不冲） ==="
 for index in "${!ARTIFACTS[@]}"; do
   scp "${SSH_OPTS[@]}" "${ARTIFACTS[$index]}" "$HOST:$REMOTE_DIR/${NAMES[$index]}"
 done
@@ -133,7 +133,7 @@ for index in "${!ARTIFACTS[@]}"; do
   name="${NAMES[$index]}"
   remote_size=$(ssh "${SSH_OPTS[@]}" "$HOST" "stat -c %s '$REMOTE_DIR/$name'")
   remote_sha=$(ssh "${SSH_OPTS[@]}" "$HOST" "sha256sum '$REMOTE_DIR/$name' | cut -d' ' -f1")
-  echo "  $name：$remote_size 字节 / $remote_sha"
+  echo "  ${name}：${remote_size} 字节 / ${remote_sha}"
   [ "$remote_size" = "${SIZES[$index]}" ] || { echo "!! $name 远端字节数与本地不一致，停止"; exit 1; }
   [ "$remote_sha" = "${SHAS[$index]}" ] || { echo "!! $name 远端 SHA256 与本地不一致，停止"; exit 1; }
 done

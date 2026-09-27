@@ -36,7 +36,7 @@ trap cleanup EXIT
 [ -d "$CHECKOUT/apps/desktop" ] || { echo "!! 没找到上游检出：$CHECKOUT"; exit 2; }
 
 ACTUAL_COMMIT="$(git -C "$CHECKOUT" rev-parse HEAD)"
-[ "$ACTUAL_COMMIT" = "$PINNED_COMMIT" ] || { echo "!! 上游 commit 不是钉住的 $PINNED_COMMIT，实际为 $ACTUAL_COMMIT"; exit 2; }
+[ "$ACTUAL_COMMIT" = "$PINNED_COMMIT" ] || { echo "!! 上游 commit 不是钉住的 ${PINNED_COMMIT}，实际为 ${ACTUAL_COMMIT}"; exit 2; }
 
 NODE_MAJOR="$(node -p "Number(process.versions.node.split('.')[0])")"
 [ "$NODE_MAJOR" -ge 22 ] || { echo "!! 需要 Node.js >= 22，当前：$(node -v)"; exit 2; }
@@ -47,7 +47,7 @@ export LINGDONG_DISABLE_UPSTREAM_UPDATE=1
 export LINGDONG_API_BASE="${LINGDONG_API_BASE:-https://aicyld.com}"
 export DSH_DESKTOP_APP_ID="${DSH_DESKTOP_APP_ID:-cn.aimagc.lingdong}"
 
-echo "客户端版本：$LINGDONG_CLIENT_VERSION（DSH 基础版本 $LINGDONG_DSH_BASE_VERSION，目标 mac-arm64）"
+echo "客户端版本：${LINGDONG_CLIENT_VERSION}（DSH 基础版本 ${LINGDONG_DSH_BASE_VERSION}，目标 mac-arm64）"
 
 echo "=== ① 先品牌、再登录门 ==="
 node "$ROOT/deploy/desktop/rebrand-client.mjs" --checkout "$CHECKOUT"
