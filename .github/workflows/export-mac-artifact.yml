@@ -21,17 +21,44 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Download previous macOS artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ${{ env.SOURCE_ARTIFACT }}
-          run-id: ${{ env.SOURCE_RUN_ID }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          path: downloaded
-
-      - name: Split DMG into Git-safe chunks
+      - name: Download and export DMG
+        shell: bash
         run: |
           set -euo pipefail
+          log=export.log
+          exec > >(tee "$log") 2>&1
+          finish() {
+            status=$?
+            echo "EXPORT_EXIT=$status" >> "$log"
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            if [ "$status" -ne 0 ]; then
+              git checkout -B ci/export-status
+              mkdir -p .ci/export-status
+              cp "$log" .ci/export-status/latest.log
+              git add -f .ci/export-status/latest.log
+              git commit -m "ci: export failed ${SOURCE_RUN_ID}" || true
+              git push --force origin HEAD:ci/export-status || true
+            fi
+          }
+          trap finish EXIT
+
+          artifacts_url="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/runs/${SOURCE_RUN_ID}/artifacts"
+          echo "artifacts_url=$artifacts_url"
+          curl -fsSL --retry 3 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H 'Accept: application/vnd.github+json' "$artifacts_url" > artifacts.json
+          cat artifacts.json
+          artifact_id=$(jq -r --arg name "$SOURCE_ARTIFACT" '.artifacts[] | select(.name == $name) | .id' artifacts.json | head -n 1)
+          test -n "$artifact_id"
+          echo "artifact_id=$artifact_id"
+
+          curl -fsSL --retry 3 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H 'Accept: application/vnd.github+json' \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${artifact_id}/zip" -o artifact.zip
+          ls -lh artifact.zip
+          rm -rf downloaded
+          mkdir -p downloaded
+          unzip -q artifact.zip -d downloaded
+          find downloaded -maxdepth 2 -type f -print
+
           dmg=$(find downloaded -type f -name '*-mac-arm64-unsigned.dmg' -print -quit)
           test -n "$dmg"
           rm -rf chunks
@@ -40,11 +67,6 @@ jobs:
           split -b 80m "chunks/lingdong-client-${TARGET_VERSION}-mac-arm64.dmg" "chunks/dmg-part-"
           ls -lh chunks
 
-      - name: Push chunks to export branch
-        run: |
-          set -euo pipefail
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git checkout -B ci/mac-artifact
           mkdir -p .ci/mac-artifact
           cp chunks/* .ci/mac-artifact/
