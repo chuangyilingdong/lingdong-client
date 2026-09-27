@@ -27,7 +27,10 @@ interface WorkCandidate {
   readonly path: string
   readonly displayPath: string
   readonly updatedAt: number
-  readonly source: 'session' | 'workspace'
+  /** presented = 模型用 present 工具明确交付的；session = 模型写过的文件；workspace = 工作区扫出来的。 */
+  readonly source: 'presented' | 'session' | 'workspace'
+  /** classroom = 属于当前课堂工作区；history = 其它课堂 / 目录留下的作品。 */
+  readonly scope: 'classroom' | 'history'
   readonly submittable: boolean
 }
 
@@ -173,6 +176,16 @@ function isSubmittableWorkPath(raw: string): boolean {
   return SUBMITTABLE_WORK_EXTENSIONS.has(extensionOf(raw))
 }
 
+/**
+ * 明显是中间产物的路径（备份 / 草稿 / 测试页 / 副本 / 临时目录），不进候选列表。
+ * 只匹配“独立词”：contest.html 这种不会误伤（前面必须是起点或分隔符）。
+ */
+const NOISE_WORK_PATH = /(?:^|[\\/])(?:node_modules|\.git|\.tmp|tmp|temp|backup|backups|bak|cache|__pycache__)(?:[\\/]|$)|(?:^|[\\/._\- ])(?:backup|bak|old|orig|copy|副本|草稿|draft|test|spec|tmp|wip)(?:[\\/._\- ]|$)/iu
+
+function isNoiseWorkPath(raw: string): boolean {
+  return NOISE_WORK_PATH.test(raw)
+}
+
 function displayPathFor(cwd: string, raw: string): string {
   const normalizedCwd = cwd.replace(/\\/g, '/').replace(/\/+$/u, '')
   const normalizedRaw = raw.replace(/\\/g, '/')
@@ -187,12 +200,18 @@ function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary:
   const found = new Map<string, WorkCandidate>()
   const cwd = summary.cwd?.trim() ?? ''
   if (cwd === '') return []
-  const add = (rawPath: string): void => {
+  const add = (rawPath: string, presented = false): void => {
     if (!isSubmittableWorkPath(rawPath)) return
+    if (isNoiseWorkPath(rawPath)) return
     const normalized = normalizedPath(rawPath)
     if (normalized === '') return
     const key = `${summary.id}\u0000${normalized}`
-    if (found.has(key)) return
+    const existing = found.get(key)
+    if (existing !== undefined) {
+      // 同一份作品既被写过、又被 present 过：升级成 presented（默认勾选只看这一类）。
+      if (presented && existing.source !== 'presented') found.set(key, { ...existing, source: 'presented' })
+      return
+    }
     found.set(key, {
       key,
       sessionId: summary.id,
@@ -201,7 +220,8 @@ function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary:
       path: rawPath,
       displayPath: displayPathFor(cwd, rawPath),
       updatedAt: summary.updatedAt,
-      source: 'session',
+      source: presented ? 'presented' : 'session',
+      scope: 'history',
       submittable: true,
     })
   }
@@ -234,7 +254,7 @@ function extractSessionWorks(entries: readonly SessionEventLikeEntry[], summary:
       const files = Array.isArray(data.files) ? data.files : []
       for (const file of files) {
         const path = pathValue(asRecord(file)?.path)
-        if (path !== null) add(path)
+        if (path !== null) add(path, true)
       }
     }
   }
@@ -295,6 +315,7 @@ async function scanWorkspaceCandidates(
     const title = asString(record?.title) || pathBasename(rawPath)
     const updatedAt = typeof record?.updatedAt === 'number' ? record.updatedAt : 0
     if (rawPath === '' || !isSubmittableWorkPath(rawPath)) return []
+    if (isNoiseWorkPath(rawPath)) return []
     const normalized = normalizedPath(rawPath)
     return [{
       key: `workspace\u0000${normalized}`,
@@ -305,6 +326,7 @@ async function scanWorkspaceCandidates(
       displayPath,
       updatedAt,
       source: 'workspace',
+      scope: 'classroom',
       submittable: true,
     }]
   })
@@ -331,8 +353,23 @@ function normalizeWorks(value: unknown): WorksView {
   return { items: normalized, total: typeof summary?.total === 'number' ? summary.total : normalized.length }
 }
 
+/** 路径是否落在当前课堂工作区里（同目录或子目录）。 */
+function insideClassroom(cwd: string, root: string): boolean {
+  if (root === '') return false
+  const target = normalizedPath(cwd).replace(/\/+$/u, '').toLocaleLowerCase('en-US')
+  const base = normalizedPath(root).replace(/\/+$/u, '').toLocaleLowerCase('en-US')
+  if (target === '' || base === '') return false
+  return target === base || target.startsWith(`${base}/`)
+}
+
 function normalizedEntryName(raw: string): string {
   return pathBasename(normalizedPath(raw)).toLocaleLowerCase('en-US')
+}
+
+/** 主进程提交时给平台的标题（见 platform-gate 的 titleForWork），两边必须一致才能对得上。 */
+function workTitleForCandidate(candidate: WorkCandidate): string {
+  const title = candidate.sessionTitle.trim()
+  return (title === '' ? pathBasename(candidate.path) : `${title} · ${pathBasename(candidate.path)}`).slice(0, 60)
 }
 
 function submittedKeysFor(
@@ -340,14 +377,17 @@ function submittedKeysFor(
   works: readonly WorkItemView[],
   lessonTitle: string,
 ): ReadonlySet<string> {
-  const submittedNames = new Set(
-    works
-      .filter(work => work.source.toUpperCase() === 'VIBECODING')
-      .filter(work => work.status.toUpperCase() !== 'REJECTED')
-      .filter(work => lessonTitle === '' || work.lessonTitle === '' || work.lessonTitle === lessonTitle)
-      .map(work => normalizedEntryName(work.entryFile))
-      .filter(Boolean),
-  )
+  const relevant = works
+    .filter(work => work.source.toUpperCase() === 'VIBECODING')
+    .filter(work => work.status.toUpperCase() !== 'REJECTED')
+    .filter(work => lessonTitle === '' || work.lessonTitle === '' || work.lessonTitle === lessonTitle)
+  // 首选：标题（会话名 + 主产物名）对得上——同一节课里两份 index.html 不再互相当成“已提交”。
+  const submittedTitles = new Set(relevant.map(work => work.title.trim()).filter(title => title !== ''))
+  // 兼容旧记录（标题为空）：只有“这个文件名在本节课唯一”时才敢认。
+  const legacyNames = new Set(relevant
+    .filter(work => work.title.trim() === '')
+    .map(work => normalizedEntryName(work.entryFile))
+    .filter(Boolean))
   const byName = new Map<string, WorkCandidate[]>()
   for (const item of candidates) {
     const name = normalizedEntryName(item.path)
@@ -356,12 +396,35 @@ function submittedKeysFor(
     else group.push(item)
   }
   const result = new Set<string>()
-  for (const name of submittedNames) {
+  for (const item of candidates) {
+    if (submittedTitles.has(workTitleForCandidate(item))) {
+      result.add(item.key)
+      continue
+    }
+    const name = normalizedEntryName(item.path)
+    if (!legacyNames.has(name)) continue
     const matches = byName.get(name) ?? []
-    // A basename alone cannot identify a work when the same lesson contains several index.html-like files.
     if (matches.length === 1 && matches[0] !== undefined) result.add(matches[0].key)
   }
   return result
+}
+
+/** 来源标签：学生只需要知道“这是模型交付的”还是“生成过的文件”。 */
+const SOURCE_TEXT: Readonly<Record<WorkCandidate['source'], string>> = {
+  presented: '模型交付',
+  session: '生成的文件',
+  workspace: '工作区文件',
+}
+
+/** 相对时间：列表里看“刚刚 / 12 分钟前”比时间戳好认。 */
+function relativeTime(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return ''
+  const minutes = Math.floor((Date.now() - value) / 60_000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours} 小时前`
+  return `${Math.floor(hours / 24)} 天前`
 }
 
 const STATUS_TEXT: Readonly<Record<string, string>> = {
@@ -437,6 +500,7 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
   const [items, setItems] = useState<readonly WorkCandidate[]>([])
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set())
   const [submittedKeys, setSubmittedKeys] = useState<ReadonlySet<string>>(new Set())
+  const [showHistory, setShowHistory] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<BatchResponse | null>(null)
   const aborter = useRef<AbortController | null>(null)
@@ -470,9 +534,9 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
         seenPaths.add(identity)
         merged.push(item)
       }
-      const next = merged.sort((left, right) => right.updatedAt - left.updatedAt || left.displayPath.localeCompare(right.displayPath))
       let platformWorks = normalizeWorks(null)
       let classroom: ClassroomView = { id: '', lessonTitle: '' }
+      let classroomWorkspace = ''
       if (bridge?.listWorks !== undefined) {
         const [worksResponse, contextResponse] = await Promise.all([
           bridge.listWorks().catch(() => null),
@@ -483,12 +547,31 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
         const contextRecord = asRecord(contextResponse)
         const classroomRecord = asRecord(contextRecord?.classroom)
         classroom = { id: asString(classroomRecord?.id), lessonTitle: asString(classroomRecord?.lessonTitle) }
+        classroomWorkspace = asString(contextRecord?.workspacePath)
       }
       if (controller.signal.aborted) return
+      // 分类 + 排序：本节课在前，“模型明确交付”的在同类里靠前，其次按最近修改。
+      const next = merged
+        .map(item => ({
+          ...item,
+          scope: (item.source === 'workspace' || insideClassroom(item.cwd, classroomWorkspace)
+            ? 'classroom' : 'history') as WorkCandidate['scope'],
+        }))
+        .sort((left, right) => {
+          if (left.scope !== right.scope) return left.scope === 'classroom' ? -1 : 1
+          const rank = (value: WorkCandidate): number => value.source === 'presented' ? 0 : 1
+          if (rank(left) !== rank(right)) return rank(left) - rank(right)
+          return right.updatedAt - left.updatedAt || left.displayPath.localeCompare(right.displayPath)
+        })
       const submitted = submittedKeysFor(next, platformWorks.items, classroom.lessonTitle)
+      const fresh = next.filter(item => item.submittable && !submitted.has(item.key))
+      const classroomFresh = fresh.filter(item => item.scope === 'classroom')
+      // 默认勾选：只勾本节课里模型明确交付的；没有就只勾最近的一份。历史作品一律不默认勾。
+      const presented = classroomFresh.filter(item => item.source === 'presented')
+      const preselect = presented.length > 0 ? presented : classroomFresh.slice(0, 1)
       setItems(next)
       setSubmittedKeys(submitted)
-      setSelected(new Set(next.filter(item => item.submittable && !submitted.has(item.key)).map(item => item.key)))
+      setSelected(new Set(preselect.map(item => item.key)))
     } catch (scanError) {
       if (controller.signal.aborted) return
       setError(scanError instanceof Error ? scanError.message : String(scanError))
@@ -503,9 +586,29 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
     if (next) void scan()
   }
 
-  const selectable = useMemo(() => items.filter(item => item.submittable && !submittedKeys.has(item.key)), [items, submittedKeys])
+  const classroomItems = useMemo(() => items.filter(item => item.scope === 'classroom'), [items])
+  const historyItems = useMemo(() => items.filter(item => item.scope === 'history'), [items])
+  const visibleItems = useMemo(() => (showHistory ? items : classroomItems), [items, classroomItems, showHistory])
+  const selectable = useMemo(
+    () => visibleItems.filter(item => item.submittable && !submittedKeys.has(item.key)),
+    [visibleItems, submittedKeys],
+  )
   const allSelected = selectable.length > 0 && selectable.every(item => selected.has(item.key))
-  const chosen = useMemo(() => selectedItems(items, selected).filter(item => item.submittable && !submittedKeys.has(item.key)), [items, selected, submittedKeys])
+  const chosen = useMemo(
+    () => selectedItems(visibleItems, selected).filter(item => item.submittable && !submittedKeys.has(item.key)),
+    [visibleItems, selected, submittedKeys],
+  )
+  const toggleHistory = (): void => {
+    setShowHistory(current => {
+      const next = !current
+      if (!next) {
+        // 收起历史时同步取消勾选，免得看不见却被提交了。
+        const hidden = new Set(historyItems.map(item => item.key))
+        setSelected(current2 => new Set([...current2].filter(key => !hidden.has(key))))
+      }
+      return next
+    })
+  }
   const works = useMemo(() => result === null ? null : normalizeWorks(result.works), [result])
   const submitted = useMemo(() => {
     if (!Array.isArray(result?.submitted)) return []
@@ -590,7 +693,8 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
       {open && (
         <div style={styles.panel}>
           <div style={styles.intro}>
-            扫描当前课堂工作区和本机有效会话里的作品文件。HTML、Word、Excel、PPT 可直接提交；其它常见文件会显示出来，但需平台扩展作品类型后才能提交。
+            默认只看<b>本节课</b>的作品：模型用“交付”动作明确给出的文件会排在最前面并默认勾选；
+            其它课堂 / 其它目录里的历史作品收在下面的折叠里，默认不勾选。HTML、Word、Excel、PPT可直接提交。
           </div>
           <div style={styles.toolbar}>
             <label style={styles.selectionLine}>
@@ -600,19 +704,29 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
                 disabled={selectable.length === 0 || busy !== 'idle'}
                 onChange={event => setSelected(event.currentTarget.checked ? new Set(selectable.map(item => item.key)) : new Set())}
               />
-              全选 {selectable.length > 0 ? `（${chosen.length}/${selectable.length}）` : ''}
+              {showHistory ? '全选可见' : '全选本节课'} {selectable.length > 0 ? `（${chosen.length}/${selectable.length}）` : ''}
             </label>
-            <button type="button" style={styles.smallButton} disabled={busy !== 'idle'} onClick={() => { void scan() }}>
-              {busy === 'scanning' ? '扫描中…' : '重新扫描'}
-            </button>
+            <span style={{ display: 'flex', gap: '5px' }}>
+              <button
+                type="button"
+                style={styles.smallButton}
+                disabled={busy !== 'idle' || chosen.length === 0}
+                onClick={() => setSelected(new Set())}
+              >
+                清空
+              </button>
+              <button type="button" style={styles.smallButton} disabled={busy !== 'idle'} onClick={() => { void scan() }}>
+                {busy === 'scanning' ? '扫描中…' : '重新扫描'}
+              </button>
+            </span>
           </div>
 
           {busy === 'scanning' && items.length === 0 && <div style={styles.state}>正在读取当前课堂工作区…</div>}
-          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>没有找到可提交的作品文件。</div>}
-          {items.length > 0 && selectable.length === 0 && <div style={styles.state}>找到的作品都已经提交过，无需重复提交。</div>}
-          {items.length > 0 && (
+          {busy !== 'scanning' && items.length === 0 && <div style={styles.state}>本节课还没有找到可提交的作品。</div>}
+          {items.length > 0 && selectable.length === 0 && <div style={styles.state}>本节课的作品都已经提交过，无需重复提交。</div>}
+          {visibleItems.length > 0 && (
             <div style={styles.list}>
-              {items.map(item => {
+              {visibleItems.map(item => {
                 const isSubmitted = submittedKeys.has(item.key)
                 return (
                 <label key={item.key} style={styles.item}>
@@ -632,12 +746,27 @@ export function LingdongWorkPanel({ sessions, sessionList }: LingdongWorkPanelPr
                   />
                   <span style={styles.itemBody}>
                     <span style={styles.itemTitle}>{item.sessionTitle}</span>
-                    <span style={styles.itemMeta}>{item.displayPath}{isSubmitted ? ' · 已提交，无需重复提交' : ''}</span>
+                    <span style={styles.itemMeta}>
+                      {[
+                        SOURCE_TEXT[item.source],
+                        item.scope === 'history' ? '历史作品' : '',
+                        item.displayPath,
+                        relativeTime(item.updatedAt),
+                        isSubmitted ? '已提交，无需重复提交' : '',
+                      ].filter(part => part !== '').join(' · ')}
+                    </span>
                   </span>
                 </label>
                 )
               })}
             </div>
+          )}
+          {historyItems.length > 0 && (
+            <button type="button" style={styles.smallButton} disabled={busy !== 'idle'} onClick={toggleHistory}>
+              {showHistory
+                ? `收起其它课堂的历史作品（${historyItems.length}）`
+                : `显示其它课堂的历史作品（${historyItems.length}）`}
+            </button>
           )}
 
           <button

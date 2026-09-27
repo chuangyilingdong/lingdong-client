@@ -61,6 +61,7 @@
   const render = () => {
     const state = window.__LINGDONG_STATE__ || {}
     if (state.name) document.getElementById('name').textContent = String(state.name) + '，'
+    document.getElementById('title').textContent = String(state.title || '老师还没有开始上课')
     document.getElementById('hint').textContent = String(state.message || '老师还没有开始上课')
     const upcoming = state.upcoming
     const upcomingLine = document.getElementById('upcoming')

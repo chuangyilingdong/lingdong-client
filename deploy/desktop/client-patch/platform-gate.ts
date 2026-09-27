@@ -135,11 +135,14 @@ const NEARBY_HINT_LIMIT = 6
 /** 平台错误要保留业务 code；界面上仍展示平台原始 message。 */
 class PlatformRequestError extends Error {
   readonly code: string | undefined
+  /** HTTP 状态码（网络/超时为 undefined）：用来区分“登录真失效”和“一次抖动”。 */
+  readonly status: number | undefined
 
-  constructor(message: string, code?: string) {
+  constructor(message: string, code?: string, status?: number) {
     super(message)
     this.name = 'PlatformRequestError'
     this.code = code
+    this.status = status
   }
 }
 
@@ -172,7 +175,21 @@ function matchTitleBarToGate(): void {
   } catch { /* 非 frameless 窗口没有叠加层，忽略 */ }
 }
 
+/** 平台明确说“这枚登录凭据不作数了”的码（要重新登录）。网络/超时/5xx 不在此列。 */
+const SESSION_INVALID_CODES = new Set([
+  'SESSION_SUPERSEDED', 'TOKEN_INVALID', 'TOKEN_EXPIRED', 'SESSION_EXPIRED', 'UNAUTHORIZED', 'AUTH_FAILED',
+])
+
+/** 只有凭据真的失效才清登录态；一次网络抖动不能把学生踢回登录页。 */
+function isSessionInvalid(error: unknown): boolean {
+  if (!(error instanceof PlatformRequestError)) return false
+  if (error.status === 401 || error.status === 403) return true
+  return error.code !== undefined && SESSION_INVALID_CODES.has(error.code)
+}
+
 const sessionFile = (): string => join(app.getPath('userData'), 'lingdong-session.json')
+/** 加密不可用时的明文兜底（0600）；加密一旦可用就会被删掉。 */
+const plainSessionFile = (): string => join(app.getPath('userData'), 'lingdong-session.plain.json')
 
 function readJson<T>(file: string): T | null {
   try {
@@ -194,31 +211,71 @@ function dshHome(): string {
 
 function readSession(): LingdongSession | null {
   const stored = readJson<StoredSession>(sessionFile())
-  if (stored === null) return null
-  // Migrate the old plaintext session on first read.
-  if (typeof stored.token === 'string' && stored.token) {
-    const legacy: LingdongSession = stored.user === undefined ? { token: stored.token } : { token: stored.token, user: stored.user }
-    writeSession(legacy)
+  if (stored !== null) {
+    // Migrate the old plaintext session on first read.
+    if (typeof stored.token === 'string' && stored.token) {
+      const legacy: LingdongSession = stored.user === undefined ? { token: stored.token } : { token: stored.token, user: stored.user }
+      writeSession(legacy)
+      return legacy
+    }
+    if (stored.encrypted === true && typeof stored.value === 'string' && safeStorage.isEncryptionAvailable()) {
+      try {
+        const decoded = safeStorage.decryptString(Buffer.from(stored.value, 'base64'))
+        const session = JSON.parse(decoded) as LingdongSession
+        if (typeof session?.token === 'string' && session.token) return session
+      } catch { /* 解不开就试明文兜底 */ }
+    }
+  }
+  // 明文兜底（当年加密不可用时写的）：读到就返回，能加密就顺手升级回密文。
+  const plain = readJson<Partial<LingdongSession>>(plainSessionFile())
+  if (plain !== null && typeof plain.token === 'string' && plain.token) {
+    const legacy: LingdongSession = plain.user === undefined ? { token: plain.token } : { token: plain.token, user: plain.user }
+    if (safeStorage.isEncryptionAvailable()) writeSession(legacy)
     return legacy
   }
-  if (stored.encrypted !== true || typeof stored.value !== 'string' || !safeStorage.isEncryptionAvailable()) return null
-  try {
-    const decoded = safeStorage.decryptString(Buffer.from(stored.value, 'base64'))
-    const session = JSON.parse(decoded) as LingdongSession
-    return typeof session?.token === 'string' && session.token ? session : null
-  } catch { return null }
+  return null
+}
+
+/**
+ * 启动时读登录态：“文件在、但一时解不开”（凭据库还没就绪等）要重试，
+ * 不能当成“没登录”直接让学生重新输密码。实测：关掉客户端再开会偶发命中这个竞态。
+ */
+async function readSessionResilient(): Promise<LingdongSession | null> {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const session = readSession()
+    if (session !== null) return session
+    if (!existsSync(sessionFile()) && !existsSync(plainSessionFile())) return null
+    await delayMilliseconds(600)
+  }
+  return readSession()
 }
 
 function writeSession(session: LingdongSession | null): void {
   const file = sessionFile()
+  const plainFile = plainSessionFile()
   try {
-    if (session === null) { rmSync(file, { force: true }); return }
-    if (!safeStorage.isEncryptionAvailable()) throw new Error('系统凭据加密不可用')
-    const encrypted = safeStorage.encryptString(JSON.stringify(session)).toString('base64')
-    writeFileSync(file, JSON.stringify({ version: 1, encrypted: true, value: encrypted }))
+    if (session === null) {
+      rmSync(file, { force: true })
+      rmSync(plainFile, { force: true })
+      return
+    }
+    if (safeStorage.isEncryptionAvailable()) {
+      try {
+        const encrypted = safeStorage.encryptString(JSON.stringify(session)).toString('base64')
+        writeFileSync(file, JSON.stringify({ version: 1, encrypted: true, value: encrypted }), { mode: 0o600 })
+        rmSync(plainFile, { force: true })
+        return
+      } catch (error) {
+        console.error('灵动ai：加密保存登录态失败，改用明文兜底', error)
+      }
+    } else {
+      console.warn('灵动ai：系统凭据加密不可用，登录态改用明文保存（否则每次关客户端都要重新登录）')
+    }
+    // 兜底：加密不可用时写明文（0600），比“每次都要重新登录”实用。
+    writeFileSync(plainFile, JSON.stringify({ version: 1, token: session.token, user: session.user }), { mode: 0o600 })
   } catch (error) {
-    console.error('灵动ai：保存登录态失败', error)
-    try { rmSync(file, { force: true }) } catch { /* best effort */ }
+    // 写不进去也**绝不清除**原有登录态：宁可下次再试，也别把学生踢回登录页。
+    console.error('灵动ai：保存登录态失败（保留原有登录态）', error)
   }
 }
 
@@ -240,6 +297,7 @@ async function call(path: string, { method = 'GET', body, token, timeoutMs = 15_
     throw new PlatformRequestError(
       String(payload?.error?.message || payload?.message || `平台请求失败（HTTP ${response.status}）`),
       code,
+      response.status,
     )
   }
   return payload?.data ?? payload
@@ -454,8 +512,18 @@ function restartAtLogin(): void {
 }
 
 /**
- * 课堂结束/账号被顶时强制回到登录页。只在平台明确说“没有可进课堂”或密钥身份失效时触发，
- * 网络抖动不会把学生踢出去。
+ * 课堂结束（不是凭据失效）时重启回等待页，**不清登录态**。
+ * 学生反馈“关客户端就要重新登录”：原来课程一结束就 clearLoginState，
+ * 下次打开就只能重新输密码——这不是安全需要，只是体验伤害。
+ */
+function restartKeepingLogin(reason: string): void {
+  console.warn(`灵动ai：${reason}，重启回等待页（保留登录态）`)
+  setImmediate(() => { app.relaunch(); app.quit() })
+}
+
+/**
+ * 课堂结束 / 账号被顶 时回到等待页：只有**凭据真失效**才清登录态，
+ * 课程结束只是没课了，不能把学生的登录也抹掉。网络抖动不会把学生踢出去。
  */
 function watchClassroom(sessionId: string): void {
   let stopped = false
@@ -465,13 +533,19 @@ function watchClassroom(sessionId: string): void {
     if (session === null) return
     try {
       const context = await call(contextPath(sessionId), { token: session.token }) as Partial<LingdongContext>
-      if (!context.classroom) { stopped = true; restartAtLogin(); return }
+      if (!context.classroom) { stopped = true; restartKeepingLogin('这节课已经结束'); return }
     } catch (error) {
       const code = error instanceof PlatformRequestError ? error.code : undefined
-      if (code === 'SESSION_SUPERSEDED' || code === 'RUNTIME_KEY_INVALID' || code === 'RUNTIME_KEY_EXPIRED'
-        || code === 'RUNTIME_NO_ACTIVE_CLASSROOM') {
+      if (code === 'SESSION_SUPERSEDED' || code === 'RUNTIME_KEY_INVALID' || code === 'RUNTIME_KEY_EXPIRED') {
+        // 凭据真的作废了（别处登录 / 密钥失效）→ 清掉重登。
         stopped = true
         restartAtLogin()
+        return
+      }
+      if (code === 'RUNTIME_NO_ACTIVE_CLASSROOM') {
+        // 网关说没有可用课堂：只是下课了，保留登录态。
+        stopped = true
+        restartKeepingLogin('平台说当前没有可进的课堂')
         return
       }
     }
@@ -1141,6 +1215,8 @@ function ensureClassroomWorkspace(context: LingdongContext, user?: LingdongUser)
         '- 不依赖 Chrome/Edge 扩展、浏览器自动化桥、外部 CDN 或本机预装的第三方库；学生端必须打开就能运行。',
         '- 如果使用 ES Module、fetch 或本地预览，必须配套说明并优先使用 127.0.0.1/localhost；不要假设 file:// 下模块和网络请求可用。',
         '- 交付入口默认使用 index.html；不要引用工作区以外的绝对路径。',
+        '- 作品完成后用 `present` 工具把入口文件（index.html / .pptx 等）交付给学生：',
+        '  客户端的「交作品」面板会把它排在最前面并默认勾选（不传就只能靠学生自己找）。',
       ].join('\n'), 'utf8')
     }
     return workspacePath
@@ -1279,7 +1355,7 @@ export async function runLingdongGate(
   try {
     for (;;) {
       if (isQuitting()) return { kind: 'quit' }
-      const session = readSession()
+      const session = await readSessionResilient()
       if (session === null) {
         const action = await show('login.html').then(nextAction)
         if (action.action === 'logout') return { kind: 'quit' }
@@ -1291,10 +1367,23 @@ export async function runLingdongGate(
         context = await call(contextPath(selectedSessionId), { token: session.token })
       } catch (error) {
         const message = error instanceof Error ? error.message : '无法连接平台'
-        writeSession(null)
-        selectedSessionId = ''
-        const action = await show('login.html', { message }).then(nextAction)
-        if (action.action === 'logout') return { kind: 'quit' }
+        if (isSessionInvalid(error)) {
+          // 平台明确说凭据不作数了：清掉回登录页。
+          writeSession(null)
+          selectedSessionId = ''
+          const action = await show('login.html', { message }).then(nextAction)
+          if (action.action === 'logout') return { kind: 'quit' }
+          continue
+        }
+        // 网络抖动 / 超时 / 平台 5xx：**保留登录态**，给一个能重试的等待页。
+        notifyDeepLink = () => waiting?.({ action: 'refresh' })
+        const action = await show('waiting.html', {
+          title: '连不上平台',
+          message: `${message}\n连不上平台时不用重新登录：点「刷新」再试一次。`,
+          name: session.user?.displayName || '',
+          upcoming: null,
+        }).then(nextAction)
+        if (action.action === 'logout') { writeSession(null); continue }
         continue
       }
       if (selectedSessionId === '' && Array.isArray(context.classrooms) && context.classrooms.length > 1) {
