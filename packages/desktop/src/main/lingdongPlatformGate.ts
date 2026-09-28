@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 平台登录、课堂上下文、作品提交与封面采集共享 Main 单一所有者；迁移阶段保持边界收口。 */
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
