@@ -18,6 +18,8 @@ type LingdongContext = {
   readonly gateway?: { readonly baseUrl?: string; readonly key?: string };
   readonly models?: readonly { readonly id?: unknown; readonly displayName?: unknown }[];
   readonly defaultModel?: unknown;
+  readonly presets?: readonly { readonly title?: unknown; readonly text?: unknown }[];
+  readonly sends?: { readonly limit?: number | null; readonly used?: number; readonly remaining?: number | null } | null;
   readonly workspacePath?: string;
   readonly message?: string;
 };
@@ -107,7 +109,7 @@ async function buildProviderConfig(context: LingdongContext, token: string): Pro
           config: {
             group: "standard-personal",
             builtinModelIds: modelIds,
-            access: { type: "api-key", apiKey: token },
+            access: { type: "api-key", apiKey: String(gateway.key || token) },
             api: { type: "openai-chat-completions", baseUrl },
             visibility: "visible",
           },
@@ -157,7 +159,7 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
       workspaceIdentity: `${session.user?.id || session.user?.login || login}:${context.classroom.id}`,
     };
     process.env.LINGDONG_API_BASE = API_BASE;
-    process.env.PLATFORM_GATEWAY_KEY = token;
+    process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || token);
     process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
     process.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = providerPath;
     process.env.ZCODE_LINGDONG_WORKSPACE_PATH = workspacePath;
