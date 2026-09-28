@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
 
 type LingdongUser = { readonly id?: string; readonly displayName?: string; readonly login?: string };
@@ -237,6 +239,8 @@ const WORK_ALLOWED_EXTENSIONS = new Set([
 const MAX_WORK_FILES = 60;
 const MAX_WORK_TOTAL_BYTES = 16 * 1024 * 1024;
 const MAX_WORK_REQUEST_BYTES = 24 * 1024 * 1024;
+const COVER_MAX_BYTES = Math.floor(1.5 * 1024 * 1024);
+const COVER_TIMEOUT_MS = 12_000;
 const SUBMITTABLE_ENTRY_EXTENSIONS = new Set([".htm", ".html", ".docx", ".xlsx", ".pptx"]);
 
 function pathInside(root: string, candidate: string): boolean {
@@ -246,11 +250,12 @@ function pathInside(root: string, candidate: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.includes(`..${sep}`));
 }
 
-async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<WorkFilePayload[]> {
+async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<{ readonly files: WorkFilePayload[]; readonly entryPath: string }> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const root = await realpath(activeState.workspacePath);
   const files: WorkFilePayload[] = [];
   let totalBytes = 0;
+  let entryPath = "";
   const usedNames = new Set<string>();
   for (const item of items.slice(0, MAX_WORK_FILES)) {
     const rawPath = typeof item.path === "string" ? item.path.trim() : "";
@@ -269,19 +274,72 @@ async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<WorkFil
     usedNames.add(name);
     const binary = !WORK_TEXT_EXTENSIONS.has(extension);
     files.push({ name, content: binary ? bytes.toString("base64") : bytes.toString("utf8"), binary });
+    if (!entryPath && SUBMITTABLE_ENTRY_EXTENSIONS.has(extension)) entryPath = absolute;
     totalBytes += info.size;
   }
   if (files.length === 0) throw new Error("没有找到可以提交的作品文件。");
-  return files;
+  return { files, entryPath };
+}
+
+function coverMimeType(path: string): string {
+  const extension = extname(path).toLowerCase();
+  return ({
+    ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+    ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+    ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
+    ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+    ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
+  } as Record<string, string>)[extension] ?? "application/octet-stream";
+}
+
+async function captureHtmlCover(entryPath: string): Promise<{ readonly content: string } | undefined> {
+  if (![".html", ".htm"].includes(extname(entryPath).toLowerCase())) return undefined;
+  const root = await realpath(activeState?.workspacePath || "").catch(() => "");
+  const entry = await realpath(entryPath).catch(() => "");
+  if (!root || !entry || !pathInside(root, entry)) return undefined;
+  const server = createServer(async (request, response) => {
+    try {
+      const pathname = decodeURIComponent(new URL(request.url || "/", "http://127.0.0.1").pathname);
+      const requested = resolve(root, `.${pathname}`);
+      if (!pathInside(root, requested)) { response.writeHead(403); response.end(); return; }
+      const file = await realpath(requested);
+      if (!pathInside(root, file)) { response.writeHead(403); response.end(); return; }
+      const info = await stat(file);
+      if (!info.isFile()) { response.writeHead(404); response.end(); return; }
+      response.writeHead(200, { "content-type": coverMimeType(file), "cache-control": "no-store" });
+      createReadStream(file).pipe(response);
+    } catch { response.writeHead(404); response.end(); }
+  });
+  try {
+    await new Promise<void>((resolveReady, rejectReady) => { server.once("error", rejectReady); server.listen(0, "127.0.0.1", () => resolveReady()); });
+    const address = server.address();
+    if (!address || typeof address === "string") return undefined;
+    const relativeEntry = relative(root, entry).split("\\").join("/").split("/").map(encodeURIComponent).join("/");
+    const window = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    try {
+      await Promise.race([window.loadURL(`http://127.0.0.1:${address.port}/${relativeEntry}`), new Promise((_, reject) => setTimeout(() => reject(new Error("cover timeout")), COVER_TIMEOUT_MS))]);
+      await new Promise((resolveReady) => setTimeout(resolveReady, 450));
+      let image = await window.webContents.capturePage({ x: 0, y: 0, width: 1280, height: 720 });
+      let png = image.toPNG();
+      if (png.byteLength > COVER_MAX_BYTES) png = image.resize({ width: 1024, height: 576 }).toPNG();
+      return png.byteLength <= COVER_MAX_BYTES ? { content: png.toString("base64") } : undefined;
+    } finally { window.destroy(); }
+  } catch {
+    return undefined;
+  } finally {
+    await new Promise<void>((resolveClosed) => server.close(() => resolveClosed()));
+  }
 }
 
 async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const input = record<unknown>(payload) ? payload : {};
   const rawItems = Array.isArray(input.items) ? input.items as SubmitItem[] : [];
-  const files = await prepareSubmitFiles(rawItems);
+  const prepared = await prepareSubmitFiles(rawItems);
+  const files = prepared.files;
   const entry = files.find((file) => SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.name).toLowerCase()));
-  if (!entry) throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
+  if (!entry || !prepared.entryPath) throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
   const body: Record<string, unknown> = {
     name: entry.name,
     title: entry.name,
@@ -290,6 +348,8 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
     copyrightConfirmed: input.copyrightConfirmed === true,
     files,
   };
+  const cover = await captureHtmlCover(prepared.entryPath);
+  if (cover) body.cover = cover;
   if (activeState.context.sessionId) body.sessionId = activeState.context.sessionId;
   if (Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_WORK_REQUEST_BYTES) {
     throw new Error("作品编码后太大，请减少素材后再提交。");
