@@ -29,6 +29,7 @@ import {
   PencilRuler,
   Globe,
   FileUp,
+  BookOpen,
   Loader2,
   LogInIcon,
   LogOut,
@@ -45,6 +46,7 @@ import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { normalizeInterfaceMode } from "@/lib/interfaceMode.js";
 import type { Theme } from "@/useTheme.js";
+import { LingdongPresetsDialog } from "@/LingdongPresetsDialog.js";
 import { LingdongWorksDialog } from "@/LingdongWorksDialog.js";
 import { WorkspaceWebRemoteControlTrigger } from "@/WorkspaceWebRemoteControlTrigger.js";
 import {
@@ -179,6 +181,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   const usageButtonClick = onUsageClick ?? onSettingsButtonClick;
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [worksOpen, setWorksOpen] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const [desktopZoomLevel, setDesktopZoomLevel] = useState(0);
   const runDesktopZoomCommand = useCallback(
     (command: (typeof DesktopCommandIds)["ZoomIn" | "ZoomOut" | "ResetZoom"]) => {
@@ -397,13 +400,19 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
         </div>
       </div>
         {typeof window !== "undefined" && (window as Window & { lingdong?: unknown }).lingdong ? (
+          <div className="flex gap-2">
           <Button type="button" variant="outline" className="w-full justify-start gap-2" onClick={() => setWorksOpen(true)}>
             <FileUp className="size-4" />
             提交课堂作品
           </Button>
+          <Button type="button" variant="outline" size="icon" aria-label="课堂提示词预设" onClick={() => setPresetsOpen(true)}>
+            <BookOpen className="size-4" />
+          </Button>
+          </div>
         ) : null}
       </footer>
       <LingdongWorksDialog open={worksOpen} onOpenChange={setWorksOpen} />
+      <LingdongPresetsDialog open={presetsOpen} onOpenChange={setPresetsOpen} workspacePath={workspacePath} workspaceIdentity={workspaceIdentity} />
     </>
   );
 });
