@@ -130,3 +130,40 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 ## 变更策略
 
 平台可以先按兼容层上线，不必立刻修改数据库结构。客户端底座替换不改变课堂、账号、账单、网关和作品的业务归属。
+
+## ZCode 课堂工作台状态与交作品所有权（2026-09-28）
+
+### 所有者
+
+- 登录会话、课堂上下文、运行时网关凭据：`packages/desktop/src/main/lingdongPlatformGate.ts`（Electron Main 单一所有者）。
+- 当前课堂工作区：平台上下文初始化后由 `startupWorkspace` 启动参数与 ZCode workspace/session store 共同消费；Main 只注入 canonical path/identity，不复制任务状态。
+- 发送次数：`packages/services/src/zcode-agent/lingdongQuota.ts` 在 Agent prompt admission 处消费；UI 不作为最终事实来源，平台 429 仍是最终门禁。
+- 作品候选：renderer 读取当前 workspace 文件服务得到派生候选；提交命令只经过 `window.lingdong.submitWork` 回 Main，由 Main 使用平台 token 调用 `submit-upload`。
+
+### 事件顺序
+
+```text
+登录成功
+  → 拉取 client-context
+  → 生成平台 Provider 临时配置
+  → 计算 classroom workspace identity
+  → 启动 ZCode Host
+  → UI 读取 platform snapshot
+  → 文件服务扫描候选
+  → 用户确认作品
+  → Main submit-upload
+  → 刷新 GET /student/works
+```
+
+### 不变量
+
+1. renderer 不持有平台 token。
+2. Provider 配置只在进程临时目录生成，退出时删除。
+3. 工作区 identity 必须包含账号和课堂，不能只按物理路径去重。
+4. 作品提交的可选封面失败不得阻断正文提交。
+5. 发送次数只能在 Agent 真实发送入口消费一次，重试/工具轮不重复消费。
+6. 平台响应允许 `{data: payload}` 和直接 payload 两种包装。
+
+### 迁移边界
+
+不得重新引入 DSH session、Cordis patch、DSH profile、DSH plugin 或 DSH 文件地址协议。ZCode 的 Host/Service/Provider/UI 是唯一实现边界。

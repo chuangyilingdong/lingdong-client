@@ -59,6 +59,7 @@ declare global {
       getPlatformSnapshot(): Promise<unknown>;
       refreshPlatformContext(): Promise<unknown>;
       listWorks(): Promise<unknown>;
+      scanWorkspaceFiles(): Promise<unknown>;
       submitWork(payload: unknown): Promise<unknown>;
     };
     zcode: {

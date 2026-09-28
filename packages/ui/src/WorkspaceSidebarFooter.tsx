@@ -28,6 +28,7 @@ import {
 import {
   PencilRuler,
   Globe,
+  FileUp,
   Loader2,
   LogInIcon,
   LogOut,
@@ -44,6 +45,7 @@ import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { normalizeInterfaceMode } from "@/lib/interfaceMode.js";
 import type { Theme } from "@/useTheme.js";
+import { LingdongWorksDialog } from "@/LingdongWorksDialog.js";
 import { WorkspaceWebRemoteControlTrigger } from "@/WorkspaceWebRemoteControlTrigger.js";
 import {
   WorkspaceSidebarFooterPlanBadge,
@@ -176,6 +178,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
       : intl.formatMessage({ id: "settings.title" });
   const usageButtonClick = onUsageClick ?? onSettingsButtonClick;
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
+  const [worksOpen, setWorksOpen] = useState(false);
   const [desktopZoomLevel, setDesktopZoomLevel] = useState(0);
   const runDesktopZoomCommand = useCallback(
     (command: (typeof DesktopCommandIds)["ZoomIn" | "ZoomOut" | "ResetZoom"]) => {
@@ -215,7 +218,8 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
 
   return (
     // footer 被 Settings 复用，页面专属边距由调用方传入，避免修改共享默认样式。
-    <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
+    <>
+      <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
       <div className="flex min-w-0 gap-2">
         <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
           <DropdownMenuTrigger asChild>
@@ -392,6 +396,14 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
           </ControlHintTooltip>
         </div>
       </div>
-    </footer>
+        {typeof window !== "undefined" && (window as Window & { lingdong?: unknown }).lingdong ? (
+          <Button type="button" variant="outline" className="w-full justify-start gap-2" onClick={() => setWorksOpen(true)}>
+            <FileUp className="size-4" />
+            提交课堂作品
+          </Button>
+        ) : null}
+      </footer>
+      <LingdongWorksDialog open={worksOpen} onOpenChange={setWorksOpen} />
+    </>
   );
 });

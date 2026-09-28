@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 type LingdongUser = { readonly id?: string; readonly displayName?: string; readonly login?: string };
@@ -173,6 +173,35 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
 }
 
 
+
+async function scanLingdongWorkspaceFiles(): Promise<unknown> {
+  if (!activeState) return { ok: false, message: "平台登录尚未完成。", files: [] };
+  const root = activeState.workspacePath;
+  const allowed = new Set([".html", ".htm", ".docx", ".xlsx", ".pptx", ".md", ".png", ".jpg", ".jpeg"]);
+  const files: Array<{ path: string; relativePath: string; size: number; updatedAt: number }> = [];
+  const queue: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
+  while (queue.length && files.length < 500) {
+    const current = queue.shift();
+    if (!current || current.depth > 5) continue;
+    let entries: Awaited<ReturnType<typeof readdir>> = [];
+    try { entries = await readdir(current.path, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
+      const path = join(current.path, entry.name);
+      if (entry.isDirectory()) { queue.push({ path, depth: current.depth + 1 }); continue; }
+      const extension = entry.name.includes(".") ? entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase() : "";
+      if (!allowed.has(extension)) continue;
+      try {
+        const info = await stat(path);
+        files.push({ path, relativePath: path.slice(root.length).replace(/^[\\/]+/u, "").replaceAll("\\", "/"), size: info.size, updatedAt: info.mtimeMs });
+      } catch { /* ignore disappearing files */ }
+      if (files.length >= 500) break;
+    }
+  }
+  files.sort((a, b) => b.updatedAt - a.updatedAt);
+  return { ok: true, files, workspacePath: root, workspaceIdentity: activeState.workspaceIdentity };
+}
+
 async function callPlatform(path: string, init: RequestInit = {}): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   return apiRequest(path, init, activeState.session.token);
@@ -196,6 +225,7 @@ function registerPlatformHandlers(): void {
   handlersRegistered = true;
   ipcMain.handle("lingdong:platform-snapshot", () => getLingdongPlatformSnapshot());
   ipcMain.handle("lingdong:platform-works", () => callPlatform("/api/student/works?page=1&limit=20"));
+  ipcMain.handle("lingdong:platform-scan-workspace", () => scanLingdongWorkspaceFiles());
   ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => {
     const body = JSON.stringify(payload ?? {});
     return callPlatform("/api/student/runtime/submit-upload", { method: "POST", body });
