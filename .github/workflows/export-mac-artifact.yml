@@ -6,24 +6,24 @@ on:
       - '.github/workflows/export-mac-artifact.yml'
 
 permissions:
-  actions: read
+  actions: write
   contents: write
 
 jobs:
   export:
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 60
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      TARGET_SHA: e4062f6
-      SOURCE_WORKFLOW: build-mac-arm64.yml
+      STALE_RUN_ID: '36396056770'
+      SOURCE_RUN_ID: '36395849469'
       SOURCE_ARTIFACT: lingdong-client-0.1.7-rc.2.10-mac-arm64
       TARGET_VERSION: 0.1.7-rc.2.10
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Wait for build and export DMG chunks
+      - name: Cancel stale exporter and download DMG
         shell: bash
         run: |
           set -euo pipefail
@@ -39,39 +39,19 @@ jobs:
               mkdir -p .ci/export-status
               cp "$log" .ci/export-status/latest.log
               git add -f .ci/export-status/latest.log
-              git commit -m "ci: export failed for ${TARGET_SHA}" || true
+              git commit -m "ci: export failed for ${SOURCE_RUN_ID}" || true
               git push --force origin HEAD:ci/export-status || true
             fi
           }
           trap finish EXIT
 
           api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
-          run_id=""
-          for attempt in $(seq 1 360); do
-            curl -fsSL --retry 3 \
-              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-              -H 'Accept: application/vnd.github+json' \
-              "${api}/actions/workflows/${SOURCE_WORKFLOW}/runs?head_sha=${TARGET_SHA}&per_page=20" > runs.json
-            run_id=$(jq -r --arg sha "$TARGET_SHA" '.workflow_runs[] | select(.head_sha == $sha) | .id' runs.json | head -n 1)
-            if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then
-              status=$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status' runs.json)
-              conclusion=$(jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | (.conclusion // "")' runs.json)
-              echo "attempt=${attempt} run_id=${run_id} status=${status} conclusion=${conclusion}"
-              if [ "$status" = "completed" ]; then
-                [ "$conclusion" = "success" ] || { echo "source run failed"; exit 1; }
-                break
-              fi
-            else
-              echo "attempt=${attempt} source run not found yet"
-            fi
-            sleep 30
-          done
-          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
-            echo "timed out waiting for source run"
-            exit 1
-          fi
+          curl -fsSL -X POST --retry 3 \
+            -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+            -H 'Accept: application/vnd.github+json' \
+            "${api}/actions/runs/${STALE_RUN_ID}/cancel" || true
 
-          artifacts_url="${api}/actions/runs/${run_id}/artifacts"
+          artifacts_url="${api}/actions/runs/${SOURCE_RUN_ID}/artifacts"
           curl -fsSL --retry 3 \
             -H "Authorization: Bearer ${GITHUB_TOKEN}" \
             -H 'Accept: application/vnd.github+json' \
@@ -101,17 +81,17 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git checkout -B ci/mac-artifact
           mkdir -p .ci/mac-artifact
-          printf 'started source_run=%s\n' "$run_id" > .ci/mac-artifact/status.txt
+          printf 'started source_run=%s\n' "$SOURCE_RUN_ID" > .ci/mac-artifact/status.txt
           git add -f .ci/mac-artifact/status.txt
-          git commit -m "ci: start mac dmg export ${run_id}"
+          git commit -m "ci: start mac dmg export ${SOURCE_RUN_ID}"
           git push --force origin HEAD:ci/mac-artifact
           for part in chunks/dmg-part-*; do
             cp "$part" .ci/mac-artifact/
             git add -f ".ci/mac-artifact/$(basename "$part")"
-            git commit -m "ci: add $(basename "$part") ${run_id}"
+            git commit -m "ci: add $(basename "$part") ${SOURCE_RUN_ID}"
             git push origin HEAD:ci/mac-artifact
           done
-          printf 'complete source_run=%s\n' "$run_id" > .ci/mac-artifact/status.txt
+          printf 'complete source_run=%s\n' "$SOURCE_RUN_ID" > .ci/mac-artifact/status.txt
           git add -f .ci/mac-artifact/status.txt
-          git commit -m "ci: complete mac dmg export ${run_id}"
+          git commit -m "ci: complete mac dmg export ${SOURCE_RUN_ID}"
           git push origin HEAD:ci/mac-artifact
