@@ -133,6 +133,12 @@ const expectations = [
   ['apps/desktop/scripts/smoke-packaged-runtime.ts', 'unsigned artifacts require Windows or macOS arm64'],
   ['apps/desktop/src/LingdongUpdater.ts', "spawn('/usr/bin/open'"],
   ['apps/desktop/src/LingdongUpdater.ts', 'mac-arm64.dmg'],
+  ['packages/bundle/web-app/src/index.ts', 'promptCtx.systemPrompt.context({'],
+  ['apps/desktop/resources/gate/lingdong.patch.yml', 'maxRequestImageBytes: 3145728'],
+  ['apps/desktop/resources/gate/lingdong.patch.yml', 'requestImagePixelBudget: 2073600'],
+  ['apps/desktop/src/platform-gate.ts', 'LINGDONG_AGENTS_BEGIN'],
+  ['apps/desktop/src/platform-gate.ts', '普通网页/小游戏任务直接开始实现'],
+  ['apps/desktop/src/platform-gate.ts', '禁止用 Python'],
   // rc.2.9：AGENTS.md 要求模型用 present 交付入口文件。
   ['apps/desktop/src/platform-gate.ts', '用 `present` 工具把入口文件'],
   // rc.2.5：课堂上下文同步 IPC，冷启动打开文件不再退回相对路径。

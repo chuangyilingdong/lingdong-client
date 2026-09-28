@@ -1143,20 +1143,37 @@ function ensureClassroomWorkspace(context: LingdongContext, user?: LingdongUser)
       lesson, createdAt: new Date().toISOString(),
     }, null, 2))
     // 课堂页面的生成约定：学生端的浏览器预览不应依赖任何 Chrome 扩展 / 浏览器桥 / 外部 CDN。
-    // 只在工作区没有自己的 AGENTS.md 时铺一份，避免覆盖学生或老师已有的项目规则。
+    // 保留学生/老师自己写的 AGENTS.md，只维护一个带标记的固定块；每次登录覆盖该块，块外内容不动。
     const instructions = join(workspacePath, 'AGENTS.md')
-    if (!existsSync(instructions)) {
-      writeFileSync(instructions, [
-        '# 灵动ai 课堂作品约定',
-        '',
-        '- 生成网页时优先做成自包含项目：HTML、CSS、JS、图片、字体等资源都放在工作区内，并用相对路径引用。',
-        '- 不依赖 Chrome/Edge 扩展、浏览器自动化桥、外部 CDN 或本机预装的第三方库；学生端必须打开就能运行。',
-        '- 如果使用 ES Module、fetch 或本地预览，必须配套说明并优先使用 127.0.0.1/localhost；不要假设 file:// 下模块和网络请求可用。',
-        '- 交付入口默认使用 index.html；不要引用工作区以外的绝对路径。',
-        '- 作品完成后用 `present` 工具把入口文件（index.html / .pptx 等）交付给学生：',
-        '  客户端的「交作品」面板会把它排在最前面并默认勾选（不传就只能靠学生自己找）。',
-      ].join('\n'), 'utf8')
-    }
+    const managedBegin = '<!-- LINGDONG_AGENTS_BEGIN -->'
+    const managedEnd = '<!-- LINGDONG_AGENTS_END -->'
+    const managedInstructions = [
+      managedBegin,
+      '# 灵动ai 课堂作品约定',
+      '',
+      '- 生成网页时优先做成自包含项目：HTML、CSS、JS、图片、字体等资源都放在工作区内，并用相对路径引用。',
+      '- 不依赖 Chrome/Edge 扩展、浏览器自动化桥、外部 CDN 或本机预装的第三方库；学生端必须打开就能运行。',
+      '- 如果使用 ES Module、fetch 或本地预览，优先使用 127.0.0.1/localhost；不要假设 file:// 下模块和网络请求可用。',
+      '- 交付入口默认使用 index.html；不要引用工作区以外的绝对路径。',
+      '- 普通网页/小游戏任务直接开始实现，不先输出长计划；先做一个能运行的版本，再按失败点局部修正。',
+      '- 避免重复读取同一文件或重复截图；只读取必要片段，工具输出保留结论，完成后默认最多做一次自动化验证。',
+      '- 普通“网页/网站”默认用 HTML DOM + CSS；只有明确要求游戏、绘图或动画时才以 Canvas 为主，不能把整页做成单一 Canvas。',
+      '- 用户要求照片、插画、背景等真实图片时，优先调用可用的生图工具；工具不可用时明确说明，禁止用 Python、Pillow、SVG 或 Canvas 画一张冒充模型生成。',
+      '- 视频/音频附件是普通文件引用，不等于模型能原生理解；需要抽帧、转写或生成时先说明并寻找可用工具。',
+      '- 作品完成后用 `present` 工具把入口文件（index.html / .pptx 等）交付给学生。',
+      managedEnd,
+      '',
+    ].join('\n')
+    let currentInstructions = ''
+    try { if (existsSync(instructions)) currentInstructions = readFileSync(instructions, 'utf8') } catch { currentInstructions = '' }
+    const beginAt = currentInstructions.indexOf(managedBegin)
+    const endAt = beginAt >= 0 ? currentInstructions.indexOf(managedEnd, beginAt) : -1
+    const nextInstructions = beginAt >= 0 && endAt >= beginAt
+      ? currentInstructions.slice(0, beginAt) + managedInstructions + currentInstructions.slice(endAt + managedEnd.length)
+      : currentInstructions.trim() === ''
+        ? managedInstructions
+        : currentInstructions.replace(/\s+$/u, '') + '\n\n' + managedInstructions
+    writeFileSync(instructions, nextInstructions, 'utf8')
     return workspacePath
   } catch (error) {
     console.error('灵动ai：创建课堂工作区失败（继续使用原工作区）', error)

@@ -26,7 +26,12 @@
         baseURL: !!js process.env.PLATFORM_GATEWAY_BASE_URL
         # 每次请求的图片总预算：历史里的每张图都会被重新编进每一次请求体，不设预算必然撞上限。
         # 8MiB ≈ 30 张我们的截图，而一轮"看自己的产物"通常只读 4-12 张。
-        maxRequestImageBytes: 8388608
+        # 控制图片上下文成本：截图会反复进入历史，旧图超出后由 image-offload 替换。
+        requestImagePixelBudget: 2073600
+        requestImageMaxBytes: 786432
+        maxRequestImageBytes: 3145728
+        compat:
+          supportsUsageInStreaming: true
         models:
           # LINGDONG_MODELS_BEGIN
           - id: deepseek-flash

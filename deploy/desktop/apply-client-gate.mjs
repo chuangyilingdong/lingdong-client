@@ -904,6 +904,12 @@ updateTextFile('apps/desktop/scripts/smoke-packaged-runtime.ts', (before) => bef
   "if (values.unsigned && !windows && target !== 'mac-arm64') throw new Error('desktop smoke: unsigned artifacts require Windows or macOS arm64')",
 ), 'smoke 允许 macOS 未签名产物')
 
+// ④a5c：把动态 Web 端口从稳定 system 前缀移到运行时上下文快照，避免每轮变化导致 prefix cache 失效。
+updateTextFile('packages/bundle/web-app/src/index.ts', (before) => before.replace(
+  '      promptCtx.systemPrompt.section({',
+  '      promptCtx.systemPrompt.context({',
+), '动态 Web URL 移出稳定 system 前缀')
+
 // smoke 直接跑 Host（不经过 Electron 主进程），所以要自己带上 main.ts 里设的短路径引擎变量；
 // 否则它从 asar 深路径加载原生 LibreOffice，会报 Unknown LibreOfficeKit exception 的假失败。
 updateTextFile('apps/desktop/scripts/smoke-prepared-runtime.ts', (before) => {
