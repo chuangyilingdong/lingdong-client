@@ -112,7 +112,7 @@ import {
   type AppShutdownKind,
 } from "./appShutdownPolicy.js";
 import { createPrimaryWindowCoordinator } from "./primaryWindowCoordinator.js";
-import { disposeLingdongPlatformGate, runLingdongPlatformGate } from "./lingdongPlatformGate.js";
+import { disposeLingdongPlatformGate, isLingdongPlatformGatePending, runLingdongPlatformGate } from "./lingdongPlatformGate.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
 import { flushMainE2ECoverage } from "./e2eCoverage.js";
 import { resolveStartupWindowBootstrap, type StartupWindowBootstrap } from "./startupWorkspace.js";
@@ -2348,6 +2348,10 @@ app.on("browser-window-created", (_, win) => {
   });
 });
 app.on("window-all-closed", () => {
+  if (isLingdongPlatformGatePending()) {
+    logger.info("[lingdong-gate] 保持应用进程，等待登录窗口完成课堂登录");
+    return;
+  }
   if (process.platform === "darwin") {
     // macOS: keep app running when all windows are closed
     return;
