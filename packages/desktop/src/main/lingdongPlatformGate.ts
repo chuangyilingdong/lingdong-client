@@ -96,10 +96,11 @@ function resolveWorkspace(context: LingdongContext, user: LingdongUser | undefin
   return join(app.getPath("documents"), "灵动ai创作", `${display}-${lesson}`);
 }
 
-async function buildProviderConfig(context: LingdongContext, token: string): Promise<string> {
+async function buildProviderConfig(context: LingdongContext): Promise<string> {
   const gateway = context.gateway ?? {};
   const baseUrl = String(gateway.baseUrl || "").trim();
-  if (!baseUrl) throw new Error("平台没有下发模型网关地址。");
+  const gatewayKey = String(gateway.key || "").trim();
+  if (!baseUrl || !gatewayKey) throw new Error("平台没有下发完整的模型网关配置。");
   const models = (context.models ?? [])
     .map((item) => ({ id: String(item.id ?? "").trim(), displayName: String(item.displayName ?? "").trim() }))
     .filter((item) => item.id);
@@ -117,7 +118,7 @@ async function buildProviderConfig(context: LingdongContext, token: string): Pro
           config: {
             group: "standard-personal",
             builtinModelIds: modelIds,
-            access: { type: "api-key", apiKey: String(gateway.key || token) },
+            access: { type: "api-key", apiKey: gatewayKey },
             api: { type: "openai-chat-completions", baseUrl },
             visibility: "visible",
           },
@@ -159,7 +160,10 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
       session = { token, user: record<unknown>(rawSession.user) ? rawSession.user as LingdongUser : undefined };
     }
     const contextPath = sessionId ? `/api/student/runtime/client-context?sessionId=${encodeURIComponent(sessionId)}` : "/api/student/runtime/client-context";
-    const context = unwrap<LingdongContext>(await apiRequest(contextPath, {}, session.token));
+    const context = {
+      ...unwrap<LingdongContext>(await apiRequest(contextPath, {}, session.token)),
+      sessionId: sessionId || undefined,
+    };
     if (!sessionId && context.classrooms && context.classrooms.length > 1) {
       pendingLogin = { session, login };
       return { ok: false, message: "请选择要进入的课堂。", classrooms: context.classrooms };
@@ -168,7 +172,7 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
     if (!context.classroom) throw new Error(context.message || "当前没有正在进行的课堂。");
     const workspacePath = resolveWorkspace(context, session.user);
     await mkdir(workspacePath, { recursive: true });
-    const providerPath = await buildProviderConfig(context, token);
+    const providerPath = await buildProviderConfig(context);
     if (providerConfigPath) await rm(providerConfigPath, { force: true }).catch(() => undefined);
     providerConfigPath = providerPath;
     activeState = {
@@ -179,7 +183,7 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
       workspaceIdentity: `${session.user?.id || session.user?.login || login}:${context.classroom.id}`,
     };
     process.env.LINGDONG_API_BASE = API_BASE;
-    process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || token);
+    process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
     process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
     process.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = providerPath;
     process.env.ZCODE_LINGDONG_WORKSPACE_PATH = workspacePath;
