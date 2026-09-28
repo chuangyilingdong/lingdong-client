@@ -112,6 +112,7 @@ function parseLingdongDownloadManifest(raw: string, manifestUrl: URL, releasePla
     files: [{ url: name, sha2: sha256 } as UpdateFileInfo],
     releaseDate: typeof parsed.publishedAt === "string" ? parsed.publishedAt : undefined,
     releaseNotes: typeof parsed.note === "string" ? parsed.note : undefined,
+    path: name,
     lingdongManifestBaseUrl: baseUrl.toString(),
   } as UpdateInfo;
 }
@@ -197,6 +198,8 @@ function resolveManifestFiles(
     }
 
     const url = resolveManifestUrl(fileInfo.url, baseUrl);
+    // 灵动ai manifest 使用 sha256；electron-updater 的 sha2 字段就是 SHA-256 校验槽。
+    // 这里保留原始 URL 解析，避免把绝对下载地址拼到 manifest 目录。
     // PacmanUpdater 仍用 .pacman 后缀识别缓存名，.pkg.tar.zst 会退回
     // info.url；只给缓存提供文件名，避免完整 URL 被拼进 pending/temp-https:/...。
     const info = linuxExtensions?.includes(".pkg.tar.zst")
