@@ -752,7 +752,9 @@ async function syncAutoUpdateCheckChannelFromSettings(
 }
 
 function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
-  const manifestUrl = options.updateFeedSource?.url.trim();
+  const manifestUrl =
+    options.updateFeedSource?.url.trim() ||
+    (process.env.LINGDONG_API_BASE?.trim() ? `${process.env.LINGDONG_API_BASE.trim().replace(/\/+$/u, "")}/downloads/manifest.json` : "https://aicyld.com/downloads/manifest.json");
   autoUpdater.setFeedURL({
     provider: "custom",
     updateProvider: ManifestUpdateProvider,

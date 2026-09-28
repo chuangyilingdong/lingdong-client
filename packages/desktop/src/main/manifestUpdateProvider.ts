@@ -21,7 +21,8 @@ import { parse as parseYaml } from "yaml";
 
 const ELECTRON_MANIFEST_API_PATH = "/api/v1/releases/electron/manifest";
 
-const MANIFEST_ACCEPT_HEADER = "application/x-yaml,text/yaml,text/plain,*/*";
+const MANIFEST_ACCEPT_HEADER = "application/json,application/x-yaml,text/yaml,text/plain,*/*";
+const LINGDONG_DOWNLOAD_MANIFEST_URL = "https://aicyld.com/downloads/manifest.json";
 
 interface ManifestUpdateProviderOptions extends CustomPublishOptions {
   endpointOrigin?: string;
@@ -74,6 +75,47 @@ export function getElectronReleasePlatform(
   return `${mapElectronReleasePlatform(platform)}-${mapElectronReleaseArch(arch)}`;
 }
 
+type LingdongDownloadManifestFile = Readonly<{
+  version?: unknown;
+  name?: unknown;
+  size?: unknown;
+  sha256?: unknown;
+}>;
+
+type LingdongDownloadManifest = Readonly<{
+  version?: unknown;
+  publishedAt?: unknown;
+  note?: unknown;
+  files?: Record<string, LingdongDownloadManifestFile>;
+}>;
+
+function isLingdongDownloadManifestUrl(value: string | undefined): boolean {
+  return Boolean(value?.trim() && new URL(value).pathname.endsWith("/downloads/manifest.json"));
+}
+
+function parseLingdongDownloadManifest(raw: string, manifestUrl: URL, releasePlatform: string): UpdateInfo | null {
+  let parsed: LingdongDownloadManifest;
+  try {
+    parsed = JSON.parse(raw) as LingdongDownloadManifest;
+  } catch {
+    return null;
+  }
+  const version = typeof parsed.version === "string" ? parsed.version : "";
+  const target = releasePlatform === "windows-x86_64" ? "win-x64" : releasePlatform === "darwin-aarch64" ? "mac-arm64" : null;
+  const file = target ? parsed.files?.[target] : undefined;
+  const name = typeof file?.name === "string" ? file.name : "";
+  const sha256 = typeof file?.sha256 === "string" ? file.sha256 : "";
+  if (!version || !name || !sha256) return null;
+  const baseUrl = new URL("./", manifestUrl);
+  return {
+    version,
+    files: [{ url: name, sha2: sha256 } as UpdateFileInfo],
+    releaseDate: typeof parsed.publishedAt === "string" ? parsed.publishedAt : undefined,
+    releaseNotes: typeof parsed.note === "string" ? parsed.note : undefined,
+    lingdongManifestBaseUrl: baseUrl.toString(),
+  } as UpdateInfo;
+}
+
 function buildElectronManifestUrl(options: {
   endpointOrigin: string;
   manifestUrl?: string;
@@ -84,11 +126,13 @@ function buildElectronManifestUrl(options: {
   const url = options.manifestUrl?.trim()
     ? new URL(options.manifestUrl.trim())
     : new URL(ELECTRON_MANIFEST_API_PATH, normalizeZCodeEndpointOrigin(options.endpointOrigin));
-  url.searchParams.set("platform", options.platform);
-  if (options.deviceMid?.trim()) {
-    url.searchParams.set("device_mid", options.deviceMid.trim());
+  if (!isLingdongDownloadManifestUrl(options.manifestUrl)) {
+    url.searchParams.set("platform", options.platform);
+    if (options.deviceMid?.trim()) {
+      url.searchParams.set("device_mid", options.deviceMid.trim());
+    }
+    url.searchParams.set("channel", mapReleaseChannelToApiValue(options.channel));
   }
-  url.searchParams.set("channel", mapReleaseChannelToApiValue(options.channel));
   return url;
 }
 
@@ -225,9 +269,15 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
       throw new Error(`Empty electron update manifest: ${manifestUrl.toString()}`);
     }
 
-    const parsed = parseYaml(raw);
+    const lingdong = isLingdongDownloadManifestUrl(this.options.manifestUrl)
+      ? parseLingdongDownloadManifest(raw, manifestUrl, this.releasePlatform)
+      : null;
+    const parsed = lingdong ?? parseYaml(raw);
     if (!isRecord(parsed) || typeof parsed.version !== "string") {
       throw new Error(`Invalid electron update manifest: ${manifestUrl.toString()}`);
+    }
+    if (lingdong && typeof (lingdong as { lingdongManifestBaseUrl?: unknown }).lingdongManifestBaseUrl === "string") {
+      this.resolveBaseUrl = new URL((lingdong as { lingdongManifestBaseUrl: string }).lingdongManifestBaseUrl);
     }
 
     return {
