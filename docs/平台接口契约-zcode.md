@@ -167,3 +167,35 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 ### 迁移边界
 
 不得重新引入 DSH session、Cordis patch、DSH profile、DSH plugin 或 DSH 文件地址协议。ZCode 的 Host/Service/Provider/UI 是唯一实现边界。
+
+## 客户端更新清单
+
+ZCode Desktop 不使用 ZCode 官方更新源，生产包固定读取：
+
+```text
+https://aicyld.com/downloads/manifest.json
+```
+
+清单当前格式：
+
+```json
+{
+  "version": "0.2.0-zcode.1",
+  "files": {
+    "win-x64": {
+      "version": "0.2.0-zcode.1",
+      "name": "lingdong-client-0.2.0-zcode.1-win-x64.exe",
+      "size": 0,
+      "sha256": "..."
+    },
+    "mac-arm64": {
+      "version": "0.2.0-zcode.1",
+      "name": "lingdong-client-0.2.0-zcode.1-mac-arm64.dmg",
+      "size": 0,
+      "sha256": "..."
+    }
+  }
+}
+```
+
+ZCode 的更新 Provider 会按当前平台选择 `win-x64` / `mac-arm64`，把 `sha256` 映射为 electron-updater 的 SHA-256 校验字段，下载路径相对 `https://aicyld.com/downloads/` 解析。平台清单的双端版本仍必须保持一致。
