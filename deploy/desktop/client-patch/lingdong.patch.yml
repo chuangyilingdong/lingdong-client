@@ -102,6 +102,8 @@
 - {id: web-ui-market, disabled: true}
 - {id: web-ui-community-plugins, disabled: true}
 - {id: web-ui-plugin-manager, disabled: true}
+# 0.4.3 新增自更新入口：它会在 profile 内执行 pnpm update --latest，客户端更新必须由桌面外壳统一管理。
+- {id: web-ui-update, disabled: true}
 # rc.2 已自带 ui-sidebar-browser，明确接受 HTTP/HTTPS 的 loopback 地址；0.21.1 也把浏览器
 # 页签委托给宿主该实现，且其 config schema 已没有 browserAllowedLoopback。不要再写这个字段，
 # 否则较严格的 Loader 配置校验可能把插件行判为无效。

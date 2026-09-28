@@ -41,7 +41,7 @@ ACTUAL_COMMIT="$(git -C "$CHECKOUT" rev-parse HEAD)"
 NODE_MAJOR="$(node -p "Number(process.versions.node.split('.')[0])")"
 [ "$NODE_MAJOR" -ge 22 ] || { echo "!! 需要 Node.js >= 22，当前：$(node -v)"; exit 2; }
 
-export LINGDONG_CLIENT_VERSION="${LINGDONG_CLIENT_VERSION:-0.1.7-rc.2.9}"
+export LINGDONG_CLIENT_VERSION="${LINGDONG_CLIENT_VERSION:-0.1.7-rc.2.10}"
 export LINGDONG_DSH_BASE_VERSION="0.1.7-rc.2"
 export LINGDONG_DISABLE_UPSTREAM_UPDATE=1
 export LINGDONG_API_BASE="${LINGDONG_API_BASE:-https://aicyld.com}"

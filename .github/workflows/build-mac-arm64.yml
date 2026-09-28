@@ -24,7 +24,7 @@ jobs:
     runs-on: macos-15
     timeout-minutes: 180
     env:
-      LINGDONG_CLIENT_VERSION: 0.1.7-rc.2.9
+      LINGDONG_CLIENT_VERSION: 0.1.7-rc.2.10
       LINGDONG_CHECKOUT: ${{ github.workspace }}/.tmp/dsh-0.1.7-rc.2
     steps:
       - name: Checkout client repository

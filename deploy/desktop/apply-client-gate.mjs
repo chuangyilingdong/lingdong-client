@@ -1374,7 +1374,7 @@ patch('apps/desktop/src/project-manager.ts',
     '// 插件闭包的依赖清单：6 个走 registry。',
     '// 由 prepare:dsh 装进 resources/runtime/plugin-profile（见 apply-client-gate.mjs 的 ④k）。',
     'export const LINGDONG_PLUGIN_DEPENDENCIES: Readonly<Record<string, string>> = {',
-    "  '@linxin666/dsh-web-all': '^0.3.24',",
+    "  '@linxin666/dsh-web-all': '0.4.3',",
     "  'dsh-better-sidebar': '0.21.1',",
     "  'deepseek-idesign': '^0.2.2',",
     "  'deepseek-ippt': '^0.1.2',",
@@ -1642,7 +1642,7 @@ updateTextFile('packages/client/ui-chat/src/client/locale.ts', (before) => befor
   .replace("'chat.deepDiving': '深度求索中'", "'chat.deepDiving': '小灵VibeCoding中'"),
   '运行文案改为「小灵VibeCoding中」')
 
-// ⑩ 旧图标名别名：`@linxin666/dsh-web-all@0.3.24` 内的 git-graph / remote-web-ui 等还在用 `IconXxx16/14`，
+// ⑩ 旧图标名别名：`@linxin666/dsh-web-all@0.4.3` 内的 git-graph / remote-web-ui 等还在用 `IconXxx16/14`，
 //    0.1.7 已改名 `*Medium`；缺了就是 undefined，React 直接抛 #130（Element type is invalid），
 //    右侧「侧边对话 / 浏览器」整块打不开（2026-09-25 反馈 ⑩）。
 updateTextFile('packages/client/ui-primitives/src/index.ts', (before) => {
