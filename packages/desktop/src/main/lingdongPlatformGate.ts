@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { basename, extname, join, relative, resolve, sep } from "node:path";
 
 type LingdongUser = { readonly id?: string; readonly displayName?: string; readonly login?: string };
 type LingdongClassroom = {
@@ -22,6 +22,7 @@ type LingdongContext = {
   readonly sends?: { readonly limit?: number | null; readonly used?: number; readonly remaining?: number | null } | null;
   readonly workspacePath?: string;
   readonly message?: string;
+  readonly sessionId?: string;
 };
 type LingdongSession = { readonly token: string; readonly user?: LingdongUser };
 export type LingdongPlatformState = Readonly<{
@@ -204,6 +205,82 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
   return { ok: true, files, workspacePath: root, workspaceIdentity: activeState.workspaceIdentity };
 }
 
+
+type SubmitItem = Readonly<{ path?: unknown; relativePath?: unknown }>;
+type WorkFilePayload = Readonly<{ name: string; content: string; binary: boolean }>;
+const WORK_TEXT_EXTENSIONS = new Set([
+  ".css", ".csv", ".htm", ".html", ".js", ".json", ".jsx", ".md", ".mjs", ".cjs",
+  ".svg", ".text", ".ts", ".tsx", ".txt", ".webmanifest", ".xml", ".yaml", ".yml",
+]);
+const WORK_ALLOWED_EXTENSIONS = new Set([
+  ".htm", ".html", ".docx", ".xlsx", ".pptx", ".md", ".txt", ".csv", ".json", ".js",
+  ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+  ".bmp", ".svg", ".mp3", ".wav", ".mp4", ".webm", ".mov", ".pdf",
+]);
+const MAX_WORK_FILES = 60;
+const MAX_WORK_TOTAL_BYTES = 16 * 1024 * 1024;
+const MAX_WORK_REQUEST_BYTES = 24 * 1024 * 1024;
+
+function pathInside(root: string, candidate: string): boolean {
+  const rootResolved = resolve(root);
+  const candidateResolved = resolve(candidate);
+  const rel = relative(rootResolved, candidateResolved);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.includes(`..${sep}`));
+}
+
+async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<WorkFilePayload[]> {
+  if (!activeState) throw new Error("平台登录尚未完成。");
+  const root = await realpath(activeState.workspacePath);
+  const files: WorkFilePayload[] = [];
+  let totalBytes = 0;
+  const usedNames = new Set<string>();
+  for (const item of items.slice(0, MAX_WORK_FILES)) {
+    const rawPath = typeof item.path === "string" ? item.path.trim() : "";
+    if (!rawPath || !pathInside(root, rawPath)) continue;
+    const absolute = await realpath(rawPath).catch(() => "");
+    if (!absolute || !pathInside(root, absolute)) continue;
+    const info = await stat(absolute).catch(() => null);
+    if (!info?.isFile()) continue;
+    const extension = extname(absolute).toLowerCase();
+    if (!WORK_ALLOWED_EXTENSIONS.has(extension)) continue;
+    if (info.size > MAX_WORK_TOTAL_BYTES || totalBytes + info.size > MAX_WORK_TOTAL_BYTES) continue;
+    const bytes = await readFile(absolute);
+    const rel = relative(root, absolute).replaceAll("\\", "/");
+    let name = rel || basename(absolute);
+    if (usedNames.has(name)) name = `${files.length}-${basename(absolute)}`;
+    usedNames.add(name);
+    const binary = !WORK_TEXT_EXTENSIONS.has(extension);
+    files.push({ name, content: binary ? bytes.toString("base64") : bytes.toString("utf8"), binary });
+    totalBytes += info.size;
+  }
+  if (files.length === 0) throw new Error("没有找到可以提交的作品文件。");
+  return files;
+}
+
+async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
+  if (!activeState) throw new Error("平台登录尚未完成。");
+  const input = record<unknown>(payload) ? payload : {};
+  const rawItems = Array.isArray(input.items) ? input.items as SubmitItem[] : [];
+  const files = await prepareSubmitFiles(rawItems);
+  const body: Record<string, unknown> = {
+    name: files[0]?.name ?? "作品",
+    title: files[0]?.name ?? "课堂作品",
+    classroomId: activeState.context.classroom?.id,
+    workspaceIdentity: activeState.workspaceIdentity,
+    copyrightConfirmed: input.copyrightConfirmed === true,
+    files,
+  };
+  if (activeState.context.sessionId) body.sessionId = activeState.context.sessionId;
+  if (Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_WORK_REQUEST_BYTES) {
+    throw new Error("作品编码后太大，请减少素材后再提交。");
+  }
+  const suffix = activeState.context.sessionId ? `?sessionId=${encodeURIComponent(activeState.context.sessionId)}` : "";
+  return callPlatform(`/api/student/runtime/submit-upload${suffix}`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 async function callPlatform(path: string, init: RequestInit = {}): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   return apiRequest(path, init, activeState.session.token);
@@ -219,6 +296,7 @@ export async function getLingdongPlatformSnapshot(): Promise<unknown> {
     presets: activeState.context.presets ?? [],
     workspacePath: activeState.workspacePath,
     workspaceIdentity: activeState.workspaceIdentity,
+    classroomId: activeState.context.classroom?.id ?? null,
   };
 }
 
@@ -228,10 +306,7 @@ function registerPlatformHandlers(): void {
   ipcMain.handle("lingdong:platform-snapshot", () => getLingdongPlatformSnapshot());
   ipcMain.handle("lingdong:platform-works", () => callPlatform("/api/student/works?page=1&limit=20"));
   ipcMain.handle("lingdong:platform-scan-workspace", () => scanLingdongWorkspaceFiles());
-  ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => {
-    const body = JSON.stringify(payload ?? {});
-    return callPlatform("/api/student/runtime/submit-upload", { method: "POST", body });
-  });
+  ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => submitWorkFromDesktop(payload));
   ipcMain.handle("lingdong:platform-refresh-context", async () => {
     if (!activeState) return null;
     const context = unwrap<LingdongContext>(await callPlatform("/api/student/runtime/client-context"));

@@ -22,7 +22,6 @@ import { parse as parseYaml } from "yaml";
 const ELECTRON_MANIFEST_API_PATH = "/api/v1/releases/electron/manifest";
 
 const MANIFEST_ACCEPT_HEADER = "application/json,application/x-yaml,text/yaml,text/plain,*/*";
-const LINGDONG_DOWNLOAD_MANIFEST_URL = "https://aicyld.com/downloads/manifest.json";
 
 interface ManifestUpdateProviderOptions extends CustomPublishOptions {
   endpointOrigin?: string;

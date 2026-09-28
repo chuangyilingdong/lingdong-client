@@ -111,9 +111,11 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 - `sessionId`
 - `classroomId`
-- `files[]`
+- `files[]`，每项为 `{ name, content, binary }`；文本文件 `content` 为 UTF-8，二进制文件 `content` 为 base64
 - `cover`（可选 PNG base64 或平台已有文件引用）
 - `copyrightConfirmed`
+
+客户端默认最多提交 60 个文件、总原始大小 16 MiB，JSON 请求上限约 24 MiB；平台应返回 `warnings` / `missing` / `works` 供客户端回显。
 
 提交失败不能因可选封面失败而阻断正文作品上传。
 
