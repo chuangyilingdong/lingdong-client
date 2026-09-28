@@ -693,6 +693,10 @@ export default {
   win: {
     target: ["nsis"],
     artifactName: buildDesktopArtifactName("win"),
+    // Windows unsigned/local validation builds must not download winCodeSign; that archive
+    // contains macOS symlinks and fails on machines without SeCreateSymbolicLinkPrivilege.
+    // Release CI can set ZCODE_ENABLE_WIN_SIGN=1 and provide the signing certificate.
+    signAndEditExecutable: process.env.ZCODE_ENABLE_WIN_SIGN === "1",
   },
   linux: {
     target: ["AppImage", "deb", "rpm", "pacman"],
