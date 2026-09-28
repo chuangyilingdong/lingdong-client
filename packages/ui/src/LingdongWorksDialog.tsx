@@ -43,7 +43,6 @@ export function LingdongWorksDialog({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
-  const [submittedCount, setSubmittedCount] = useState<number | null>(null);
 
   const refresh = useCallback(async () => {
     setBusy(true);
@@ -96,7 +95,6 @@ export function LingdongWorksDialog({
       if (result?.ok === false) throw new Error(result.message || "提交失败。");
       const works = (await (window as Window & { lingdong?: { listWorks(): Promise<unknown> } }).lingdong?.listWorks()) as { items?: unknown[]; works?: unknown[] } | undefined;
       const nextCount = Array.isArray(works?.items) ? works.items.length : Array.isArray(works?.works) ? works.works.length : null;
-      setSubmittedCount(nextCount);
       setMessage(nextCount === null ? "作品已提交，平台正在处理。" : `作品已提交，平台当前返回 ${nextCount} 条作品记录。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
