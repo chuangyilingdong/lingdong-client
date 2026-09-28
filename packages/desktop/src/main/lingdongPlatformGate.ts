@@ -96,7 +96,7 @@ function resolveWorkspace(context: LingdongContext, user: LingdongUser | undefin
   return join(app.getPath("documents"), "灵动ai创作", `${display}-${lesson}`);
 }
 
-async function buildProviderConfig(context: LingdongContext): Promise<string> {
+async function buildProviderConfig(context: LingdongContext, targetPath?: string): Promise<string> {
   const gateway = context.gateway ?? {};
   const baseUrl = String(gateway.baseUrl || "").trim();
   const gatewayKey = String(gateway.key || "").trim();
@@ -135,7 +135,7 @@ async function buildProviderConfig(context: LingdongContext): Promise<string> {
   };
   const dir = join(app.getPath("temp"), "lingdong-zcode");
   await mkdir(dir, { recursive: true });
-  const path = join(dir, `provider-${process.pid}-${randomUUID()}.json`);
+  const path = targetPath || join(dir, `provider-${process.pid}-${randomUUID()}.json`);
   await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, { mode: 0o600 });
   return path;
 }
@@ -239,7 +239,8 @@ const WORK_TEXT_EXTENSIONS = new Set([
 const WORK_ALLOWED_EXTENSIONS = new Set([
   ".htm", ".html", ".docx", ".xlsx", ".pptx", ".md", ".txt", ".csv", ".json", ".js",
   ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-  ".bmp", ".svg", ".mp3", ".wav", ".mp4", ".webm", ".mov", ".pdf",
+  ".bmp", ".svg", ".mp3", ".wav", ".mp4", ".webm", ".mov", ".pdf", ".py", ".java",
+  ".c", ".cpp", ".h", ".hpp", ".cs", ".go", ".rs", ".lua", ".rb", ".php", ".sql", ".zip",
 ]);
 const MAX_WORK_FILES = 60;
 const MAX_WORK_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -394,7 +395,14 @@ function registerPlatformHandlers(): void {
   ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => submitWorkFromDesktop(payload));
   ipcMain.handle("lingdong:platform-refresh-context", async () => {
     if (!activeState) return null;
-    const context = unwrap<LingdongContext>(await callPlatform("/api/student/runtime/client-context"));
+    const selected = activeState.context.sessionId ? `?sessionId=${encodeURIComponent(activeState.context.sessionId)}` : "";
+    const context = {
+      ...unwrap<LingdongContext>(await callPlatform(`/api/student/runtime/client-context${selected}`)),
+      sessionId: activeState.context.sessionId,
+    };
+    await buildProviderConfig(context, activeState.providerConfigPath);
+    process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
+    process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
     activeState = { ...activeState, context };
     return getLingdongPlatformSnapshot();
   });
