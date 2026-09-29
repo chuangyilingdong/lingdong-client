@@ -1,10 +1,12 @@
 /* eslint-disable max-lines -- 平台登录、课堂上下文、作品提交与封面采集共享 Main 单一所有者；迁移阶段保持边界收口。 */
 import { app, BrowserWindow, ipcMain } from "electron";
-import { randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { getAppConfigDir } from "@zcode/services/node";
+import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
+import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 
 type LingdongUser = { readonly id?: string; readonly displayName?: string; readonly login?: string };
 type LingdongClassroom = {
@@ -41,7 +43,7 @@ export type LingdongPlatformState = Readonly<{
 
 const API_BASE = String(process.env.LINGDONG_API_BASE || "https://aicyld.com").replace(/\/+$/u, "");
 let activeState: LingdongPlatformState | null = null;
-let providerConfigPath: string | null = null;
+let providerBinding: ReturnType<typeof createLingdongProviderBinding> | null = null;
 let gateWindow: BrowserWindow | null = null;
 let handlersRegistered = false;
 let pendingLogin: PendingLogin | null = null;
@@ -98,46 +100,10 @@ function resolveWorkspace(context: LingdongContext, user: LingdongUser | undefin
 }
 
 async function buildProviderConfig(context: LingdongContext, targetPath?: string): Promise<string> {
-  const gateway = context.gateway ?? {};
-  const baseUrl = String(gateway.baseUrl || "").trim();
-  const gatewayKey = String(gateway.key || "").trim();
-  if (!baseUrl || !gatewayKey) throw new Error("平台没有下发完整的模型网关配置。");
-  const models = (context.models ?? [])
-    .map((item) => ({ id: String(item.id ?? "").trim(), displayName: String(item.displayName ?? "").trim() }))
-    .filter((item) => item.id);
-  const defaultModel = String(context.defaultModel ?? models[0]?.id ?? "deepseek-flash").trim();
-  const modelIds = [...new Set([defaultModel, ...models.map((item) => item.id)])];
-  const content = {
-    schemaVersion: 1,
-    revision: Date.now(),
-    config: {
-      providerConfigRules: {
-        templateRules: [],
-        providerRules: [{
-          providerId: "lingdong-platform-gateway",
-          providerName: "灵动ai 平台网关",
-          config: {
-            group: "standard-personal",
-            builtinModelIds: modelIds,
-            access: { type: "api-key", apiKey: gatewayKey },
-            api: { type: "openai-chat-completions", baseUrl },
-            visibility: "visible",
-          },
-        }],
-      },
-      modelConfigRules: {
-        modelRules: modelIds.map((modelId) => ({
-          providerId: "lingdong-platform-gateway",
-          modelId,
-          config: { enabled: true },
-        })),
-      },
-    },
-  };
-  const dir = join(app.getPath("temp"), "lingdong-zcode");
-  await mkdir(dir, { recursive: true });
-  const path = targetPath || join(dir, `provider-${process.pid}-${randomUUID()}.json`);
-  await writeFile(path, `${JSON.stringify(content, null, 2)}\n`, { mode: 0o600 });
+  const path = targetPath || join(getAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME);
+  providerBinding ??= createLingdongProviderBinding(path);
+  if (providerBinding.filePath !== path) throw new Error("课堂 Provider 配置根在会话中发生变化，请重新登录。");
+  await providerBinding.apply(context);
   return path;
 }
 
@@ -174,8 +140,6 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
     const workspacePath = resolveWorkspace(context, session.user);
     await mkdir(workspacePath, { recursive: true });
     const providerPath = await buildProviderConfig(context);
-    if (providerConfigPath) await rm(providerConfigPath, { force: true }).catch(() => undefined);
-    providerConfigPath = providerPath;
     activeState = {
       session,
       context,
@@ -186,16 +150,14 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
     process.env.LINGDONG_API_BASE = API_BASE;
     process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
     process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
-    process.env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE = providerPath;
     process.env.ZCODE_LINGDONG_WORKSPACE_PATH = workspacePath;
     process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY = activeState.workspaceIdentity;
     process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom.id;
     process.env.ZCODE_LINGDONG_SEND_LIMIT = String(context.sends?.limit ?? "");
     process.env.ZCODE_LINGDONG_SEND_USED = String(context.sends?.used ?? 0);
-    // 登录成功后只隐藏登录窗，不销毁：此刻主窗口尚未创建，
-    // 最后一个窗口一旦销毁，Windows 会立即触发 window-all-closed 退出应用。
-    // 待主窗口就绪后由 finishLingdongPlatformGate() 真正销毁登录窗。
-    gateWindow?.hide();
+    // 登录成功后关闭登录窗，但 platformGatePending 会一直保持到主窗口就绪：
+    // 应用进入"零窗口"瞬间时 window-all-closed 会被 pending 拦住，不会误退出。
+    gateWindow?.close();
     return { ok: true, user: session.user, classroom: context.classroom, workspacePath };
   } catch (error) {
     pendingLogin = null;
@@ -421,6 +383,12 @@ export function isLingdongPlatformGatePending(): boolean {
   return platformGatePending;
 }
 
+// 登录窗不是主界面：窗口协调器必须把它排除，
+// 否则 ensurePrimaryWindow 会把它当成"已存在窗口"复用，主窗口永不创建。
+export function isLingdongGateWindow(window: unknown): boolean {
+  return gateWindow !== null && window === gateWindow;
+}
+
 export async function runLingdongPlatformGate(): Promise<LingdongPlatformState | null> {
   registerPlatformHandlers();
   platformGatePending = true;
@@ -476,7 +444,9 @@ export function finishLingdongPlatformGate(): void {
 }
 
 export async function disposeLingdongPlatformGate(): Promise<void> {
-  if (providerConfigPath) await rm(providerConfigPath, { force: true }).catch(() => undefined);
-  providerConfigPath = null;
+  const binding = providerBinding;
+  providerBinding = null;
+  await binding?.dispose();
   activeState = null;
+  pendingLogin = null;
 }

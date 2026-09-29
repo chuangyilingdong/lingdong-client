@@ -45,7 +45,9 @@
     "architecture:report": "node scripts/architecture/architecture-check.mjs report",
     "architecture:baseline:update": "node scripts/architecture/architecture-check.mjs baseline:update",
     "architecture:context": "node scripts/architecture/architecture-check.mjs context",
-    "smoke:platform": "node scripts/smoke-zcode-platform-contract.mjs"
+    "smoke:platform": "node scripts/smoke-zcode-platform-contract.mjs",
+    "test:platform": "tsx --test packages/desktop/tests/lingdong-provider-config.test.ts packages/ui/tests/provider-login-gate.test.ts",
+    "smoke:platform:windows": "node packages/desktop/tests/windows-classroom-flow.e2e.mjs"
   },
   "dependencies": {
     "border-beam": "^1.0.1",

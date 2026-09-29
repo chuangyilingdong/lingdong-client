@@ -115,6 +115,7 @@ import { createPrimaryWindowCoordinator } from "./primaryWindowCoordinator.js";
 import {
   disposeLingdongPlatformGate,
   finishLingdongPlatformGate,
+  isLingdongGateWindow,
   isLingdongPlatformGatePending,
   runLingdongPlatformGate,
 } from "./lingdongPlatformGate.js";
@@ -1089,6 +1090,14 @@ async function prepareAppQuit(reason: string, kind: AppShutdownKind = "normal"):
     .catch((error) => {
       logger.error(`[app-quit] host process cleanup failed (${reason}):`, error);
     })
+    .then(async () => {
+      // Host 停止后再移除本课堂凭据；will-quit 不等待异步 IO，会把私钥留在配置中。
+      try {
+        await disposeLingdongPlatformGate();
+      } catch {
+        logger.warn("[lingdong-gate] 课堂 Provider 清理失败，个人配置保留原样。");
+      }
+    })
     .finally(() => {
       // before-quit 是同步事件。只发 Dispose 就继续退出 main 的话，
       // host 还没等到 agent 进程树的 SIGTERM/SIGKILL 兜底完成就被带走，zcode-cli 会被 init 接管成残留进程。
@@ -1457,7 +1466,12 @@ function resolveFocusedDesktopZoomLevel(): number {
 
 function getApplicationWindowsExcludingCuaIndicator(): BrowserWindow[] {
   return BrowserWindow.getAllWindows().filter(
-    (win) => !win.isDestroyed() && !windowsCuaOperationIndicator.ownsWindow(win),
+    (win) =>
+      !win.isDestroyed() &&
+      // 平台登录窗是启动门，不是主界面：留在列表里会被 ensurePrimaryWindow
+      // 当成可复用窗口，导致主窗口永不创建。
+      !isLingdongGateWindow(win) &&
+      !windowsCuaOperationIndicator.ownsWindow(win),
   );
 }
 
@@ -1893,9 +1907,6 @@ const gotTheLock = app.requestSingleInstanceLock(createDeepLinkSingleInstanceDat
 if (!gotTheLock) {
   app.quit();
 }
-app.on("will-quit", () => {
-  void disposeLingdongPlatformGate();
-});
 
 app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
   if (
@@ -1934,37 +1945,6 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
 });
 
 app.whenReady().then(async () => {
-  // 灵动ai 平台登录与课堂上下文必须先于首个 Host/Agent 启动。
-  // ZCode 的 managed provider 配置、课堂 workspace 与平台网关凭据都由这里注入。
-  const lingdongPlatform = await runLingdongPlatformGate();
-  if (!lingdongPlatform) {
-    // 用户在登录窗直接关闭应用：干净退出，不启动 Host，也不留未处理的拒绝。
-    logger.info("[lingdong-gate] 登录窗口被关闭，应用退出。");
-    markExplicitQuit("lingdong-gate-cancelled");
-    app.quit();
-    return;
-  }
-  Object.assign(hostProcessLocalEnv, {
-    LINGDONG_API_BASE: process.env.LINGDONG_API_BASE,
-    PLATFORM_GATEWAY_KEY: String(lingdongPlatform.context.gateway?.key || ""),
-    PLATFORM_GATEWAY_BASE_URL: lingdongPlatform.context.gateway?.baseUrl ?? "",
-    ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: lingdongPlatform.providerConfigPath,
-    ZCODE_LINGDONG_WORKSPACE_PATH: lingdongPlatform.workspacePath,
-    ZCODE_LINGDONG_WORKSPACE_IDENTITY: lingdongPlatform.workspaceIdentity,
-    ZCODE_LINGDONG_CLASSROOM_ID: lingdongPlatform.context.classroom.id,
-    ZCODE_LINGDONG_SEND_LIMIT: process.env.ZCODE_LINGDONG_SEND_LIMIT,
-    ZCODE_LINGDONG_SEND_USED: process.env.ZCODE_LINGDONG_SEND_USED,
-  });
-  Object.assign(process.env, hostProcessLocalEnv);
-  markMainLaunchAppReady();
-  installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
-    isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,
-  });
-  // Electron 的 net.request 只能在 app ready 后使用；灰度请求仍是旁路预热，不阻塞首个 Host。
-  void desktopContextPromptRollout?.refresh();
-  installBrowserRestoreBootstrapProtocol(
-    session.fromPartition(EMBEDDED_BROWSER_PARTITION).protocol,
-  );
   // Bootstrap: 从设置文件读取自定义数据目录，在所有 host 进程启动前生效
   let loadedBootstrapLocale = false;
   let bootstrapSettings: AppSettings | undefined;
@@ -1987,6 +1967,36 @@ app.whenReady().then(async () => {
     // 读取失败不影响启动，使用默认 homedir
   }
 
+  // 灵动ai 平台登录与课堂上下文必须先于首个 Host/Agent 启动。
+  // ZCode 的 managed provider 配置、课堂 workspace 与平台网关凭据都由这里注入。
+  const lingdongPlatform = await runLingdongPlatformGate();
+  if (!lingdongPlatform) {
+    // 用户在登录窗直接关闭应用：干净退出，不启动 Host，也不留未处理的拒绝。
+    logger.info("[lingdong-gate] 登录窗口被关闭，应用退出。");
+    markExplicitQuit("lingdong-gate-cancelled");
+    app.quit();
+    return;
+  }
+  Object.assign(hostProcessLocalEnv, {
+    LINGDONG_API_BASE: process.env.LINGDONG_API_BASE,
+    PLATFORM_GATEWAY_KEY: String(lingdongPlatform.context.gateway?.key || ""),
+    PLATFORM_GATEWAY_BASE_URL: lingdongPlatform.context.gateway?.baseUrl ?? "",
+    ZCODE_LINGDONG_WORKSPACE_PATH: lingdongPlatform.workspacePath,
+    ZCODE_LINGDONG_WORKSPACE_IDENTITY: lingdongPlatform.workspaceIdentity,
+    ZCODE_LINGDONG_CLASSROOM_ID: lingdongPlatform.context.classroom.id,
+    ZCODE_LINGDONG_SEND_LIMIT: process.env.ZCODE_LINGDONG_SEND_LIMIT,
+    ZCODE_LINGDONG_SEND_USED: process.env.ZCODE_LINGDONG_SEND_USED,
+  });
+  Object.assign(process.env, hostProcessLocalEnv);
+  markMainLaunchAppReady();
+  installLocalMediaPreviewProtocol(session.defaultSession.protocol, {
+    isPathAuthorized: localMediaPreviewPathRegistry.isAuthorized,
+  });
+  // Electron 的 net.request 只能在 app ready 后使用；灰度请求仍是旁路预热，不阻塞首个 Host。
+  void desktopContextPromptRollout?.refresh();
+  installBrowserRestoreBootstrapProtocol(
+    session.fromPartition(EMBEDDED_BROWSER_PARTITION).protocol,
+  );
   // scheduler 也会打开 tasks-index；等 Host 完成统一准备，避免在启动页出现前抢先迁移。
   configureDatabaseStartupQuit(() => {
     markExplicitQuit("database-startup-exit");
