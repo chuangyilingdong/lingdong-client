@@ -37,6 +37,7 @@ import {
   type ResolveRemoteCdnOptions,
 } from "./remoteCdn.js";
 import { getElectronAppPath, isElectronAppPackaged } from "./desktopElectronApp.js";
+import { resolveDesktopApplicationName } from "./desktopProductDataPaths.js";
 
 const isLocalDevelopmentRuntime = !isElectronAppPackaged();
 export const desktopRuntimeEnv: ZCodeRuntimeEnv = isLocalDevelopmentRuntime
@@ -55,12 +56,13 @@ function isTruthyRuntimeEnvOverride(name: string): boolean {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
-// e2e 运行的是生产构建，默认会和本机正式版 ZCode 共用 app name / userData，
-// 触发 Electron 单实例锁后只激活已有窗口，Chromedriver 无法接管测试进程。
-// 这里允许测试显式隔离运行时身份，正常桌面/远控路径保持原来的默认值。
-export const runtimeApplicationName =
-  readRuntimeEnvOverride("ZCODE_DESKTOP_APPLICATION_NAME") ??
-  (isLocalDevelopmentRuntime ? "ZCode Dev" : isPreviewPackagedRuntime ? "ZCode Preview" : "ZCode");
+// 正式/Preview 身份必须与 ZCode 官方版隔离：Electron 会用 applicationName 决定默认 userData。
+// 之前 production 固定为 "ZCode"，导致官方账号、会话库和工作区历史直接串进课堂客户端。
+export const runtimeApplicationName = resolveDesktopApplicationName({
+  env: process.env,
+  isPackaged: !isLocalDevelopmentRuntime,
+  flavor: isPreviewPackagedRuntime ? "preview" : "production",
+});
 // Electron 的 app.getPath("home") 不一定跟随测试进程里的 HOME 覆盖。
 // e2e 默认工作区依赖 home 路径，因此提供显式覆盖，避免测试写到开发者真实 ~/ZCodeProject。
 export const runtimeHomePath = readRuntimeEnvOverride("ZCODE_DESKTOP_HOME_DIR");
@@ -76,6 +78,12 @@ export const runtimeUserDataPath =
 export const runtimeSessionDataPath =
   readRuntimeEnvOverride("ZCODE_DESKTOP_SESSION_DATA_DIR") ??
   (runtimeUserDataPath ? join(runtimeUserDataPath, "session") : undefined);
+// 业务数据同样不能落回 ~/.zcode：打包态默认把它放在产品自己的 userData 下。
+// 显式环境变量仍优先，兼容现有 E2E/企业部署自定义数据根。
+export const runtimeDataBaseDir =
+  readRuntimeEnvOverride("ZCODE_DATA_BASE_DIR") ??
+  readRuntimeEnvOverride("ZCODE_DESKTOP_DATA_BASE_DIR") ??
+  (isLocalDevelopmentRuntime ? undefined : runtimeUserDataPath);
 // Chromedriver 会注入临时 --user-data-dir，并在该目录等待 DevToolsActivePort。
 // e2e 如果再用 app.setPath 覆盖 userData/sessionData，端口文件会被写到另一个目录，
 // 导致 Electron 已启动但 WebDriver session 一直创建失败。测试态打开该开关后保留 Chromedriver 的目录。

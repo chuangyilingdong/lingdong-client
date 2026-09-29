@@ -49,6 +49,7 @@ import {
   ZoomOut,
 } from "lucide-react";
 import { usePlatform } from "@/hooks/usePlatform.js";
+import { useClassroomPlatformSnapshot } from "@/hooks/useClassroomPlatformSnapshot.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
@@ -137,6 +138,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
 }) {
   const { intl } = useZCodeIntl();
   const platform = usePlatform();
+  const { snapshot: classroomSnapshot } = useClassroomPlatformSnapshot();
   const interfaceMode = useZCodeStore((state) => state.interfaceMode);
   const setInterfaceMode = useZCodeStore((state) => state.setInterfaceMode);
   const zoomInShortcutLabel = useShortcutCommandLabel("zoomIn");
@@ -144,6 +146,10 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   const resetZoomShortcutLabel = useShortcutCommandLabel("resetZoom");
   const isRestoringOAuthSession = useZCodeStore((state) => state.isRestoringOAuthSession);
   const profileBadge = getSidebarProfileBadge(user, intl.formatMessage);
+  const classroomUserName =
+    classroomSnapshot?.user?.displayName?.trim() ||
+    classroomSnapshot?.user?.login?.trim() ||
+    "学生";
   const avatarFallbackText = getAvatarFallbackText(user);
   const avatarKey = user?.avatarUrl ?? user?.id ?? "guest";
   const showAuthRestoreLoading = !user && isRestoringOAuthSession;
@@ -233,212 +239,246 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
     // footer 被 Settings 复用，页面专属边距由调用方传入，避免修改共享默认样式。
     <>
       <footer className={cn("flex shrink-0 flex-col gap-2.5 px-4 pt-2 pb-4", className)}>
-      <div className="flex min-w-0 gap-2">
-        <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            {/* 头像和 Login 之前直接绑定到登录动作，导致用户无法从这里打开偏好设置。
+        <div className="flex min-w-0 gap-2">
+          <DropdownMenu open={profileMenuOpen} onOpenChange={setProfileMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              {/* 头像和 Login 之前直接绑定到登录动作，导致用户无法从这里打开偏好设置。
               现在把这一块改成统一的设置菜单入口，登录/退出留在菜单项里，交互职责更清晰。 */}
-            <Button
-              type="button"
-              variant="ghost"
-              size={"lg"}
-              className="min-w-0 flex-1 justify-start gap-2 overflow-hidden rounded-tl-2xl rounded-bl-2xl border-0 pl-0"
-              data-testid={TID_LOGIN_TRIGGER}
-              aria-label={profileBadge}
-            >
-              {/* Button 默认 shrink-0 且带 whitespace-nowrap，超长用户名会把 footer 撑出 sidebar。
+              <Button
+                type="button"
+                variant="ghost"
+                size={"lg"}
+                className="min-w-0 flex-1 justify-start gap-2 overflow-hidden rounded-tl-2xl rounded-bl-2xl border-0 pl-0"
+                data-testid={TID_LOGIN_TRIGGER}
+                aria-label={profileBadge}
+              >
+                {/* Button 默认 shrink-0 且带 whitespace-nowrap，超长用户名会把 footer 撑出 sidebar。
                 这里让触发按钮和文本列都允许收缩，并只在用户名自身做单行截断。 */}
-              {profileContent}
-            </Button>
-          </DropdownMenuTrigger>
-          {/* 菜单内容保持挂载，避免每次点击头像菜单都重建 footer 内部状态。*/}
-          <DropdownMenuContent align="start" className="w-max min-w-50" forceMount>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Globe className="size-4" />
-                {intl.formatMessage({ id: "settings.locale" })}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-48">
-                <DropdownMenuRadioGroup value={localeMenuValue} onValueChange={onLocaleChange}>
-                  <DropdownMenuRadioItem value="system">
-                    {intl.formatMessage({
-                      id: "sidebar.settings.systemDefault",
-                    })}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="en-US">
-                    {intl.formatMessage({
-                      id: "sidebar.settings.locale.en-US",
-                    })}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="zh-CN">
-                    {intl.formatMessage({
-                      id: "sidebar.settings.locale.zh-CN",
-                    })}
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Palette className="size-4" />
-                {intl.formatMessage({ id: "settings.themeMode" })}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-48">
-                <DropdownMenuRadioGroup value={theme} onValueChange={onThemeChange}>
-                  <DropdownMenuRadioItem value="system">
-                    {intl.formatMessage({
-                      id: "sidebar.settings.systemDefault",
-                    })}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="zai-dark">
-                    {intl.formatMessage({
-                      id: "sidebar.settings.theme.zai-dark",
-                    })}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="zai-light">
-                    {intl.formatMessage({
-                      id: "sidebar.settings.theme.zai-light",
-                    })}
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <PencilRuler className="size-4" />
-                {intl.formatMessage({ id: "settings.interfaceMode" })}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-48">
-                <DropdownMenuRadioGroup
-                  value={interfaceMode}
-                  onValueChange={(value) => setInterfaceMode(normalizeInterfaceMode(value))}
-                >
-                  <DropdownMenuRadioItem value="coding">
-                    {intl.formatMessage({ id: "settings.interfaceMode.coding" })}
-                  </DropdownMenuRadioItem>
-                  <DropdownMenuRadioItem value="office">
-                    {intl.formatMessage({ id: "settings.interfaceMode.office" })}
-                  </DropdownMenuRadioItem>
-                </DropdownMenuRadioGroup>
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-            {/* 快捷键设置：缩放子菜单 label 读生效表，设置页改绑后即时跟随 */}
-            {/* 收口重复缩放子菜单时误留了语言之后的那份，导致菜单顺序变成
-                语言→缩放→主题；账户菜单分组顺序固定为 语言→主题→界面模式→缩放→用量→登录/登出，
-                这里把唯一一份（读生效表）挪回用量摘要之前，不要再补第二份缩放子菜单。 */}
-            {isDesktop ? (
+                {profileContent}
+              </Button>
+            </DropdownMenuTrigger>
+            {/* 菜单内容保持挂载，避免每次点击头像菜单都重建 footer 内部状态。*/}
+            <DropdownMenuContent align="start" className="w-max min-w-50" forceMount>
               <DropdownMenuSub>
                 <DropdownMenuSubTrigger>
-                  <ZoomIn className="size-4" />
-                  {intl.formatMessage({ id: "sidebar.settings.interfaceZoom" })}
+                  <Globe className="size-4" />
+                  {intl.formatMessage({ id: "settings.locale" })}
                 </DropdownMenuSubTrigger>
-                <DropdownMenuSubContent className="w-50">
-                  <DropdownMenuItem
-                    disabled={!canZoomIn}
-                    onSelect={() => runDesktopZoomCommand(DesktopCommandIds.ZoomIn)}
-                  >
-                    <ZoomIn className="size-4" />
-                    {intl.formatMessage({ id: "titleBar.menu.view.zoomIn" })}
-                    <DropdownMenuShortcut>{zoomInShortcutLabel}</DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!canZoomOut}
-                    onSelect={() => runDesktopZoomCommand(DesktopCommandIds.ZoomOut)}
-                  >
-                    <ZoomOut className="size-4" />
-                    {intl.formatMessage({ id: "titleBar.menu.view.zoomOut" })}
-                    <DropdownMenuShortcut>{zoomOutShortcutLabel}</DropdownMenuShortcut>
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled={!canResetDesktopZoom}
-                    onSelect={() => runDesktopZoomCommand(DesktopCommandIds.ResetZoom)}
-                  >
-                    <Maximize className="size-4" />
-                    {intl.formatMessage({ id: "titleBar.menu.view.actualSize" })}
-                    <DropdownMenuShortcut>{resetZoomShortcutLabel}</DropdownMenuShortcut>
-                  </DropdownMenuItem>
+                <DropdownMenuSubContent className="w-48">
+                  <DropdownMenuRadioGroup value={localeMenuValue} onValueChange={onLocaleChange}>
+                    <DropdownMenuRadioItem value="system">
+                      {intl.formatMessage({
+                        id: "sidebar.settings.systemDefault",
+                      })}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="en-US">
+                      {intl.formatMessage({
+                        id: "sidebar.settings.locale.en-US",
+                      })}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="zh-CN">
+                      {intl.formatMessage({
+                        id: "sidebar.settings.locale.zh-CN",
+                      })}
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <Palette className="size-4" />
+                  {intl.formatMessage({ id: "settings.themeMode" })}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-48">
+                  <DropdownMenuRadioGroup value={theme} onValueChange={onThemeChange}>
+                    <DropdownMenuRadioItem value="system">
+                      {intl.formatMessage({
+                        id: "sidebar.settings.systemDefault",
+                      })}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="zai-dark">
+                      {intl.formatMessage({
+                        id: "sidebar.settings.theme.zai-dark",
+                      })}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="zai-light">
+                      {intl.formatMessage({
+                        id: "sidebar.settings.theme.zai-light",
+                      })}
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <PencilRuler className="size-4" />
+                  {intl.formatMessage({ id: "settings.interfaceMode" })}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="w-48">
+                  <DropdownMenuRadioGroup
+                    value={interfaceMode}
+                    onValueChange={(value) => setInterfaceMode(normalizeInterfaceMode(value))}
+                  >
+                    <DropdownMenuRadioItem value="coding">
+                      {intl.formatMessage({ id: "settings.interfaceMode.coding" })}
+                    </DropdownMenuRadioItem>
+                    <DropdownMenuRadioItem value="office">
+                      {intl.formatMessage({ id: "settings.interfaceMode.office" })}
+                    </DropdownMenuRadioItem>
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+              {/* 快捷键设置：缩放子菜单 label 读生效表，设置页改绑后即时跟随 */}
+              {/* 收口重复缩放子菜单时误留了语言之后的那份，导致菜单顺序变成
+                语言→缩放→主题；账户菜单分组顺序固定为 语言→主题→界面模式→缩放→用量→登录/登出，
+                这里把唯一一份（读生效表）挪回用量摘要之前，不要再补第二份缩放子菜单。 */}
+              {isDesktop ? (
+                <DropdownMenuSub>
+                  <DropdownMenuSubTrigger>
+                    <ZoomIn className="size-4" />
+                    {intl.formatMessage({ id: "sidebar.settings.interfaceZoom" })}
+                  </DropdownMenuSubTrigger>
+                  <DropdownMenuSubContent className="w-50">
+                    <DropdownMenuItem
+                      disabled={!canZoomIn}
+                      onSelect={() => runDesktopZoomCommand(DesktopCommandIds.ZoomIn)}
+                    >
+                      <ZoomIn className="size-4" />
+                      {intl.formatMessage({ id: "titleBar.menu.view.zoomIn" })}
+                      <DropdownMenuShortcut>{zoomInShortcutLabel}</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!canZoomOut}
+                      onSelect={() => runDesktopZoomCommand(DesktopCommandIds.ZoomOut)}
+                    >
+                      <ZoomOut className="size-4" />
+                      {intl.formatMessage({ id: "titleBar.menu.view.zoomOut" })}
+                      <DropdownMenuShortcut>{zoomOutShortcutLabel}</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
+                      disabled={!canResetDesktopZoom}
+                      onSelect={() => runDesktopZoomCommand(DesktopCommandIds.ResetZoom)}
+                    >
+                      <Maximize className="size-4" />
+                      {intl.formatMessage({ id: "titleBar.menu.view.actualSize" })}
+                      <DropdownMenuShortcut>{resetZoomShortcutLabel}</DropdownMenuShortcut>
+                    </DropdownMenuItem>
+                  </DropdownMenuSubContent>
+                </DropdownMenuSub>
+              ) : null}
+              {/* 升级入口状态不再以菜单开关为生命周期边界。*/}
+              <WorkspaceSidebarFooterUsageSummaryContent
+                state={usageSummaryState}
+                onUsageClick={usageButtonClick}
+                onUpgradeClick={onUpgradeClick}
+              />
+              {onLogin && !user ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={onLogin} data-testid={TID_LOGIN_MENU_ITEM}>
+                    <LogInIcon className="size-4" />
+                    {intl.formatMessage({ id: "app.login" })}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+              {onLogout ? (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={onLogout} data-testid={TID_LOGOUT_BUTTON}>
+                    <LogOut className="size-4" />
+                    {intl.formatMessage({ id: "app.logout" })}
+                  </DropdownMenuItem>
+                </>
+              ) : null}
+            </DropdownMenuContent>
+          </DropdownMenu>
+          <div className="flex shrink-0 items-center gap-1.5">
+            {isDesktop && workspacePath ? (
+              <WorkspaceWebRemoteControlTrigger
+                workspacePath={workspacePath}
+                workspaceIdentity={workspaceIdentity}
+                compact
+              />
             ) : null}
-            {/* 升级入口状态不再以菜单开关为生命周期边界。*/}
-            <WorkspaceSidebarFooterUsageSummaryContent
-              state={usageSummaryState}
-              onUsageClick={usageButtonClick}
-              onUpgradeClick={onUpgradeClick}
-            />
-            {onLogin && !user ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={onLogin} data-testid={TID_LOGIN_MENU_ITEM}>
-                  <LogInIcon className="size-4" />
-                  {intl.formatMessage({ id: "app.login" })}
-                </DropdownMenuItem>
-              </>
-            ) : null}
-            {onLogout ? (
-              <>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={onLogout} data-testid={TID_LOGOUT_BUTTON}>
-                  <LogOut className="size-4" />
-                  {intl.formatMessage({ id: "app.logout" })}
-                </DropdownMenuItem>
-              </>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-        <div className="flex shrink-0 items-center gap-1.5">
-          {isDesktop && workspacePath ? (
-            <WorkspaceWebRemoteControlTrigger
-              workspacePath={workspacePath}
-              workspaceIdentity={workspaceIdentity}
-              compact
-            />
-          ) : null}
-          <ControlHintTooltip title={settingsButtonLabel}>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-lg"
-              data-testid={TID_TASK_SETTINGS_BUTTON}
-              aria-label={settingsButtonLabel}
-              disabled={!onSettingsButtonClick}
-              onClick={onSettingsButtonClick}
-            >
-              <Settings className="size-4" />
-            </Button>
-          </ControlHintTooltip>
+            <ControlHintTooltip title={settingsButtonLabel}>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-lg"
+                data-testid={TID_TASK_SETTINGS_BUTTON}
+                aria-label={settingsButtonLabel}
+                disabled={!onSettingsButtonClick}
+                onClick={onSettingsButtonClick}
+              >
+                <Settings className="size-4" />
+              </Button>
+            </ControlHintTooltip>
+          </div>
         </div>
-      </div>
         {platform.classroom ? (
-          <div className="flex gap-2">
-          <Button type="button" variant="outline" className="w-full justify-start gap-2" onClick={() => setWorksOpen(true)}>
-            <FileUp className="size-4" />
-            提交课堂作品
-          </Button>
-          <Button type="button" variant="outline" size="icon" aria-label="课堂提示词预设" onClick={() => setPresetsOpen(true)}>
-            <BookOpen className="size-4" />
-          </Button>
-          <Button type="button" variant="outline" size="icon" aria-label="退出登录" onClick={() => setLogoutConfirmOpen(true)}>
-            <LogOut className="size-4" />
-          </Button>
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5 px-1 text-ui-sm text-foreground-subtle">
+              <User className="size-3.5 shrink-0" />
+              <span className="truncate">{classroomUserName}</span>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full justify-start gap-2"
+                onClick={() => setWorksOpen(true)}
+              >
+                <FileUp className="size-4" />
+                提交课堂作品
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="课堂提示词预设"
+                onClick={() => setPresetsOpen(true)}
+              >
+                <BookOpen className="size-4" />
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                aria-label="退出登录"
+                onClick={() => setLogoutConfirmOpen(true)}
+              >
+                <LogOut className="size-4" />
+              </Button>
+            </div>
           </div>
         ) : null}
       </footer>
       <LingdongWorksDialog open={worksOpen} onOpenChange={setWorksOpen} />
-      <LingdongPresetsDialog open={presetsOpen} onOpenChange={setPresetsOpen} workspacePath={workspacePath} workspaceIdentity={workspaceIdentity} />
+      <LingdongPresetsDialog
+        open={presetsOpen}
+        onOpenChange={setPresetsOpen}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+      />
       {/* 退出登录会注销平台 token 并重启回到登录门；先确认，避免学生误点丢当前会话。 */}
       <Dialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
         <DialogContent className="max-w-md gap-3">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-ui-lg">
-              <LogOut className="size-5" />退出登录
+              <LogOut className="size-5" />
+              退出登录
             </DialogTitle>
             <DialogDescription>
               退出后将注销当前平台账号并重新启动客户端，需要重新登录才能继续上课。课堂作品请先提交。
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setLogoutConfirmOpen(false)} disabled={logoutBusy}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setLogoutConfirmOpen(false)}
+              disabled={logoutBusy}
+            >
               取消
             </Button>
             <Button

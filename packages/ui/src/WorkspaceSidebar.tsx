@@ -71,6 +71,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
+import { usePlatform } from "@/hooks/usePlatform.js";
 import { logger } from "@/logger.js";
 import { NewTaskButtonGroup } from "@/NewTaskButtonGroup.js";
 import { selectWorkspaceZCodeState, useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
@@ -128,6 +129,7 @@ import {
   type SidebarTaskGroupTogglePresentation,
 } from "@/WorkspaceSidebar/taskGroupTogglePresentation.js";
 import { WorkspacePurposeSection } from "@/WorkspaceSidebar/WorkspacePurposeSection.js";
+import { filterWorkspaceTabsForClassroom } from "@/WorkspaceSidebar/classroomWorkspaceTabs.js";
 import { cn } from "@/components/lib/utils.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import {
@@ -369,7 +371,19 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   const expandAllWorkspaceTabs = useTabStore((state) => state.expandAllWorkspaceTabs);
   const collapseAllWorkspaceTabs = useTabStore((state) => state.collapseAllWorkspaceTabs);
 
-  const workspaceTabs = useMemo(() => tabs.filter(isWorkspaceTab), [tabs]);
+  const platform = usePlatform();
+  const classroomMode = Boolean(platform.classroom);
+  // 课堂模式只有一个当前工作区：过滤掉旧课堂和其他 ZCode 项目，避免同一学生看到历史工作区记录。
+  const workspaceTabs = useMemo(
+    () =>
+      filterWorkspaceTabsForClassroom({
+        tabs: tabs.filter(isWorkspaceTab),
+        classroomMode,
+        workspacePath,
+        workspaceIdentity,
+      }),
+    [classroomMode, tabs, workspaceIdentity, workspacePath],
+  );
   const { conversationWorkspaceTabs, projectWorkspaceTabs } = useMemo(
     () => partitionWorkspaceTabsByPurpose(workspaceTabs),
     [workspaceTabs],

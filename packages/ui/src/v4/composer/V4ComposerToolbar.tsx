@@ -18,6 +18,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BUILTIN_MODEL_PROVIDER_IDS,
+  LINGDONG_PLATFORM_PROVIDER_ID,
   getModelProviderFamilySpec,
   resolveModelProviderFamilySpecByProviderId,
   TID_V4_MODEL_CONFIG,
@@ -66,6 +67,7 @@ import type { ModelSelectionView } from "@zcode/services";
 import type { ModelSelectionState } from "@/hooks/useModelSelectionView.js";
 import { useProviderSettingsView } from "@/hooks/useProviderSettingsView.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useClassroomPlatformSnapshot } from "@/hooks/useClassroomPlatformSnapshot.js";
 import {
   useUsageEntitlement,
   type UsageEntitlementRefreshOptions,
@@ -729,6 +731,8 @@ function V4ComposerModelControlsImpl({
     });
   }, [draftMode, effectiveConfig, modelSelectionView?.revision]);
 
+  const { snapshot: classroomSnapshot } = useClassroomPlatformSnapshot({ pollMs: 1_000 });
+
   const modelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
     if (!modelSelectionView) return [];
     return buildRegistryModelSelectGroups(displayProvider, modelSelectionView, {
@@ -756,6 +760,34 @@ function V4ComposerModelControlsImpl({
       }),
     });
   }, [displayProvider, intl, modelSelectionView]);
+
+  const classroomModelSelectGroups = useMemo<ModelSelectGroup[]>(() => {
+    const displayNameById = new Map(
+      (classroomSnapshot?.models ?? [])
+        .map(
+          (model) =>
+            [String(model.id ?? "").trim(), String(model.displayName ?? "").trim()] as const,
+        )
+        .filter(([id, name]) => id && name),
+    );
+    if (displayNameById.size === 0) return modelSelectGroups;
+    return modelSelectGroups.map((group) => ({
+      ...group,
+      items: group.items.map((item) => {
+        const decoded = decodeCustomModelValue(item.value);
+        if (decoded?.providerId !== LINGDONG_PLATFORM_PROVIDER_ID || !decoded.modelName)
+          return item;
+        const displayName = displayNameById.get(decoded.modelName);
+        return displayName ? { ...item, name: displayName } : item;
+      }),
+    }));
+  }, [classroomSnapshot?.models, modelSelectGroups]);
+
+  const classroomQuotaLabel = useMemo(() => {
+    const quota = classroomSnapshot?.quota;
+    if (!quota) return "";
+    return quota.limit === null ? `${quota.used}/不限` : `${quota.used}/${quota.limit}`;
+  }, [classroomSnapshot?.quota?.limit, classroomSnapshot?.quota?.used]);
 
   // 修复：恢复「管理模型」入口（老版 onManageModels = 打开设置页并定位模型供应商区）。
   const handleOpenModelProviderSettings = useCallback(() => {
@@ -786,11 +818,11 @@ function V4ComposerModelControlsImpl({
     () =>
       resolveModelSelectTriggerDisplay(
         rawModelValue,
-        modelSelectGroups,
+        classroomModelSelectGroups,
         showManageModelsAction,
         manageModelsLabel,
       ),
-    [manageModelsLabel, modelSelectGroups, rawModelValue, showManageModelsAction],
+    [classroomModelSelectGroups, manageModelsLabel, rawModelValue, showManageModelsAction],
   );
   const normalizedModelValue = triggerDisplay.value ?? "";
 
@@ -802,18 +834,22 @@ function V4ComposerModelControlsImpl({
       modelSelectionView?.providers.find(
         (candidate) => candidate.providerId === effectiveConfig?.provider,
       )?.providerName ?? undefined;
-    return resolveV4ModelTriggerDisplay({
-      modelGroups: modelSelectGroups,
+    const resolved = resolveV4ModelTriggerDisplay({
+      modelGroups: classroomModelSelectGroups,
       normalizedValue: normalizedModelValue,
       fallbackLabel,
       providerId: effectiveConfig?.provider,
       providerName,
     });
+    // 平台模型只展示映射名，内部 Provider 名不进入学生界面。
+    return effectiveConfig?.provider === LINGDONG_PLATFORM_PROVIDER_ID
+      ? { fullLabel: resolved.modelLabel, modelLabel: resolved.modelLabel }
+      : resolved;
   }, [
     effectiveConfig?.provider,
     intl,
     modelSelectionView,
-    modelSelectGroups,
+    classroomModelSelectGroups,
     normalizedModelValue,
     triggerDisplay.placeholder,
   ]);
@@ -1041,7 +1077,7 @@ function V4ComposerModelControlsImpl({
         </span>
       ) : modelMenuVisible ? (
         <ModelConfigSelect
-          modelGroups={modelSelectGroups}
+          modelGroups={classroomModelSelectGroups}
           normalizedValue={normalizedModelValue}
           triggerLabel={modelTriggerDisplay.fullLabel}
           triggerLabelPrefix={modelTriggerDisplay.providerPrefix}
@@ -1087,6 +1123,14 @@ function V4ComposerModelControlsImpl({
           onOpenChange={handleThoughtPickerOpenChange}
           restoreFocusSelector={V4_COMPOSER_INPUT_SELECTOR}
         />
+      ) : null}
+      {classroomQuotaLabel ? (
+        <span
+          className="shrink-0 px-1 text-ui-sm tabular-nums text-foreground-subtle"
+          title={`本节课已发送 ${classroomQuotaLabel}`}
+        >
+          {classroomQuotaLabel}
+        </span>
       ) : null}
     </>
   );

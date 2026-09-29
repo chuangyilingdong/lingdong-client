@@ -9,7 +9,11 @@ import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 
-type LingdongUser = { readonly id?: string; readonly displayName?: string; readonly login?: string };
+type LingdongUser = {
+  readonly id?: string;
+  readonly displayName?: string;
+  readonly login?: string;
+};
 type LingdongClassroom = {
   readonly id: string;
   readonly lessonId?: string;
@@ -25,7 +29,11 @@ type LingdongContext = {
   readonly models?: readonly { readonly id?: unknown; readonly displayName?: unknown }[];
   readonly defaultModel?: unknown;
   readonly presets?: readonly { readonly title?: unknown; readonly text?: unknown }[];
-  readonly sends?: { readonly limit?: number | null; readonly used?: number; readonly remaining?: number | null } | null;
+  readonly sends?: {
+    readonly limit?: number | null;
+    readonly used?: number;
+    readonly remaining?: number | null;
+  } | null;
   readonly workspacePath?: string;
   readonly message?: string;
 };
@@ -90,16 +98,18 @@ function resolveWorkspace(context: LingdongContext, user: LingdongUser | undefin
   if (supplied) return supplied;
   const display = String(user?.displayName || user?.login || "学生").trim() || "学生";
   const classroom = context.classroom;
-  const lesson = String(classroom?.lessonTitle || classroom?.title || classroom?.id || "课堂")
-    .trim()
-    .replace(/[<>:"/\\|?*]+/gu, "-") || "课堂";
+  const lesson =
+    String(classroom?.lessonTitle || classroom?.title || classroom?.id || "课堂")
+      .trim()
+      .replace(/[<>:"/\\|?*]+/gu, "-") || "课堂";
   return join(app.getPath("documents"), "灵动ai创作", `${display}-${lesson}`);
 }
 
 async function buildProviderConfig(context: LingdongContext, targetPath?: string): Promise<string> {
   const path = targetPath || join(getAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME);
   providerBinding ??= createLingdongProviderBinding(path);
-  if (providerBinding.filePath !== path) throw new Error("课堂 Provider 配置根在会话中发生变化，请重新登录。");
+  if (providerBinding.filePath !== path)
+    throw new Error("课堂 Provider 配置根在会话中发生变化，请重新登录。");
   await providerBinding.apply(context);
   return path;
 }
@@ -110,22 +120,34 @@ function quotaFilePathForIdentity(identity: string): string {
   return join(getAppConfigDir(), "runtime", "lingdong-quota", `${key}.json`);
 }
 
-async function handleLogin(payload: unknown): Promise<{ ok: true; user?: LingdongUser; classroom: LingdongClassroom; workspacePath: string } | { ok: false; message: string }> {
+async function handleLogin(
+  payload: unknown,
+): Promise<
+  | { ok: true; user?: LingdongUser; classroom: LingdongClassroom; workspacePath: string }
+  | { ok: false; message: string }
+> {
   try {
     const input = record<unknown>(payload) ? payload : {};
     const login = typeof input.login === "string" ? input.login.trim() : "";
     const password = typeof input.password === "string" ? input.password : "";
     if (!login || !password) return { ok: false, message: "请输入账号和密码。" };
-    const rawSession = unwrap<Record<string, unknown>>(await apiRequest("/api/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ login, password }),
-    }));
+    const rawSession = unwrap<Record<string, unknown>>(
+      await apiRequest("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({ login, password }),
+      }),
+    );
     const token = String(rawSession.token || rawSession.accessToken || "").trim();
     if (!token) throw new Error("平台登录响应缺少 token。");
-    const session: LingdongSession = { token, user: record<unknown>(rawSession.user) ? rawSession.user as LingdongUser : undefined };
+    const session: LingdongSession = {
+      token,
+      user: record<unknown>(rawSession.user) ? (rawSession.user as LingdongUser) : undefined,
+    };
     // 产品规则：一个学生全局最多一个进行中的课堂，不存在"选课堂"。
     // 直接取 client-context 给出的那一节（platform 也支持 ?sessionId=，客户端不需要用）。
-    const context = unwrap<LingdongContext>(await apiRequest("/api/student/runtime/client-context", {}, session.token));
+    const context = unwrap<LingdongContext>(
+      await apiRequest("/api/student/runtime/client-context", {}, session.token),
+    );
     if (!context.classroom) throw new Error(context.message || "当前没有正在进行的课堂。");
     const workspacePath = resolveWorkspace(context, session.user);
     await mkdir(workspacePath, { recursive: true });
@@ -158,29 +180,57 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
   }
 }
 
-
-
 async function scanLingdongWorkspaceFiles(): Promise<unknown> {
   if (!activeState) return { ok: false, message: "平台登录尚未完成。", files: [] };
   const root = activeState.workspacePath;
-  const allowed = new Set([".html", ".htm", ".docx", ".xlsx", ".pptx", ".md", ".png", ".jpg", ".jpeg"]);
+  const allowed = new Set([
+    ".html",
+    ".htm",
+    ".docx",
+    ".xlsx",
+    ".pptx",
+    ".md",
+    ".png",
+    ".jpg",
+    ".jpeg",
+  ]);
   const files: Array<{ path: string; relativePath: string; size: number; updatedAt: number }> = [];
   const queue: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
   while (queue.length && files.length < 500) {
     const current = queue.shift();
     if (!current || current.depth > 5) continue;
     let entries: Awaited<ReturnType<typeof readdir>> = [];
-    try { entries = await readdir(current.path, { withFileTypes: true }); } catch { continue; }
+    try {
+      entries = await readdir(current.path, { withFileTypes: true });
+    } catch {
+      continue;
+    }
     for (const entry of entries) {
-      if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist") continue;
+      if (entry.name.startsWith(".") || entry.name === "node_modules" || entry.name === "dist")
+        continue;
       const path = join(current.path, entry.name);
-      if (entry.isDirectory()) { queue.push({ path, depth: current.depth + 1 }); continue; }
-      const extension = entry.name.includes(".") ? entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase() : "";
+      if (entry.isDirectory()) {
+        queue.push({ path, depth: current.depth + 1 });
+        continue;
+      }
+      const extension = entry.name.includes(".")
+        ? entry.name.slice(entry.name.lastIndexOf(".")).toLowerCase()
+        : "";
       if (!allowed.has(extension)) continue;
       try {
         const info = await stat(path);
-        files.push({ path, relativePath: path.slice(root.length).replace(/^[\\/]+/u, "").replaceAll("\\", "/"), size: info.size, updatedAt: info.mtimeMs });
-      } catch { /* ignore disappearing files */ }
+        files.push({
+          path,
+          relativePath: path
+            .slice(root.length)
+            .replace(/^[\\/]+/u, "")
+            .replaceAll("\\", "/"),
+          size: info.size,
+          updatedAt: info.mtimeMs,
+        });
+      } catch {
+        /* ignore disappearing files */
+      }
       if (files.length >= 500) break;
     }
   }
@@ -188,18 +238,72 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
   return { ok: true, files, workspacePath: root, workspaceIdentity: activeState.workspaceIdentity };
 }
 
-
 type SubmitItem = Readonly<{ path?: unknown; relativePath?: unknown }>;
 type WorkFilePayload = Readonly<{ name: string; content: string; binary: boolean }>;
 const WORK_TEXT_EXTENSIONS = new Set([
-  ".css", ".csv", ".htm", ".html", ".js", ".json", ".jsx", ".md", ".mjs", ".cjs",
-  ".svg", ".text", ".ts", ".tsx", ".txt", ".webmanifest", ".xml", ".yaml", ".yml",
+  ".css",
+  ".csv",
+  ".htm",
+  ".html",
+  ".js",
+  ".json",
+  ".jsx",
+  ".md",
+  ".mjs",
+  ".cjs",
+  ".svg",
+  ".text",
+  ".ts",
+  ".tsx",
+  ".txt",
+  ".webmanifest",
+  ".xml",
+  ".yaml",
+  ".yml",
 ]);
 const WORK_ALLOWED_EXTENSIONS = new Set([
-  ".htm", ".html", ".docx", ".xlsx", ".pptx", ".md", ".txt", ".csv", ".json", ".js",
-  ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".png", ".jpg", ".jpeg", ".gif", ".webp",
-  ".bmp", ".svg", ".mp3", ".wav", ".mp4", ".webm", ".mov", ".pdf", ".py", ".java",
-  ".c", ".cpp", ".h", ".hpp", ".cs", ".go", ".rs", ".lua", ".rb", ".php", ".sql", ".zip",
+  ".htm",
+  ".html",
+  ".docx",
+  ".xlsx",
+  ".pptx",
+  ".md",
+  ".txt",
+  ".csv",
+  ".json",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".bmp",
+  ".svg",
+  ".mp3",
+  ".wav",
+  ".mp4",
+  ".webm",
+  ".mov",
+  ".pdf",
+  ".py",
+  ".java",
+  ".c",
+  ".cpp",
+  ".h",
+  ".hpp",
+  ".cs",
+  ".go",
+  ".rs",
+  ".lua",
+  ".rb",
+  ".php",
+  ".sql",
+  ".zip",
 ]);
 const MAX_WORK_FILES = 60;
 const MAX_WORK_TOTAL_BYTES = 16 * 1024 * 1024;
@@ -215,7 +319,9 @@ function pathInside(root: string, candidate: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.includes(`..${sep}`));
 }
 
-async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<{ readonly files: WorkFilePayload[]; readonly entryPath: string }> {
+async function prepareSubmitFiles(
+  items: readonly SubmitItem[],
+): Promise<{ readonly files: WorkFilePayload[]; readonly entryPath: string }> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const root = await realpath(activeState.workspacePath);
   const files: WorkFilePayload[] = [];
@@ -238,7 +344,11 @@ async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<{ reado
     if (usedNames.has(name)) name = `${files.length}-${name}`;
     usedNames.add(name);
     const binary = !WORK_TEXT_EXTENSIONS.has(extension);
-    files.push({ name, content: binary ? bytes.toString("base64") : bytes.toString("utf8"), binary });
+    files.push({
+      name,
+      content: binary ? bytes.toString("base64") : bytes.toString("utf8"),
+      binary,
+    });
     if (!entryPath && SUBMITTABLE_ENTRY_EXTENSIONS.has(extension)) entryPath = absolute;
     totalBytes += info.size;
   }
@@ -248,17 +358,32 @@ async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<{ reado
 
 function coverMimeType(path: string): string {
   const extension = extname(path).toLowerCase();
-  return ({
-    ".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
-    ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-    ".mjs": "text/javascript; charset=utf-8", ".json": "application/json; charset=utf-8",
-    ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
-    ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf",
-  } as Record<string, string>)[extension] ?? "application/octet-stream";
+  return (
+    (
+      {
+        ".html": "text/html; charset=utf-8",
+        ".htm": "text/html; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".js": "text/javascript; charset=utf-8",
+        ".mjs": "text/javascript; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".svg": "image/svg+xml",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".gif": "image/gif",
+        ".webp": "image/webp",
+        ".woff": "font/woff",
+        ".woff2": "font/woff2",
+        ".ttf": "font/ttf",
+      } as Record<string, string>
+    )[extension] ?? "application/octet-stream"
+  );
 }
 
-async function captureHtmlCover(entryPath: string): Promise<{ readonly content: string } | undefined> {
+async function captureHtmlCover(
+  entryPath: string,
+): Promise<{ readonly content: string } | undefined> {
   if (![".html", ".htm"].includes(extname(entryPath).toLowerCase())) return undefined;
   const root = await realpath(activeState?.workspacePath || "").catch(() => "");
   const entry = await realpath(entryPath).catch(() => "");
@@ -267,29 +392,65 @@ async function captureHtmlCover(entryPath: string): Promise<{ readonly content: 
     try {
       const pathname = decodeURIComponent(new URL(request.url || "/", "http://127.0.0.1").pathname);
       const requested = resolve(root, `.${pathname}`);
-      if (!pathInside(root, requested)) { response.writeHead(403); response.end(); return; }
+      if (!pathInside(root, requested)) {
+        response.writeHead(403);
+        response.end();
+        return;
+      }
       const file = await realpath(requested);
-      if (!pathInside(root, file)) { response.writeHead(403); response.end(); return; }
+      if (!pathInside(root, file)) {
+        response.writeHead(403);
+        response.end();
+        return;
+      }
       const info = await stat(file);
-      if (!info.isFile()) { response.writeHead(404); response.end(); return; }
+      if (!info.isFile()) {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
       response.writeHead(200, { "content-type": coverMimeType(file), "cache-control": "no-store" });
       createReadStream(file).pipe(response);
-    } catch { response.writeHead(404); response.end(); }
+    } catch {
+      response.writeHead(404);
+      response.end();
+    }
   });
   try {
-    await new Promise<void>((resolveReady, rejectReady) => { server.once("error", rejectReady); server.listen(0, "127.0.0.1", () => resolveReady()); });
+    await new Promise<void>((resolveReady, rejectReady) => {
+      server.once("error", rejectReady);
+      server.listen(0, "127.0.0.1", () => resolveReady());
+    });
     const address = server.address();
     if (!address || typeof address === "string") return undefined;
-    const relativeEntry = relative(root, entry).split("\\").join("/").split("/").map(encodeURIComponent).join("/");
-    const window = new BrowserWindow({ show: false, width: 1280, height: 720, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false } });
+    const relativeEntry = relative(root, entry)
+      .split("\\")
+      .join("/")
+      .split("/")
+      .map(encodeURIComponent)
+      .join("/");
+    const window = new BrowserWindow({
+      show: false,
+      width: 1280,
+      height: 720,
+      webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
+    });
     try {
-      await Promise.race([window.loadURL(`http://127.0.0.1:${address.port}/${relativeEntry}`), new Promise((_, reject) => setTimeout(() => reject(new Error("cover timeout")), COVER_TIMEOUT_MS))]);
+      await Promise.race([
+        window.loadURL(`http://127.0.0.1:${address.port}/${relativeEntry}`),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("cover timeout")), COVER_TIMEOUT_MS),
+        ),
+      ]);
       await new Promise((resolveReady) => setTimeout(resolveReady, 450));
       let image = await window.webContents.capturePage({ x: 0, y: 0, width: 1280, height: 720 });
       let png = image.toPNG();
-      if (png.byteLength > COVER_MAX_BYTES) png = image.resize({ width: 1024, height: 576 }).toPNG();
+      if (png.byteLength > COVER_MAX_BYTES)
+        png = image.resize({ width: 1024, height: 576 }).toPNG();
       return png.byteLength <= COVER_MAX_BYTES ? { content: png.toString("base64") } : undefined;
-    } finally { window.destroy(); }
+    } finally {
+      window.destroy();
+    }
   } catch {
     return undefined;
   } finally {
@@ -300,11 +461,14 @@ async function captureHtmlCover(entryPath: string): Promise<{ readonly content: 
 async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const input = record<unknown>(payload) ? payload : {};
-  const rawItems = Array.isArray(input.items) ? input.items as SubmitItem[] : [];
+  const rawItems = Array.isArray(input.items) ? (input.items as SubmitItem[]) : [];
   const prepared = await prepareSubmitFiles(rawItems);
   const files = prepared.files;
-  const entry = files.find((file) => SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.name).toLowerCase()));
-  if (!entry || !prepared.entryPath) throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
+  const entry = files.find((file) =>
+    SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.name).toLowerCase()),
+  );
+  if (!entry || !prepared.entryPath)
+    throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
   const body: Record<string, unknown> = {
     name: entry.name,
     title: entry.name,
@@ -334,6 +498,7 @@ async function callPlatform(path: string, init: RequestInit = {}): Promise<unkno
 
 export async function getLingdongPlatformSnapshot(): Promise<unknown> {
   if (!activeState) return null;
+  const quota = await createLingdongQuotaLedger(activeState.quotaFilePath).read();
   return {
     user: activeState.session.user ?? null,
     classroom: activeState.context.classroom,
@@ -343,6 +508,7 @@ export async function getLingdongPlatformSnapshot(): Promise<unknown> {
     workspacePath: activeState.workspacePath,
     workspaceIdentity: activeState.workspaceIdentity,
     classroomId: activeState.context.classroom?.id ?? null,
+    quota,
   };
 }
 
@@ -373,7 +539,9 @@ function registerPlatformHandlers(): void {
     unwrap<Record<string, unknown>>(await callPlatform("/api/student/works?page=1&limit=20")),
   );
   ipcMain.handle("lingdong:platform-scan-workspace", () => scanLingdongWorkspaceFiles());
-  ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => submitWorkFromDesktop(payload));
+  ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) =>
+    submitWorkFromDesktop(payload),
+  );
   ipcMain.handle("lingdong:platform-logout", async () => {
     await logoutFromPlatform();
     app.relaunch();
@@ -423,13 +591,15 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState |
     };
     ipcMain.handle("lingdong:gate-login", onLogin);
     gateWindow = new BrowserWindow({
-      width: 460,
-      height: 650,
-      resizable: false,
+      width: 960,
+      height: 620,
+      minWidth: 720,
+      minHeight: 520,
+      resizable: true,
       minimizable: false,
       maximizable: false,
       show: false,
-      title: "灵动ai",
+      title: "灵动ai创作客户端",
       webPreferences: {
         contextIsolation: true,
         nodeIntegration: false,
@@ -447,7 +617,17 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState |
       }
       ipcMain.removeHandler("lingdong:gate-login");
     });
-    void gateWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(gateHtml())}`);
+    const gateFile = join(
+      app.isPackaged ? process.resourcesPath : app.getAppPath(),
+      app.isPackaged ? "gate" : "resources/gate",
+      "login.html",
+    );
+    // 品牌资源随包分发；资源异常时仍回退到内联登录页，不能让学生停在白屏。
+    void gateWindow
+      .loadFile(gateFile)
+      .catch(() =>
+        gateWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(gateHtml())}`),
+      );
   });
 }
 

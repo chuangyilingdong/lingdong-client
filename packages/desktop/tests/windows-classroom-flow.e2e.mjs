@@ -22,7 +22,9 @@ assert.equal(classroomSetup.status, 200, "重置课堂形态失败");
 const browser = await chromium.connectOverCDP(cdp);
 try {
   const context = browser.contexts()[0];
-  const gate = context.pages().find((page) => page.url().startsWith("data:text/html"));
+  const gate = context
+    .pages()
+    .find((page) => /login\.html/.test(page.url()) || page.url().startsWith("data:text/html"));
   if (gate) {
     await gate.locator("#login").fill("mock");
     await gate.locator("#password").fill("mock");
@@ -31,18 +33,21 @@ try {
     const main = await created;
     await main.waitForURL("file:**", { timeout: 30_000 });
   }
-  const page = context.pages().find((p) => p.url().startsWith("file:"));
+  const page = context
+    .pages()
+    .find((p) => p.url().startsWith("file:") && !/login\.html/.test(p.url()));
   assert.ok(page, "主窗口必须创建");
   const exitOnboarding = page.getByRole("button", { name: "退出引导", exact: true });
   await page
-    .getByRole("button", { name: "灵动ai 平台网关/mock-model", exact: true })
+    .getByRole("button", { name: "Mock Model", exact: true })
     .or(exitOnboarding)
     .first()
     .waitFor({ timeout: 30_000 });
   if (await exitOnboarding.isVisible()) await exitOnboarding.click();
-  await page
-    .getByRole("button", { name: "灵动ai 平台网关/mock-model", exact: true })
-    .waitFor({ timeout: 15_000 });
+  await page.getByRole("button", { name: "Mock Model", exact: true }).waitFor({ timeout: 15_000 });
+  await page.getByText("0/10", { exact: true }).waitFor({ timeout: 15_000 });
+  await page.getByText("联调学生", { exact: true }).first().waitFor({ timeout: 15_000 });
+  assert.equal(await page.getByText("oevdrnor", { exact: false }).count(), 0);
   assert.equal(await page.title(), "灵动ai创作客户端");
   await fetch(`${mock}/__test/mode`, { method: "POST", body: JSON.stringify({ mode: "text" }) });
   await page.locator('[data-testid="v4-composer-input"]').fill("请回复：课堂联调成功。");
@@ -60,6 +65,8 @@ try {
     .getByText("MOCK_TWO_TOOL_ROUNDS_OK", { exact: false })
     .last()
     .waitFor({ timeout: 30_000 });
+  await page.getByText("2/10", { exact: true }).waitFor({ timeout: 15_000 });
+  assert.equal(await page.getByText("灵动ai 平台网关", { exact: false }).count(), 0);
   // 课堂预设弹窗走 IPlatformService.classroom.getPresets()，与交作品同一条平台边界。
   await page.getByRole("button", { name: "课堂提示词预设", exact: true }).click();
   const presetsDialog = page.getByRole("dialog");

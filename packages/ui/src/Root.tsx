@@ -5,7 +5,9 @@ import {
   APP_RUNTIME_PREFERENCES_CHANGED_BROADCAST_CHANNEL,
   DesktopCommandIds,
   appRuntimePreferencesChangedBroadcastPayloadSchema,
+  type ClassroomPlatformSnapshot,
   type RemoteTarget,
+  type UserInfo,
 } from "@zcode/shared";
 import { TooltipProvider } from "@/components/ui/tooltip.js";
 import { Button } from "@/components/ui/button.js";
@@ -77,6 +79,7 @@ import { resolveProviderAvailabilityState } from "@/lib/modelProviderAvailabilit
 import { useProviderAvailabilityLoginEntryGuard } from "@/root/useProviderAvailabilityLoginEntryGuard.js";
 import { ensureProviderFamilyDomainMigration } from "@/lib/providerFamilyDomainMigration.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { useClassroomPlatformSnapshot } from "@/hooks/useClassroomPlatformSnapshot.js";
 import { CLOSE_ACTIVE_CONTEXT_REQUEST_EVENT } from "@/lib/closeActiveContext.js";
 import { AssistantCodeCommentFeatureProvider } from "@/AssistantCodeCommentFeatureProvider.js";
 import {
@@ -102,6 +105,17 @@ type WelcomeScreenOpenReason =
  *
  * 外层挂载 StoreProvider（连接广播服务）+ TabStoreProvider，内层处理认证和路由。
  */
+function resolveClassroomUserInfo(
+  classroomUser: ClassroomPlatformSnapshot["user"] | undefined,
+  fallback: UserInfo | null,
+): UserInfo | null {
+  if (!classroomUser) return fallback;
+  const displayName = classroomUser.displayName?.trim() || "";
+  const username = classroomUser.login?.trim() || displayName || classroomUser.id?.trim() || "";
+  const id = classroomUser.id?.trim() || username;
+  return id && username ? { id, username, displayName: displayName || username } : fallback;
+}
+
 export function Root(props: RootProps) {
   return (
     <LucideProvider strokeWidth={DEFAULT_LUCIDE_STROKE_WIDTH}>
@@ -190,6 +204,12 @@ function RootInner({
   const { intl, locale } = useZCodeIntl();
   const theme = useZCodeStore((state) => state.theme);
   const user = useZCodeStore((state) => state.user);
+  const classroomSnapshot = useClassroomPlatformSnapshot();
+  const classroomMode = Boolean(platform.classroom);
+  const effectiveUser = useMemo(
+    () => resolveClassroomUserInfo(classroomSnapshot.snapshot?.user, user),
+    [classroomSnapshot.snapshot?.user, user],
+  );
   const isRestoringOAuthSession = useZCodeStore((state) => state.isRestoringOAuthSession);
   const setUser = useZCodeStore((state) => state.setUser);
   const setIsRestoringOAuthSession = useZCodeStore((state) => state.setIsRestoringOAuthSession);
@@ -419,7 +439,7 @@ function RootInner({
 
   const shouldPreferDirectoryBrowser = Boolean(preferDirectoryBrowser);
   const supportsEmbeddedBrowser = explicitSupportsEmbeddedBrowser ?? Boolean(isDesktop);
-  const isResolvingStartupAuthState = isRestoringOAuthSession;
+  const isResolvingStartupAuthState = classroomMode ? false : isRestoringOAuthSession;
   const rootProviderAvailability = resolveProviderAvailabilityState({
     modelSelectionView: rootModelSelectionView,
   });
@@ -520,7 +540,7 @@ function RootInner({
     onProviderFamilyDomainClearedAfterLogout: () => {
       setWelcomeScreenOpenReason("logout-provider-required");
     },
-    userId: user?.id,
+    userId: effectiveUser?.id,
     onOpenRemoteConnection: allowRemoteWorkspace ? handleOpenRemoteConnection : undefined,
   });
   const handleRemoteWorkspaceActivated = useCallback(
@@ -695,8 +715,9 @@ function RootInner({
   }, [platform]);
 
   useRootOAuthEffects({
+    enabled: !classroomMode,
     accountIntentKey: JSON.stringify([
-      user?.id,
+      effectiveUser?.id,
       appSettings?.providerFamilyDomain,
       appSettings?.providerFamilyConnectionSelections,
     ]),

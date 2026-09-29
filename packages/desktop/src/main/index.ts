@@ -163,6 +163,7 @@ import {
   resolveZCodeEndpointEnvBaseOrigin,
   desktopRuntimeEnv,
   runtimeApplicationName,
+  runtimeDataBaseDir,
   runtimeHomePath,
   runtimeSessionDataPath,
   runtimeUserDataPath,
@@ -277,6 +278,11 @@ if (!shouldUseElectronDefaultUserDataPath) {
   }
   app.setPath("userData", runtimeUserDataPath);
   app.setPath("sessionData", runtimeSessionDataPath);
+}
+if (runtimeDataBaseDir) {
+  // 业务数据根必须在任何 Host/service 启动前落定，避免 logger、会话库和 provider 配置先写入官方 ~/.zcode。
+  setDataBaseDir(runtimeDataBaseDir);
+  process.env.ZCODE_DATA_BASE_DIR = runtimeDataBaseDir;
 }
 process.title = runtimeApplicationName;
 

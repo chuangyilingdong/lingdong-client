@@ -2,6 +2,7 @@ import { recordArmsCustomEventForE2E } from "@zcode/ui";
 import {
   DesktopCommandIds,
   buildLocalMediaPreviewUrl,
+  type ClassroomPlatformSnapshot,
   type IClassroomPlatformService,
   type IPlatformService,
 } from "@zcode/shared";
@@ -14,6 +15,8 @@ export function createDesktopPlatform(options: {
   // 课堂能力只在 main 登录门就绪后存在；preload 未注入时保持缺省，UI 按可缺省处理。
   const classroom: IClassroomPlatformService | undefined = window.lingdong
     ? {
+        getSnapshot: async () =>
+          (await window.lingdong!.getPlatformSnapshot()) as ClassroomPlatformSnapshot | null,
         getPresets: async () => (await window.lingdong!.getPlatformSnapshot())?.presets ?? [],
         scanWorkspaceFiles: () => window.lingdong!.scanWorkspaceFiles(),
         submitWork: (payload) => window.lingdong!.submitWork(payload),

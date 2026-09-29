@@ -79,7 +79,9 @@ try {
   const context = browser.contexts()[0];
   let gate;
   for (let i = 0; i < 60; i++) {
-    gate = context.pages().find((p) => p.url().startsWith("data:text/html"));
+    gate = context
+      .pages()
+      .find((p) => /login\.html/.test(p.url()) || p.url().startsWith("data:text/html"));
     if (gate) break;
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -100,7 +102,10 @@ while (Date.now() < deadline) {
 }
 spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
 
-assert.ok(log.includes(`[auto-update] downloaded: ${NEXT_VERSION}`), `打包态未完成更新下载；日志尾部：\n${log.slice(-1500)}`);
+assert.ok(
+  log.includes(`[auto-update] downloaded: ${NEXT_VERSION}`),
+  `打包态未完成更新下载；日志尾部：\n${log.slice(-1500)}`,
+);
 assert.ok(log.includes(`[auto-update] initializing, current version: ${APP_VERSION}`));
 assert.ok(log.includes(`[auto-update] new version available: ${NEXT_VERSION}`));
 const state = await (await fetch(`${mock}/__test/state`)).json();

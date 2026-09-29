@@ -6,13 +6,13 @@ ZCode 作为客户端底座，平台服务端继续保持现有账号、课堂�
 
 ## 现有接口继续保留
 
-| 方法 | 路径 | 用途 |
-|---|---|---|
-| POST | `/api/auth/login` | 平台账号登录，返回 `token` 和 `user` |
-| POST | `/api/auth/logout` | 注销当前平台账号 |
-| GET | `/api/student/runtime/client-context` | 当前课堂、网关、模型、预设、发送次数、课堂工作区 |
-| POST | `/api/student/runtime/submit-upload` | 上传/提交课堂作品 |
-| GET | `/api/student/works?page=1&limit=20` | 查询历史作品 |
+| 方法 | 路径                                  | 用途                                             |
+| ---- | ------------------------------------- | ------------------------------------------------ |
+| POST | `/api/auth/login`                     | 平台账号登录，返回 `token` 和 `user`             |
+| POST | `/api/auth/logout`                    | 注销当前平台账号                                 |
+| GET  | `/api/student/runtime/client-context` | 当前课堂、网关、模型、预设、发送次数、课堂工作区 |
+| POST | `/api/student/runtime/submit-upload`  | 上传/提交课堂作品                                |
+| GET  | `/api/student/works?page=1&limit=20`  | 查询历史作品                                     |
 
 接口响应可以是 `{ data: payload }` 或直接返回 payload；错误建议继续返回 `{ error: { code, message } }` 或 `{ message }`。
 
@@ -29,9 +29,7 @@ ZCode 作为客户端底座，平台服务端继续保持现有账号、课堂�
     "baseUrl": "https://aicyld.com/api/gateway/v1",
     "key": "短期运行时凭据"
   },
-  "models": [
-    { "id": "deepseek-flash", "displayName": "DeepSeek Flash" }
-  ],
+  "models": [{ "id": "deepseek-flash", "displayName": "DeepSeek Flash" }],
   "defaultModel": "deepseek-flash",
   "presets": [],
   "sends": { "limit": 20, "used": 0, "remaining": 20 },
@@ -159,13 +157,13 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 ### 服务端返回契约
 
-| 情况 | 返回 |
-|---|---|
-| 有可进的 VibeCoding 课堂 | `classroom` 有值 + `gateway`/`presets`/`sends` |
-| 课时同时声明画布 + VibeCoding | 同上（按课时声明的 `delivery_modes` 判定，可进入） |
-| 老师还没开始上课 | `classroom:null`、`upcoming` 给出"接下来哪一节"、`message:"老师还没有开始上课"`、**不下发密钥** |
-| 当前是画布课堂 | `classroom:null`/`classrooms:[]`/`upcoming:null`、`message:"当前是画布课堂，请在学生端进入画布课堂"`、**不带 gateway/presets/sends** |
-| 点名的那节课已结束（客户端不再触发） | `reason:CLASSROOM_NOT_AVAILABLE`、`message:"你选的那节课已经结束了"` |
+| 情况                                 | 返回                                                                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| 有可进的 VibeCoding 课堂             | `classroom` 有值 + `gateway`/`presets`/`sends`                                                                                       |
+| 课时同时声明画布 + VibeCoding        | 同上（按课时声明的 `delivery_modes` 判定，可进入）                                                                                   |
+| 老师还没开始上课                     | `classroom:null`、`upcoming` 给出"接下来哪一节"、`message:"老师还没有开始上课"`、**不下发密钥**                                      |
+| 当前是画布课堂                       | `classroom:null`/`classrooms:[]`/`upcoming:null`、`message:"当前是画布课堂，请在学生端进入画布课堂"`、**不带 gateway/presets/sends** |
+| 点名的那节课已结束（客户端不再触发） | `reason:CLASSROOM_NOT_AVAILABLE`、`message:"你选的那节课已经结束了"`                                                                 |
 
 ### 与平台现有注释的差异（需平台侧对齐）
 
@@ -181,12 +179,12 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂能力统一收敛为
 `IPlatformService.classroom`（`IClassroomPlatformService`）：
 
-| 方法 | 用途 | 说明 |
-|---|---|---|
-| `getPresets()` | 当前课堂提示词预设 | 插入草稿，不自动发送 |
-| `scanWorkspaceFiles()` | 扫描课堂工作区候选 | 返回 path/relativePath/size/updatedAt |
-| `submitWork(payload)` | 提交作品 | `copyrightConfirmed` 必须来自用户显式确认 |
-| `listWorks()` | 查询历史作品 | 提交后回显 |
+| 方法                   | 用途               | 说明                                      |
+| ---------------------- | ------------------ | ----------------------------------------- |
+| `getPresets()`         | 当前课堂提示词预设 | 插入草稿，不自动发送                      |
+| `scanWorkspaceFiles()` | 扫描课堂工作区候选 | 返回 path/relativePath/size/updatedAt     |
+| `submitWork(payload)`  | 提交作品           | `copyrightConfirmed` 必须来自用户显式确认 |
+| `listWorks()`          | 查询历史作品       | 提交后回显                                |
 
 约束：
 
@@ -383,11 +381,11 @@ Renderer → 平台 adapter 只读取投影，不自行维护计数
 
 Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 
-| 场景 | 网关请求 | 额度提示 |
-|---|---|---|
-| `limit=0` | 0（本地即拦） | 显示 |
-| `limit=1` | 1（第二次本地拦截） | 显示 |
-| `limit=null` 连发 3 次 | 3（不误判为 0） | 不显示 |
+| 场景                   | 网关请求            | 额度提示 |
+| ---------------------- | ------------------- | -------- |
+| `limit=0`              | 0（本地即拦）       | 显示     |
+| `limit=1`              | 1（第二次本地拦截） | 显示     |
+| `limit=null` 连发 3 次 | 3（不误判为 0）     | 不显示   |
 
 补充事实：同一轮含 2 次工具往返回合时会话共产生 4 次网关流式请求，账本 `used` 仍为 2，证明工具回合与模型重试不重复扣减。
 
@@ -417,18 +415,18 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 
 ### 已确认一致（客户端无需改动）
 
-| 项 | 平台结论 | 客户端 |
-|---|---|---|
-| 5 个接口路径 | 不变，且加常驻守卫 | 一致 |
-| `gateway.baseUrl` | `https://aicyld.com/api/gateway/v1`，不含 `/chat/completions` | 一致（SDK 自行拼 `/chat/completions`） |
-| tool call + 流式 usage | 已支持并真请求验过 | 一致 |
-| 缓存 token + 每轮耗时日志 | 已支持两套命名 | 一致 |
-| 401/403/`SESSION_SUPERSEDED`/429 | `SESSION_SUPERSEDED`=401；超限=429 | 客户端原样展示 `error.message`（已测） |
-| 不依赖 DSH 字段 | 响应无任何 DSH 字段 | 一致 |
-| `classroom` / `models` / `presets` 形状 | `{id,lessonId,title}` / `{id,displayName}` / `[{title,text}]` | 一致（显示用 displayName，请求用 id） |
-| 响应包络 | 成功 `{success,ok,data}`，错误 `{error:{code,message}}` | 客户端统一 `unwrap(data)` + 取 `error.message`（已用 mock 包络验证） |
-| 作品上限 | 60 文件 / 16 MiB / 24 MB body | 与客户端默认一致 |
-| 封面失败不阻断 | 只记 warnings | 客户端把封面当 best-effort |
+| 项                                      | 平台结论                                                      | 客户端                                                               |
+| --------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 5 个接口路径                            | 不变，且加常驻守卫                                            | 一致                                                                 |
+| `gateway.baseUrl`                       | `https://aicyld.com/api/gateway/v1`，不含 `/chat/completions` | 一致（SDK 自行拼 `/chat/completions`）                               |
+| tool call + 流式 usage                  | 已支持并真请求验过                                            | 一致                                                                 |
+| 缓存 token + 每轮耗时日志               | 已支持两套命名                                                | 一致                                                                 |
+| 401/403/`SESSION_SUPERSEDED`/429        | `SESSION_SUPERSEDED`=401；超限=429                            | 客户端原样展示 `error.message`（已测）                               |
+| 不依赖 DSH 字段                         | 响应无任何 DSH 字段                                           | 一致                                                                 |
+| `classroom` / `models` / `presets` 形状 | `{id,lessonId,title}` / `{id,displayName}` / `[{title,text}]` | 一致（显示用 displayName，请求用 id）                                |
+| 响应包络                                | 成功 `{success,ok,data}`，错误 `{error:{code,message}}`       | 客户端统一 `unwrap(data)` + 取 `error.message`（已用 mock 包络验证） |
+| 作品上限                                | 60 文件 / 16 MiB / 24 MB body                                 | 与客户端默认一致                                                     |
+| 封面失败不阻断                          | 只记 warnings                                                 | 客户端把封面当 best-effort                                           |
 
 ### 本次按平台回复做的客户端改动
 
@@ -451,3 +449,28 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
    - 客户端侧由 ZCode 自己的上下文压缩负责长期记忆，网关截断不宜作为主要机制，
      否则学生做到第 15 轮会突然"忘记"前面的要求，且界面上看不出原因。
 3. **`submit-upload` 的 `works` 待发版**：发版前客户端走 `GET /student/works` 回落，功能不受影响。
+
+## 2026-09-29 UI 联动补充
+
+客户端已直接消费以下字段，平台不需要新增接口，但必须保证字段语义和值稳定：
+
+1. `POST /api/auth/login` 返回的 `data.user` 用于课堂底部“当前学生”显示：
+   - 优先显示 `displayName`，缺省回退 `login`；
+   - 官方 ZCode OAuth 账号不再用于课堂身份显示。
+2. `client-context.models[]` 是学生可见模型名的唯一来源：
+   - 请求仍使用 `id`；
+   - UI 直接显示 `displayName`；为空时回退 `id`；
+   - 不要把内部 Provider、渠道或网关名称拼到学生可见模型名中。
+3. `client-context.sends` 用于发送按钮旁展示 `used/limit`：
+   - UI 展示本机投影，登录时以平台 `used` 为基线；
+   - `limit=null` 显示 `used/不限`；
+   - 平台在课堂中重置用量时应同时重置/重新登录课堂，保证 `used` 语义单调。
+4. 工作区历史不来自平台：客户端课堂模式只保留当前课堂工作区；平台只负责下发当前 `classroom` 和模型/额度，不提供历史项目选择。
+5. 登录页与安装器品牌是客户端资源；平台不需要下发 HTML、Logo 或安装器配置。
+
+平台仍需完成的前置事项：
+
+- 发版 `submit-upload` 的 `works` 字段；客户端当前已有 `GET /student/works` 回落，不阻塞使用。
+- 决定 `MAX_HISTORY=40` 是否可配并在截断时返回标记；当前客户端无法感知静默丢历史。
+- 明确“本节课一次都不许发”的产品语义；当前平台口径 `0 = 不限`，无法表达零发送课堂。
+- 用真实学生账号联调 `SESSION_SUPERSEDED`、`SEND_QUOTA_EXCEEDED`，并核对缓存 usage 与 `usage_records` / `compute_attempts`。

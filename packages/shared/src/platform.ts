@@ -516,10 +516,46 @@ export type CuaOsSupport =
   | { kind: "macos-below-minimum"; minimumMacOs: string; currentMacOs: string }
   | { kind: "not-applicable" };
 
+/** 灵动ai 课堂 Provider 的内部稳定 ID；UI 只在识别平台模型时按此值处理展示。 */
+export const LINGDONG_PLATFORM_PROVIDER_ID = "lingdong-platform-gateway" as const;
+
 /** 灵动ai 课堂提示词预设：插入草稿，不自动发送。 */
 export interface ClassroomPreset {
   readonly title?: string;
   readonly text?: string;
+}
+
+/** 平台返回的学生账号；登录后只读投影给侧栏，不进入 ZCode OAuth 状态。 */
+export interface ClassroomPlatformUser {
+  readonly id?: string;
+  readonly displayName?: string;
+  readonly login?: string;
+}
+
+/** 平台模型映射；displayName 为空时 UI 回退显示 id。 */
+export interface ClassroomPlatformModel {
+  readonly id?: unknown;
+  readonly displayName?: unknown;
+}
+
+/** 课堂发送次数投影；limit=null 表示不限次。 */
+export interface ClassroomQuota {
+  readonly limit: number | null;
+  readonly used: number;
+  readonly remaining: number | null;
+}
+
+/** Main 下发到 renderer 的课堂只读快照。 */
+export interface ClassroomPlatformSnapshot {
+  readonly user?: ClassroomPlatformUser | null;
+  readonly classroom?: { readonly id?: string; readonly title?: string } | null;
+  readonly models?: readonly ClassroomPlatformModel[];
+  readonly defaultModel?: string | null;
+  readonly presets?: readonly ClassroomPreset[];
+  readonly workspacePath?: string;
+  readonly workspaceIdentity?: string;
+  readonly classroomId?: string | null;
+  readonly quota?: ClassroomQuota;
 }
 
 /** 课堂工作区候选文件；path 用于提交，relativePath 用于展示。 */
@@ -571,6 +607,8 @@ export interface ClassroomWorksList {
  * 消费方必须按可缺省处理。
  */
 export interface IClassroomPlatformService {
+  /** 当前课堂只读快照：学生账号、模型映射、额度与课堂工作区身份。 */
+  getSnapshot(): Promise<ClassroomPlatformSnapshot | null>;
   /** 平台下发的当前课堂提示词预设 */
   getPresets(): Promise<readonly ClassroomPreset[]>;
   /** 扫描当前课堂工作区候选文件 */

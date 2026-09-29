@@ -31,7 +31,9 @@ assert.equal(configured.status, 200, "设置用量失败");
 const browser = await chromium.connectOverCDP(cdp);
 try {
   const context = browser.contexts()[0];
-  const gate = context.pages().find((page) => page.url().startsWith("data:text/html"));
+  const gate = context
+    .pages()
+    .find((page) => /login\.html/.test(page.url()) || page.url().startsWith("data:text/html"));
   if (gate) {
     await gate.locator("#login").fill("mock");
     await gate.locator("#password").fill("mock");
@@ -39,14 +41,18 @@ try {
   }
   let page;
   for (let attempt = 0; attempt < 60; attempt++) {
-    page = context.pages().find((candidate) => candidate.url().startsWith("file:"));
+    page = context
+      .pages()
+      .find(
+        (candidate) => candidate.url().startsWith("file:") && !/login\.html/.test(candidate.url()),
+      );
     if (page) break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
   assert.ok(page, "主窗口未创建");
 
   const exitOnboarding = page.getByRole("button", { name: "退出引导", exact: true });
-  const modelButton = page.getByRole("button", { name: /灵动ai 平台网关\/mock-model/ });
+  const modelButton = page.getByRole("button", { name: /Mock Model/ });
   await modelButton.or(exitOnboarding).first().waitFor({ timeout: 30_000 });
   if (await exitOnboarding.isVisible()) await exitOnboarding.click();
   await modelButton.waitFor({ timeout: 15_000 });
@@ -54,7 +60,10 @@ try {
   // 一轮主会话请求，让 usage 落到上下文统计里。
   await page.locator('[data-testid="v4-composer-input"]').fill("请回复：缓存链路验证。");
   await page.getByRole("button", { name: "发送", exact: true }).click();
-  await page.getByText("MOCK_GATEWAY_RESPONSE", { exact: false }).last().waitFor({ timeout: 30_000 });
+  await page
+    .getByText("MOCK_GATEWAY_RESPONSE", { exact: false })
+    .last()
+    .waitFor({ timeout: 30_000 });
 
   // 打开输入栏的上下文用量面板，读"平均缓存命中率"。
   const trigger = page.locator('[data-testid="chat-context-usage-trigger"]');

@@ -15,8 +15,7 @@ import { chromium } from "playwright-core";
 
 const cdp = process.env.LINGDONG_E2E_CDP || "http://127.0.0.1:9229";
 const mock = process.env.LINGDONG_E2E_MOCK || "http://127.0.0.1:19090";
-const sessionPath =
-  process.env.LINGDONG_E2E_SESSION || ".tmp/windows-platform-e2e/session.json";
+const sessionPath = process.env.LINGDONG_E2E_SESSION || ".tmp/windows-platform-e2e/session.json";
 const scenario = process.argv[2] || "single";
 assert.ok(
   ["single", "two-active", "not-started", "canvas"].includes(scenario),
@@ -41,10 +40,16 @@ assert.equal(setup.status, 200, "设置课堂形态失败");
 const browser = await chromium.connectOverCDP(cdp);
 try {
   const context = browser.contexts()[0];
-  const gate = context.pages().find((page) => page.url().startsWith("data:text/html"));
+  const gate = context
+    .pages()
+    .find((page) => /login\.html/.test(page.url()) || page.url().startsWith("data:text/html"));
   assert.ok(gate, "需要全新的隔离登录实例");
   const mainPageOf = () =>
-    context.pages().find((candidate) => candidate.url().startsWith("file:"));
+    context
+      .pages()
+      .find(
+        (candidate) => candidate.url().startsWith("file:") && !/login\.html/.test(candidate.url()),
+      );
 
   // 登录窗本身不得内置任何"选课堂"入口；登录成功后该窗口会被关闭，所以这里先断言。
   const gateHtml = await gate.content();
@@ -57,9 +62,7 @@ try {
 
   if (scenario === "not-started" || scenario === "canvas") {
     const expected =
-      scenario === "not-started"
-        ? "老师还没有开始上课"
-        : "当前是画布课堂，请在学生端进入画布课堂";
+      scenario === "not-started" ? "老师还没有开始上课" : "当前是画布课堂，请在学生端进入画布课堂";
     await gate.locator("#status").filter({ hasText: expected }).waitFor({ timeout: 20_000 });
     await new Promise((resolve) => setTimeout(resolve, 3000));
     assert.equal(mainPageOf() ?? null, null, `${scenario} 不得创建主窗口`);
@@ -88,10 +91,7 @@ try {
     const url = decodeURIComponent(page.url());
     assert.ok(url.includes("classroom"), `主窗口应指向课堂工作区：${url.slice(0, 300)}`);
     if (scenario === "two-active") {
-      assert.ok(
-        !url.includes("classroom-b"),
-        "脏数据下也必须用平台给出的那一节，不得由客户端改选",
-      );
+      assert.ok(!url.includes("classroom-b"), "脏数据下也必须用平台给出的那一节，不得由客户端改选");
     }
 
     assert.equal(platformState.activeClassroomId, "classroom-e2e");

@@ -79,8 +79,9 @@ async function waitForPage(browser, predicate, label, timeoutMs = 60_000) {
   assert.fail(`${label} 超时`);
 }
 
-const isGateUrl = (page) => page.url().startsWith("data:text/html");
-const isMainUrl = (page) => page.url().startsWith("file:");
+const isGateUrl = (page) =>
+  /login\.html/.test(page.url()) || page.url().startsWith("data:text/html");
+const isMainUrl = (page) => page.url().startsWith("file:") && !/login\.html/.test(page.url());
 
 const login = async (page, loginName) => {
   await page.locator("#login").fill(loginName);
@@ -95,7 +96,7 @@ const first = await connect();
 const gate = await waitForPage(first, isGateUrl, "登录门");
 await login(gate, "mock");
 const main = await waitForPage(first, isMainUrl, "主窗口");
-const modelButton = main.getByRole("button", { name: /灵动ai 平台网关\/mock-model/ });
+const modelButton = main.getByRole("button", { name: /Mock Model/ });
 const exitOnboarding = main.getByRole("button", { name: "退出引导", exact: true });
 await modelButton.or(exitOnboarding).first().waitFor({ timeout: 30_000 });
 if (await exitOnboarding.isVisible()) await exitOnboarding.click();
@@ -132,7 +133,7 @@ const gateAgain = restarted.page;
 await login(gateAgain, "mock-another");
 const mainAgain = await waitForPage(second, isMainUrl, "换号后的主窗口");
 await mainAgain
-  .getByRole("button", { name: /灵动ai 平台网关\/mock-model/ })
+  .getByRole("button", { name: /Mock Model/ })
   .or(mainAgain.getByRole("button", { name: "退出引导", exact: true }))
   .first()
   .waitFor({ timeout: 30_000 });

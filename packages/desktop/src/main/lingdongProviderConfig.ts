@@ -2,9 +2,10 @@ import {
   decodeProviderConfigFile,
   NodePersonalProviderConfigRepository,
 } from "@zcode/provider-node";
+import { LINGDONG_PLATFORM_PROVIDER_ID } from "@zcode/shared";
 import type { ModelSelection } from "@zcode/shared/model-selection";
 
-export const LINGDONG_PROVIDER_ID = "lingdong-platform-gateway";
+export const LINGDONG_PROVIDER_ID = LINGDONG_PLATFORM_PROVIDER_ID;
 export interface LingdongProviderContext {
   readonly gateway?: { readonly baseUrl?: string; readonly key?: string };
   readonly models?: readonly { readonly id?: unknown; readonly displayName?: unknown }[];
@@ -51,7 +52,7 @@ export function createLingdongProviderBinding(filePath: string) {
           providerRules: [
             {
               providerId: LINGDONG_PROVIDER_ID,
-              providerName: "灵动ai 平台网关",
+              providerName: "课堂模型",
               config: {
                 group: "standard-personal",
                 personalModelIds: ids,

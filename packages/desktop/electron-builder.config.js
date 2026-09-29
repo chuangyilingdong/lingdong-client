@@ -570,6 +570,12 @@ export default {
   },
   extraResources: [
     { from: resolve(workspaceRoot, noticesFileName), to: noticesFileName },
+    {
+      // DSH 品牌登录页：HTML 内使用相对 src 读取同目录资源，打包后放到 resources/gate。
+      from: resolve(desktopPackageRoot, "resources/gate"),
+      to: "gate",
+      filter: ["**/*"],
+    },
     ...(targetPlatform.os === "darwin"
       ? [
           {
@@ -758,6 +764,9 @@ export default {
     installerIcon: "build/icon_installer.ico",
     uninstallerIcon: "build/icon_installer.ico",
     installerHeaderIcon: "build/icon_installer.ico",
+    // 恢复 DSH 品牌视觉：安装/卸载向导左侧栏保留同一张 164x314 BMP。
+    installerSidebar: "build/installerSidebar.bmp",
+    uninstallerSidebar: "build/uninstallerSidebar.bmp",
   },
   detectUpdateChannel: false,
   publish: {

@@ -48,7 +48,12 @@ async function launchApp({ profileName, digest, withAuth = true, omitPlatformEnt
     files: omitPlatformEntry
       ? {}
       : {
-          "win-x64": { version: NEXT_VERSION, name: artifactName, size: bytes.byteLength, sha256: digest },
+          "win-x64": {
+            version: NEXT_VERSION,
+            name: artifactName,
+            size: bytes.byteLength,
+            sha256: digest,
+          },
         },
   };
   const configured = await fetch(`${mock}/__test/update`, {
@@ -72,9 +77,11 @@ async function launchApp({ profileName, digest, withAuth = true, omitPlatformEnt
   };
   delete env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE;
   delete env.ELECTRON_RUN_AS_NODE;
-  const child = spawn(resolve(".tmp/electron-local-41/electron.exe"),
+  const child = spawn(
+    resolve(".tmp/electron-local-41/electron.exe"),
     [resolve("packages/desktop"), `--remote-debugging-port=${cdpPort}`],
-    { cwd: process.cwd(), env, windowsHide: true, stdio: ["ignore", logFd, logFd] });
+    { cwd: process.cwd(), env, windowsHide: true, stdio: ["ignore", logFd, logFd] },
+  );
   child.on("error", (error) => console.error("APP_SPAWN_ERROR", error));
   session.appPid = child.pid;
   session.profile = profile;
@@ -116,7 +123,9 @@ async function loginThroughGate() {
     const context = browser.contexts()[0];
     let gate;
     for (let i = 0; i < 40; i++) {
-      gate = context.pages().find((p) => p.url().startsWith("data:text/html"));
+      gate = context
+        .pages()
+        .find((p) => /login\.html/.test(p.url()) || p.url().startsWith("data:text/html"));
       if (gate) break;
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -125,7 +134,8 @@ async function loginThroughGate() {
     await gate.locator("#password").fill("mock");
     await gate.locator("#submit").click();
     for (let i = 0; i < 60; i++) {
-      if (context.pages().some((p) => p.url().startsWith("file:"))) return;
+      if (context.pages().some((p) => p.url().startsWith("file:") && !/login\.html/.test(p.url())))
+        return;
       await new Promise((r) => setTimeout(r, 500));
     }
     assert.fail("主窗口未创建");
@@ -157,14 +167,13 @@ try {
   await loginThroughGate();
   const badLog = await waitForLog(
     bad.logPath,
-    (text) => text.includes(`[auto-update] downloaded: ${NEXT_VERSION}`) || /\[auto-update\] error:/.test(text),
+    (text) =>
+      text.includes(`[auto-update] downloaded: ${NEXT_VERSION}`) ||
+      /\[auto-update\] error:/.test(text),
     120_000,
     "反向更新校验",
   );
-  assert.ok(
-    /\[auto-update\] error:/.test(badLog),
-    "sha256 不匹配时必须报错",
-  );
+  assert.ok(/\[auto-update\] error:/.test(badLog), "sha256 不匹配时必须报错");
   assert.ok(
     !badLog.includes(`[auto-update] downloaded: ${NEXT_VERSION}`),
     "sha256 不匹配时不得进入已下载状态",
@@ -181,7 +190,8 @@ try {
   await loginThroughGate();
   const missingLog = await waitForLog(
     missing.logPath,
-    (text) => text.includes("[auto-update] already up to date") || /\[auto-update\] error:/.test(text),
+    (text) =>
+      text.includes("[auto-update] already up to date") || /\[auto-update\] error:/.test(text),
     120_000,
     "缺少本平台条目",
   );
@@ -189,10 +199,7 @@ try {
     missingLog.includes("[auto-update] already up to date"),
     "缺少本平台条目时应判定为暂无更新",
   );
-  assert.ok(
-    !/\[auto-update\] error:/.test(missingLog),
-    "缺少本平台条目不得记成更新失败",
-  );
+  assert.ok(!/\[auto-update\] error:/.test(missingLog), "缺少本平台条目不得记成更新失败");
   stopApp();
 
   console.log(

@@ -276,3 +276,19 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 
 - Windows-only 发布必须带 `--single-platform`；脚本会在同一原子写回中移除另一平台条目。
 - 当前线上只保留 Windows 条目；Mac 端按本次口径暂缓，后续若要恢复需重新产出同版本包。
+
+## UI、账号与数据隔离补强（2026-09-29 续）
+
+- 正式包 Electron applicationName 改为 `灵动ai创作客户端`，业务数据根改为自己的 userData；不再读取或写入官方 `~/.zcode` / `%APPDATA%\\ZCode`。
+- 登录页恢复 DSH 品牌资源：红底、吉祥物、Logo、玻璃登录卡；资源位于 `packages/desktop/resources/gate`，打包后进入 `resources/gate`。
+- 课堂底部显式显示平台学生名；模型触发器显示 `client-context.models[].displayName`，不再显示内部 Provider 名；发送按钮旁显示 `used/limit` 或 `used/不限`。
+- 课堂模式侧栏只保留当前课堂 workspace identity；其他课堂和普通 ZCode 项目不显示。
+- 安装器恢复 DSH 品牌图标和 164x314 安装/卸载侧栏图；完整自定义 NSIS 窗口（旧 `window-frame.dll` 主题）仍未整体移植。
+- 本轮验证：`pnpm test:platform` 22/22；本地 13 项 E2E 全通过；新构建打包态课堂主流程通过；登录页截图已人工验收。
+
+### 最终 UI/隔离候选包（未发布）
+
+- 文件：`lingdong-client-0.2.0-zcode.2-win-x64.exe`
+- 大小：`150,831,395` 字节
+- SHA256：`e16dea120cab3d2afe460828f4f4043a30e1d7d22098a86a4670d162a17fadf2`
+- 打包态课堂全链路、最终安装器静默安装/启动/卸载均通过。

@@ -50,10 +50,16 @@ let cleanupPath = null;
 const browser = await chromium.connectOverCDP(cdp);
 try {
   const context = browser.contexts()[0];
-  const gate = context.pages().find((page) => page.url().startsWith("data:text/html"));
+  const gate = context
+    .pages()
+    .find((page) => /login\.html/.test(page.url()) || page.url().startsWith("data:text/html"));
   assert.ok(gate, "需要全新的隔离登录实例");
   const mainPageOf = () =>
-    context.pages().find((candidate) => candidate.url().startsWith("file:"));
+    context
+      .pages()
+      .find(
+        (candidate) => candidate.url().startsWith("file:") && !/login\.html/.test(candidate.url()),
+      );
 
   await gate.locator("#login").fill("mock");
   await gate.locator("#password").fill("mock");
@@ -64,7 +70,9 @@ try {
     await gate.locator("#status").filter({ hasText: expected }).waitFor({ timeout: 20_000 });
     await new Promise((resolve) => setTimeout(resolve, 2000));
     assert.equal(mainPageOf() ?? null, null, "被顶号时不得进入工作区");
-    console.log(JSON.stringify({ pass: true, scenario, sessionSuperseded: true, message: expected }));
+    console.log(
+      JSON.stringify({ pass: true, scenario, sessionSuperseded: true, message: expected }),
+    );
   } else {
     let page;
     for (let attempt = 0; attempt < 60; attempt++) {
@@ -76,7 +84,7 @@ try {
     // 首次启动会先弹引导页，与其它 E2E 一样先退出引导再断言平台数据。
     const exitOnboarding = page.getByRole("button", { name: "退出引导", exact: true });
     const modelButton = page.getByRole("button", {
-      name: /灵动ai 平台网关\/mock-model/,
+      name: /Mock Model/,
     });
     await modelButton.or(exitOnboarding).first().waitFor({ timeout: 30_000 });
     if (await exitOnboarding.isVisible()) await exitOnboarding.click();
