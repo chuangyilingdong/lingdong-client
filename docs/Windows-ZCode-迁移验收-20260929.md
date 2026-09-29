@@ -2,7 +2,7 @@
 
 ## 范围与结论
 
-本轮只推进 Windows；没有发布，没有修改学习平台仓库，不处理 Mac。**迁移尚未整体完成**。
+本轮只推进 Windows；Windows 已发布 `0.2.0-zcode.2`，没有修改学习平台仓库，不处理 Mac。**迁移尚未整体完成**。
 
 本轮修复：
 
@@ -15,16 +15,16 @@
 
 ## 已执行验证
 
-| 验证 | 结果 | 边界 |
-|---|---|---|
-| `pnpm typecheck` | 通过 | 当前源码 |
-| `pnpm lint` | 通过，68 warnings / 0 errors | 警告为当前仓库已有项 |
-| `pnpm architecture:check --changed` | 通过，0 violations | baseline / new 均为 0 |
-| `pnpm test:platform` | 9 / 9 通过 | 配置 codec / Runtime + 启动登录条件 |
-| `pnpm smoke:platform` | 通过 | mock 接口合同，不是实际模型运行 |
-| Desktop `build:no-runtime-assets` | 通过 | 源码产物；UI 后续单独重建也通过 |
-| `pnpm smoke:platform:windows` | 通过 | 本机 Electron + 独立测试数据目录 + localhost mock |
-| 正常退出 | 通过 | Host/Agent 退出，个人配置文件保留，平台条目已移除 |
+| 验证                                | 结果                         | 边界                                              |
+| ----------------------------------- | ---------------------------- | ------------------------------------------------- |
+| `pnpm typecheck`                    | 通过                         | 当前源码                                          |
+| `pnpm lint`                         | 通过，68 warnings / 0 errors | 警告为当前仓库已有项                              |
+| `pnpm architecture:check --changed` | 通过，0 violations           | baseline / new 均为 0                             |
+| `pnpm test:platform`                | 9 / 9 通过                   | 配置 codec / Runtime + 启动登录条件               |
+| `pnpm smoke:platform`               | 通过                         | mock 接口合同，不是实际模型运行                   |
+| Desktop `build:no-runtime-assets`   | 通过                         | 源码产物；UI 后续单独重建也通过                   |
+| `pnpm smoke:platform:windows`       | 通过                         | 本机 Electron + 独立测试数据目录 + localhost mock |
+| 正常退出                            | 通过                         | Host/Agent 退出，个人配置文件保留，平台条目已移除 |
 
 Windows E2E 已从 UI 执行：
 
@@ -74,11 +74,11 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 
 实测（独立测试数据根 + localhost mock，`pnpm smoke:platform:quota*`）：
 
-| 场景 | 网关流式请求 | 额度提示 |
-|---|---|---|
-| `limit=0` | 0 | 显示 |
-| `limit=1` | 1（第二次本地拦截，无新请求） | 显示 |
-| `limit=null` 连发 3 次 | 3 | 不显示 |
+| 场景                   | 网关流式请求                  | 额度提示 |
+| ---------------------- | ----------------------------- | -------- |
+| `limit=0`              | 0                             | 显示     |
+| `limit=1`              | 1（第二次本地拦截，无新请求） | 显示     |
+| `limit=null` 连发 3 次 | 3                             | 不显示   |
 
 额度单元测试 6/6：空值不误判为 0、显式 0 拦截、同命令重放只占一次、明确拒绝释放预留、ACK 不确定保留、两个 ledger 实例并发只放行最后一个名额、平台 used 更新不会压低本机已接受计数。
 
@@ -99,10 +99,10 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 
 已用真实 `autoUpdater` + `ManifestUpdateProvider` + 本地 mock 清单跑通：
 
-| 场景 | 期望 | 结果 |
-|---|---|---|
+| 场景                                                | 期望                                             | 结果 |
+| --------------------------------------------------- | ------------------------------------------------ | ---- |
 | 清单 `version=0.2.0-zcode.2`、`sha256` 与安装包一致 | 检出更新 → 下载 → 校验通过 → `update-downloaded` | 通过 |
-| 清单 `sha256` 被篡改 | 校验失败报错，且不得进入 `update-downloaded` | 通过 |
+| 清单 `sha256` 被篡改                                | 校验失败报错，且不得进入 `update-downloaded`     | 通过 |
 
 证据来自 main 进程日志与 mock 侧下载计数：
 
@@ -123,14 +123,14 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 
 前面两个阻断缺陷（强更门误拦、Provider schema 不合法）只在打包/真实路径暴露，因此本轮补做了打包态验证。使用 `win-unpacked` 产物（未安装到系统，避免污染本机），连本地 mock：
 
-| 验证 | 命令 | 结果 |
-|---|---|---|
-| 打包态启动不被强更门拦截，显示平台登录门 | `pnpm e2e:packaged:launch` | 通过 |
-| 打包态课堂全链路（登录/流式/两轮工具/交作品+封面/预设） | `pnpm smoke:platform:packaged` | 通过 |
-| 打包态额度 0 / 1 / 无限 | `pnpm smoke:platform:quota*`（配合 `LINGDONG_E2E_SESSION`） | 3/3 通过 |
-| 打包态生产更新路径（无 dev 开关）：清单→下载→sha256 校验 | `pnpm smoke:platform:update:packaged` | 通过 |
-| 单课堂直接进入（平台规则主路径） | `node packages/desktop/tests/windows-classroom-selection.e2e.mjs single` | 通过 |
-| 平台下发 2 节 ACTIVE（脏数据）仍无选择 UI | `node packages/desktop/tests/windows-classroom-entry.e2e.mjs two-active` | 通过 |
+| 验证                                                     | 命令                                                                     | 结果     |
+| -------------------------------------------------------- | ------------------------------------------------------------------------ | -------- |
+| 打包态启动不被强更门拦截，显示平台登录门                 | `pnpm e2e:packaged:launch`                                               | 通过     |
+| 打包态课堂全链路（登录/流式/两轮工具/交作品+封面/预设）  | `pnpm smoke:platform:packaged`                                           | 通过     |
+| 打包态额度 0 / 1 / 无限                                  | `pnpm smoke:platform:quota*`（配合 `LINGDONG_E2E_SESSION`）              | 3/3 通过 |
+| 打包态生产更新路径（无 dev 开关）：清单→下载→sha256 校验 | `pnpm smoke:platform:update:packaged`                                    | 通过     |
+| 单课堂直接进入（平台规则主路径）                         | `node packages/desktop/tests/windows-classroom-selection.e2e.mjs single` | 通过     |
+| 平台下发 2 节 ACTIVE（脏数据）仍无选择 UI                | `node packages/desktop/tests/windows-classroom-entry.e2e.mjs two-active` | 通过     |
 
 打包态产物（源码提交 `5a9ac9d`，仅用于验证，**不是发布候选**）：
 
@@ -182,16 +182,17 @@ Mac 暂不推进。现有发布脚本仍有双端版本一致性约束；Windows
 
 本地 E2E 矩阵（独立数据根 + localhost mock，`node .tmp/run-all-local-e2e.mjs`）：
 
-| 场景 | 期望 | 结果 |
-|---|---|---|
-| 只有 1 节进行中课堂 | 直接进入，无选择 UI | 通过 |
-| 2 节 ACTIVE（模拟脏数据） | 仍无选择 UI，使用平台默认那一节 | 通过 |
-| 老师还没开始上课 | 展示"老师还没有开始上课"，不建工作区 | 通过 |
-| 当前是画布课堂 | 展示"当前是画布课堂，请在学生端进入画布课堂"，不建工作区 | 通过 |
-| 主流程（流式 + 两轮工具 + 交作品含封面 + 预设） | 通过 | 通过 |
-| 额度 0 / 1 / 无限 | 见上文额度表 | 3/3 通过 |
+| 场景                                            | 期望                                                     | 结果     |
+| ----------------------------------------------- | -------------------------------------------------------- | -------- |
+| 只有 1 节进行中课堂                             | 直接进入，无选择 UI                                      | 通过     |
+| 2 节 ACTIVE（模拟脏数据）                       | 仍无选择 UI，使用平台默认那一节                          | 通过     |
+| 老师还没开始上课                                | 展示"老师还没有开始上课"，不建工作区                     | 通过     |
+| 当前是画布课堂                                  | 展示"当前是画布课堂，请在学生端进入画布课堂"，不建工作区 | 通过     |
+| 主流程（流式 + 两轮工具 + 交作品含封面 + 预设） | 通过                                                     | 通过     |
+| 额度 0 / 1 / 无限                               | 见上文额度表                                             | 3/3 通过 |
 
 命令入口：
+
 ```text
 node packages/desktop/tests/windows-classroom-entry.e2e.mjs single|two-active|not-started|canvas
 pnpm smoke:platform:windows      # 主流程
@@ -202,12 +203,12 @@ pnpm smoke:platform:quota*       # 额度
 
 平台侧 7 条待办 + 更新清单 5 条 + 发送次数 5 条逐条核完，其中会影响客户端的四点已改并验证：
 
-| 场景 | 期望 | 命令 |
-|---|---|---|
-| 平台不下发 `workspacePath`（生产事实） | 回退到本机 `Documents/灵动ai创作/<学生>-<课时>`，并创建成功 | `windows-platform-contract.e2e.mjs no-workspace-path` |
-| 账号在别处登录（401 `SESSION_SUPERSEDED`） | 登录窗展示平台 message "当前账号已在其他设备登录"，不进工作区 | `… session-superseded` |
-| 提交响应直接带 `works`（未发版的新形状） | 用响应里的 `works` 回显（mock 故意让列表接口返回 0 条以区分） | `… submit-includes-works` |
-| `sends.limit=0` | 按平台口径视为**不限**（原实现会误判为"一次都不许发"） | `… quota-flow.e2e.mjs limit-0` |
+| 场景                                       | 期望                                                          | 命令                                                  |
+| ------------------------------------------ | ------------------------------------------------------------- | ----------------------------------------------------- |
+| 平台不下发 `workspacePath`（生产事实）     | 回退到本机 `Documents/灵动ai创作/<学生>-<课时>`，并创建成功   | `windows-platform-contract.e2e.mjs no-workspace-path` |
+| 账号在别处登录（401 `SESSION_SUPERSEDED`） | 登录窗展示平台 message "当前账号已在其他设备登录"，不进工作区 | `… session-superseded`                                |
+| 提交响应直接带 `works`（未发版的新形状）   | 用响应里的 `works` 回显（mock 故意让列表接口返回 0 条以区分） | `… submit-includes-works`                             |
+| `sends.limit=0`                            | 按平台口径视为**不限**（原实现会误判为"一次都不许发"）        | `… quota-flow.e2e.mjs limit-0`                        |
 
 另外：mock 的 5 个客户端接口已改用平台真实包络 `{success,ok,data}` / 错误 `{error:{code,message}}`，
 所以上面所有场景同时验证了客户端的解包逻辑。
@@ -223,26 +224,27 @@ E2E 全矩阵（11 项）由 `.tmp/run-all-local-e2e.mjs` 一次跑完，全部�
 - "一次都不许发"的课堂状态：平台口径下 `0 = 不限`，无法表达；产品需要的话要先定口径。
 - `submit-upload` 的 `works` 发版（发版前客户端自动回落，不影响功能）。
 
-## 发布候选验证（0.2.0-zcode.2，2026-09-29）
+## Windows 已发布（0.2.0-zcode.2，2026-09-29）
 
 版本从 `0.2.0-zcode.1` 升到 `0.2.0-zcode.2`（更新类 E2E 改为从 `package.json` 推导当前/下一版本，不再手工同步）。
 
-Windows 正式身份构建（`ZCODE_ENV=production`，非 Preview 身份）：
+本次只发布 Windows，发布命令使用 `deploy/publish-client.sh --single-platform`：跳过双端版本一致性检查，并从线上 manifest 删除 `mac-arm64` 条目，避免 Mac 继续暴露旧包。Windows 正式身份构建为 `ZCODE_ENV=production`、未签名（`ZCODE_ENABLE_WIN_SIGN=0`）：
 
 ```text
 文件：lingdong-client-0.2.0-zcode.2-win-x64.exe
-大小：149,754,872 字节（142.8 MiB，限制 500 MiB）
-SHA256：F958CE216945475E6804AE2565E57C8BF6B76087BF3B1C2D594633BDF60AFA48
-未签名（ZCODE_ENABLE_WIN_SIGN=0）
+大小：149,767,958 字节（142.8 MiB，限制 500 MiB）
+SHA256：68d88b3a6f5607a435eab88af5d90e474bb3aebbe2609635fd5a2734049be365
+发布时间：2026-09-29T14:33:39Z
+公网：https://aicyld.com/downloads/lingdong-client-0.2.0-zcode.2-win-x64.exe
 ```
 
-| 验证 | 结果 |
-|---|---|
-| 发布二进制（win-unpacked）课堂全链路 | 通过 |
-| 发布二进制生产更新路径（清单→下载→sha256 校验） | 通过 |
-| NSIS 静默安装到自定义目录 | 通过（exit 0，文件齐全） |
-| 已安装实例启动 → 显示登录门 | 通过 |
-| NSIS 静默卸载 | 通过（安装目录已删除） |
+| 验证                                                | 结果                                                          |
+| --------------------------------------------------- | ------------------------------------------------------------- |
+| 最终发布二进制（win-unpacked）课堂全链路            | 通过                                                          |
+| 最终发布二进制生产更新路径（清单→下载→sha256 校验） | 通过                                                          |
+| 发布脚本远端字节数 / SHA256 核对                    | 通过                                                          |
+| 公网 manifest 与安装包 HEAD                         | 通过（200，Content-Length 149767958）                         |
+| 前一轮同版本候选包 NSIS 静默安装 / 启动 / 卸载      | 通过；该次候选大小为 149,754,872 字节，最终包未重跑 NSIS 装卸 |
 
 **未验证**：从旧版本更新到本版本的"安装器实际替换"（需要两次完整出包 + 真机更新）。
 electron-updater 的下载与校验已验证，替换动作属标准路径。
@@ -253,8 +255,16 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 {
   "version": "0.1.7-rc.2.10",
   "files": {
-    "win-x64": { "name": "lingdong-client-0.1.7-rc.2.10-win-x64.exe", "size": 429679192, "sha256": "fe639784042ada4543488d08046a961f98dfe058dfc86b4ab156e9fcab433d0b" },
-    "mac-arm64": { "name": "lingdong-client-0.1.7-rc.2.10-mac-arm64.dmg", "size": 536242178, "sha256": "39e37e6382b0cb15eea5bca25bdf4b96918754dac141c9673a99c6f8bca8728e" }
+    "win-x64": {
+      "name": "lingdong-client-0.1.7-rc.2.10-win-x64.exe",
+      "size": 429679192,
+      "sha256": "fe639784042ada4543488d08046a961f98dfe058dfc86b4ab156e9fcab433d0b"
+    },
+    "mac-arm64": {
+      "name": "lingdong-client-0.1.7-rc.2.10-mac-arm64.dmg",
+      "size": 536242178,
+      "sha256": "39e37e6382b0cb15eea5bca25bdf4b96918754dac141c9673a99c6f8bca8728e"
+    }
   }
 }
 ```
@@ -264,6 +274,5 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 
 ### 发布注意
 
-- 平台 `publish-client.sh` **要求两端同版本**：只发 Windows 会被脚本拒绝（mac 条目版本不一致）。
-  因此本次同时产出 Mac 产物一并发布。
-- Mac 为未签名测试包，首次打开需要 Gatekeeper 手动放行（与此前口径一致）。
+- Windows-only 发布必须带 `--single-platform`；脚本会在同一原子写回中移除另一平台条目。
+- 当前线上只保留 Windows 条目；Mac 端按本次口径暂缓，后续若要恢复需重新产出同版本包。
