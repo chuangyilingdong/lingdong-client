@@ -11,6 +11,14 @@ for (const url of [cdp, mock]) {
     "E2E 只允许本地测试端点",
   );
 }
+// 课堂形态在本套件里必须显式重置：同一个 mock 进程会被多个 E2E 复用，
+// 上一个场景留下的 none/canvas/两场 ACTIVE 会污染主流程断言。
+const classroomSetup = await fetch(`${mock}/__test/classrooms`, {
+  method: "POST",
+  body: JSON.stringify({ mode: "active", count: 1 }),
+});
+assert.equal(classroomSetup.status, 200, "重置课堂形态失败");
+
 const browser = await chromium.connectOverCDP(cdp);
 try {
   const context = browser.contexts()[0];

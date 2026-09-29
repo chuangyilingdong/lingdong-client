@@ -26,8 +26,13 @@ for (const item of CLASSROOMS) {
   );
   await writeFile(join(item.workspace, "notes.txt"), `MOCK_CLASSROOM_FILE ${item.id}\n`);
 }
-// 多课堂模式：登录后先返回课堂列表，由客户端选择再进课堂。
-let multiClassroomMode = false;
+// 课堂可用性形态（对齐平台契约）：
+//   active = 有正在进行的 VibeCoding 课堂（正常情形，最多 1 个）
+//   none   = 老师还没开始上课
+//   canvas = 当前是画布课堂（服务端明确拒绝下发密钥）
+let classroomMode = "active";
+// 进行中的课堂数量：2 用于模拟"绕过校验的历史脏数据"，客户端不得让学生选。
+let activeClassroomCount = 1;
 // 最近一次 client-context 选中的课堂，供工具回合解析工作区内文件。
 let activeClassroom = CLASSROOMS[0];
 const requests = [];
@@ -54,20 +59,53 @@ async function body(req) {
   return raw ? JSON.parse(raw) : {};
 }
 function context(sessionId) {
-  const selected =
-    CLASSROOMS.find((item) => item.id === sessionId) ??
-    (multiClassroomMode ? null : CLASSROOMS[0]);
-  if (!selected) {
-    // 多课堂且未选择：只给列表，客户端必须让用户选一个课堂。
+  const publicOf = ({ id, lessonId, title }) => ({ id, lessonId, title });
+  if (classroomMode === "none") {
+    // 老师还没开始上课：给 upcoming 但不发密钥。
     return {
       classroom: null,
-      classrooms: CLASSROOMS.map(({ id, lessonId, title }) => ({ id, lessonId, title })),
-      message: "请选择要进入的课堂。",
+      classrooms: [],
+      upcoming: {
+        id: CLASSROOMS[0].id,
+        lessonId: CLASSROOMS[0].lessonId,
+        title: CLASSROOMS[0].title,
+        seriesTitle: null,
+        lessonTitle: CLASSROOMS[0].title,
+        teacherName: "联调老师",
+        startedAt: null,
+      },
+      reason: "NOT_STARTED",
+      message: "老师还没有开始上课",
+    };
+  }
+  if (classroomMode === "canvas") {
+    // 画布课堂：只回 null 与一句话，不带 gateway/presets/sends。
+    return {
+      classroom: null,
+      classrooms: [],
+      upcoming: null,
+      reason: "CLASSROOM_MODE_MISMATCH",
+      message: "当前是画布课堂，请在学生端进入画布课堂",
+    };
+  }
+  const available = CLASSROOMS.slice(0, activeClassroomCount);
+  const selected = sessionId
+    ? available.find((item) => item.id === sessionId) ?? null
+    : available[0];
+  if (!selected) {
+    return {
+      classroom: null,
+      classrooms: available.map(publicOf),
+      upcoming: null,
+      reason: "CLASSROOM_NOT_AVAILABLE",
+      message: "你选的那节课已经结束了",
     };
   }
   activeClassroom = selected;
   return {
     classroom: { id: selected.id, lessonId: selected.lessonId, title: selected.title },
+    classrooms: available.map(publicOf),
+    reason: null,
     gateway: { baseUrl: `${origin}/gateway/v1`, key: fakeKey },
     models: [{ id: "mock-model", displayName: "Mock Model" }],
     defaultModel: "mock-model",
@@ -85,10 +123,13 @@ const server = http.createServer(async (req, res) => {
     const pathname = new URL(req.url, origin).pathname;
     if (pathname === "/__test/classrooms" && req.method === "POST") {
       const data = await body(req);
-      multiClassroomMode = data.mode === "multiple";
+      classroomMode =
+        data.mode === "none" || data.mode === "canvas" ? data.mode : "active";
+      activeClassroomCount = data.count === 2 ? 2 : 1;
       return json(res, 200, {
-        multiClassroomMode,
-        classrooms: CLASSROOMS.map(({ id, title }) => ({ id, title })),
+        classroomMode,
+        activeClassroomCount,
+        classrooms: CLASSROOMS.slice(0, activeClassroomCount).map(({ id, title }) => ({ id, title })),
       });
     }
     if (pathname === "/__test/mode" && req.method === "POST") {
@@ -117,7 +158,8 @@ const server = http.createServer(async (req, res) => {
         revision,
         updateDownloads,
         activeClassroomId: activeClassroom.id,
-        multiClassroomMode,
+        classroomMode,
+        activeClassroomCount,
       });
     if (pathname === "/api/auth/login" && req.method === "POST") {
       await body(req);

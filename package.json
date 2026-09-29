@@ -55,7 +55,7 @@
     "e2e:packaged:launch": "node packages/desktop/tests/launch-packaged-e2e.mjs",
     "smoke:platform:packaged": "node packages/desktop/tests/windows-classroom-flow.e2e.mjs",
     "smoke:platform:update:packaged": "node packages/desktop/tests/windows-update-packaged.e2e.mjs",
-    "smoke:platform:classroom-selection": "node packages/desktop/tests/windows-classroom-selection.e2e.mjs"
+    "smoke:platform:classroom-entry": "node packages/desktop/tests/windows-classroom-entry.e2e.mjs single"
   },
   "dependencies": {
     "border-beam": "^1.0.1",

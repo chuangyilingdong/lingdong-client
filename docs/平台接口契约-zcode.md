@@ -133,51 +133,48 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 平台可以先按兼容层上线，不必立刻修改数据库结构。客户端底座替换不改变课堂、账号、账单、网关和作品的业务归属。
 
-## 课堂唯一性规则与客户端选择行为（2026-09-29 已核对平台源码）
+## 课堂规则：一个学生只有一个进行中的课堂（2026-09-29）
 
-### 平台规则（权威）
+### 产品规则（权威口径）
 
-**一个学生全局最多属于一个「未终态」课堂。** 平台在加人时强制：
+**一个学生在同一时间只能存在 1 个进行中的课堂，客户端不存在任何"选课堂"逻辑。**
 
-- `apps/server/src/services/classroomSessions.js` 顶部注释即为用户口径：
-  ① 已完课不能加进同一节课；② **未结束的参与（待上课/上课中）不允许被别的课堂同时占用**；③ 被移除 = 解锁。
-- 判据函数 `activeParticipationFor({ studentId })`（"学生全局非终态占用：不区分课包或课程；REMOVED 不算占用"）
-  在两个写路径都会拦：
-  - 候选人名单：reason `IN_OTHER_SESSION`；
-  - 把学生加进课堂：skip reason `IN_OTHER_SESSION`。
+这 1 节课的形式由课时声明决定，可能是：
 
-因此正常情况下 `client-context.classrooms` 至多 1 项，客户端应**直接进入**该课堂。
+- 画布课堂
+- VibeCoding 课堂
+- **两种形式同时存在**（课时 `delivery_modes` 可声明多种，客户端按 VibeCoding 能力判定即可进入）
 
-### 为什么客户端仍必须做课堂选择
+平台侧强制：`apps/server/src/services/classroomSessions.js` 的 `activeParticipationFor` 在
+「候选人名单」与「把学生加进课堂」两条写路径都拦未终态占用（PENDING/ACTIVE），reason `IN_OTHER_SESSION`。
 
-`apps/server/src/routes/studentRuntime.js` 的 `client-context` 注释写明：**库里不一定干净** ——
-线上实测存在一个学生同时挂着两场 ACTIVE 课堂（种子/历史数据绕过了校验）。旧行为只取"最近开始的那一场"，
-导致学生做 A 课作业却拿到 B 课的上限与预设，界面上看不出异常。
+### 客户端行为
 
-平台因此要求：**多于一节时由客户端让学生自己选**；不传 `sessionId` 时保持"最近一场"的旧语义，老客户端不会坏。
+- 登录后直接 `GET /api/student/runtime/client-context`（**不传 `sessionId`**），用返回的 `classroom` 进入课堂。
+- **不渲染任何课堂选择 UI**，不解析 `classrooms` 列表做选择，不保存待选课堂。
+- 平台没有可进课堂时，把平台 `message` 原样展示给学生（下面契约表）。
+- 交作品 / 刷新上下文同样不传 `sessionId`：平台按"唯一那节课"自行解析。
 
-### 服务端契约
+平台支持 `?sessionId=` 指定课堂，但**客户端不使用**该参数；它只保留给将来可能的多端场景。
+
+### 服务端返回契约
 
 | 情况 | 返回 |
 |---|---|
-| 恰好 1 节可进课堂 | `classroom` 有值 + `classrooms` 列表 + `gateway`/`presets`/`sends` |
-| 多节 ACTIVE | `classrooms` 列全部候选，客户端传 `?sessionId=` 指定；选定后用该节的预设/上限/密钥 |
-| 没在上课 | `classroom:null`、`upcoming` 给出"接下来哪一节"、`message:"老师还没有开始上课"`、**不下发密钥** |
-| 点名的那节已结束 | `reason:CLASSROOM_NOT_AVAILABLE`、`message:"你选的那节课已经结束了"` |
+| 有可进的 VibeCoding 课堂 | `classroom` 有值 + `gateway`/`presets`/`sends` |
+| 课时同时声明画布 + VibeCoding | 同上（按课时声明的 `delivery_modes` 判定，可进入） |
+| 老师还没开始上课 | `classroom:null`、`upcoming` 给出"接下来哪一节"、`message:"老师还没有开始上课"`、**不下发密钥** |
 | 当前是画布课堂 | `classroom:null`/`classrooms:[]`/`upcoming:null`、`message:"当前是画布课堂，请在学生端进入画布课堂"`、**不带 gateway/presets/sends** |
+| 点名的那节课已结束（客户端不再触发） | `reason:CLASSROOM_NOT_AVAILABLE`、`message:"你选的那节课已经结束了"` |
 
-客户端要求：把 `message` 原样展示给学生（已是当前实现），**不得静默换课**。
+### 与平台现有注释的差异（需平台侧对齐）
 
-### 客户端行为（已验证）
+`apps/server/src/routes/studentRuntime.js` 目前仍保留一段注释，写着"多于一节时客户端让学自己选"，
+理由是有绕过校验的历史脏数据（一个学生挂两场 ACTIVE）。按本次产品口径：
 
-| 场景 | 期望 | 结果 |
-|---|---|---|
-| `classrooms` 只有 1 节 | 不弹选择，直接进该课堂工作区 | 通过 |
-| `classrooms` 有 2 节 | 选择前**不创建主窗口**；选 B 后进 B 的工作区 | 通过 |
-| 多课堂额度隔离 | 只创建所选课堂的额度桶，未进入的课堂不留桶 | 通过 |
-
-命令：`node packages/desktop/tests/windows-classroom-selection.e2e.mjs single|multiple`
-（需先启动本地 mock 与应用；见 Windows 阶段验收文档）。
+- 客户端**不实现选择**；若平台因脏数据返回多节，客户端使用平台默认给出的那一节，不做二次挑选。
+- 平台侧应清掉这类脏数据并保证 `classrooms` 恒定 ≤1，然后同步删除该注释里的"让客户端选"要求。
+- 在平台清理完成前，客户端行为是"跟随平台默认值"，可能与该注释的期望不一致——**以本口径为准**。
 
 ## 客户端的课堂能力边界（2026-09-29）
 

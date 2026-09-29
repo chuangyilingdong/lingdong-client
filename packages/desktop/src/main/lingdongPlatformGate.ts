@@ -21,7 +21,6 @@ type LingdongClassroom = {
 };
 type LingdongContext = {
   readonly classroom: LingdongClassroom | null;
-  readonly classrooms?: readonly LingdongGateClassroom[];
   readonly gateway?: { readonly baseUrl?: string; readonly key?: string };
   readonly models?: readonly { readonly id?: unknown; readonly displayName?: unknown }[];
   readonly defaultModel?: unknown;
@@ -29,11 +28,8 @@ type LingdongContext = {
   readonly sends?: { readonly limit?: number | null; readonly used?: number; readonly remaining?: number | null } | null;
   readonly workspacePath?: string;
   readonly message?: string;
-  readonly sessionId?: string;
 };
 type LingdongSession = { readonly token: string; readonly user?: LingdongUser };
-type LingdongGateClassroom = Readonly<{ id: string; title?: string; lessonId?: string; lessonTitle?: string; teacherName?: string }>;
-type PendingLogin = Readonly<{ session: LingdongSession; login: string }>;
 export type LingdongPlatformState = Readonly<{
   session: LingdongSession;
   context: LingdongContext;
@@ -48,7 +44,6 @@ let activeState: LingdongPlatformState | null = null;
 let providerBinding: ReturnType<typeof createLingdongProviderBinding> | null = null;
 let gateWindow: BrowserWindow | null = null;
 let handlersRegistered = false;
-let pendingLogin: PendingLogin | null = null;
 let platformGatePending = false;
 
 function record<T>(value: unknown): value is Record<string, T> {
@@ -115,35 +110,22 @@ function quotaFilePathForIdentity(identity: string): string {
   return join(getAppConfigDir(), "runtime", "lingdong-quota", `${key}.json`);
 }
 
-async function handleLogin(payload: unknown): Promise<{ ok: true; user?: LingdongUser; classroom: LingdongClassroom; workspacePath: string } | { ok: false; message: string; classrooms?: readonly LingdongGateClassroom[] }> {
+async function handleLogin(payload: unknown): Promise<{ ok: true; user?: LingdongUser; classroom: LingdongClassroom; workspacePath: string } | { ok: false; message: string }> {
   try {
     const input = record<unknown>(payload) ? payload : {};
     const login = typeof input.login === "string" ? input.login.trim() : "";
     const password = typeof input.password === "string" ? input.password : "";
-    const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
-    let session: LingdongSession;
-    if (sessionId && pendingLogin) {
-      session = pendingLogin.session;
-    } else {
-      if (!login || !password) return { ok: false, message: "请输入账号和密码。" };
-      const rawSession = unwrap<Record<string, unknown>>(await apiRequest("/api/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ login, password }),
-      }));
-      const token = String(rawSession.token || rawSession.accessToken || "").trim();
-      if (!token) throw new Error("平台登录响应缺少 token。");
-      session = { token, user: record<unknown>(rawSession.user) ? rawSession.user as LingdongUser : undefined };
-    }
-    const contextPath = sessionId ? `/api/student/runtime/client-context?sessionId=${encodeURIComponent(sessionId)}` : "/api/student/runtime/client-context";
-    const context = {
-      ...unwrap<LingdongContext>(await apiRequest(contextPath, {}, session.token)),
-      sessionId: sessionId || undefined,
-    };
-    if (!sessionId && context.classrooms && context.classrooms.length > 1) {
-      pendingLogin = { session, login };
-      return { ok: false, message: "请选择要进入的课堂。", classrooms: context.classrooms };
-    }
-    pendingLogin = null;
+    if (!login || !password) return { ok: false, message: "请输入账号和密码。" };
+    const rawSession = unwrap<Record<string, unknown>>(await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ login, password }),
+    }));
+    const token = String(rawSession.token || rawSession.accessToken || "").trim();
+    if (!token) throw new Error("平台登录响应缺少 token。");
+    const session: LingdongSession = { token, user: record<unknown>(rawSession.user) ? rawSession.user as LingdongUser : undefined };
+    // 产品规则：一个学生全局最多一个进行中的课堂，不存在"选课堂"。
+    // 直接取 client-context 给出的那一节（platform 也支持 ?sessionId=，客户端不需要用）。
+    const context = unwrap<LingdongContext>(await apiRequest("/api/student/runtime/client-context", {}, session.token));
     if (!context.classroom) throw new Error(context.message || "当前没有正在进行的课堂。");
     const workspacePath = resolveWorkspace(context, session.user);
     await mkdir(workspacePath, { recursive: true });
@@ -172,7 +154,6 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
     gateWindow?.close();
     return { ok: true, user: session.user, classroom: context.classroom, workspacePath };
   } catch (error) {
-    pendingLogin = null;
     return { ok: false, message: error instanceof Error ? error.message : String(error) };
   }
 }
@@ -334,12 +315,10 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   };
   const cover = await captureHtmlCover(prepared.entryPath);
   if (cover) body.cover = cover;
-  if (activeState.context.sessionId) body.sessionId = activeState.context.sessionId;
   if (Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_WORK_REQUEST_BYTES) {
     throw new Error("作品编码后太大，请减少素材后再提交。");
   }
-  const suffix = activeState.context.sessionId ? `?sessionId=${encodeURIComponent(activeState.context.sessionId)}` : "";
-  return callPlatform(`/api/student/runtime/submit-upload${suffix}`, {
+  return callPlatform("/api/student/runtime/submit-upload", {
     method: "POST",
     body: JSON.stringify(body),
   });
@@ -373,11 +352,9 @@ function registerPlatformHandlers(): void {
   ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => submitWorkFromDesktop(payload));
   ipcMain.handle("lingdong:platform-refresh-context", async () => {
     if (!activeState) return null;
-    const selected = activeState.context.sessionId ? `?sessionId=${encodeURIComponent(activeState.context.sessionId)}` : "";
-    const context = {
-      ...unwrap<LingdongContext>(await callPlatform(`/api/student/runtime/client-context${selected}`)),
-      sessionId: activeState.context.sessionId,
-    };
+    const context = unwrap<LingdongContext>(
+      await callPlatform("/api/student/runtime/client-context"),
+    );
     await buildProviderConfig(context, activeState.providerConfigPath);
     // 刷新只把本机投影向平台已用量收敛，不因较旧响应降低已接受的计数。
     await createLingdongQuotaLedger(activeState.quotaFilePath).sync(context.sends ?? {});
@@ -390,7 +367,7 @@ function registerPlatformHandlers(): void {
 
 function gateHtml(): string {
   return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>灵动ai</title><style>
-  :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#15171c;color:#f5f7fb;font:14px system-ui,"Microsoft YaHei",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center}.card{width:390px;padding:30px;border:1px solid #343943;border-radius:18px;background:#20232a;box-shadow:0 18px 60px #0008}h1{margin:0 0 8px;font-size:26px}p{color:#aab1bf;line-height:1.6;margin:8px 0 20px}.field{display:block;margin:14px 0}.field span{display:block;margin-bottom:7px;color:#cdd3df}.field input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid #444b58;background:#17191f;color:#fff;font:inherit;outline:none}.field input:focus{border-color:#6d8cff}.submit{width:100%;margin-top:12px;padding:12px;border:0;border-radius:10px;background:#5575f4;color:#fff;font:inherit;font-weight:600;cursor:pointer}.submit:disabled{opacity:.6;cursor:wait}.status{min-height:22px;margin-top:14px;color:#ffb5b5;white-space:pre-wrap}.small{font-size:12px;color:#858e9e;margin-top:18px}</style></head><body><main class="card"><h1>灵动ai</h1><p>请登录平台账号，进入当前课堂后开始使用 ZCode。</p><form id="form"><label class="field"><span>账号</span><input id="login" autocomplete="username" required></label><label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" required></label><button class="submit" id="submit">登录并进入课堂</button><div class="status" id="status"></div><div id="choices"></div></form><div class="small">模型请求统一经过灵动ai平台网关。</div><script>const form=document.getElementById('form'),status=document.getElementById('status'),button=document.getElementById('submit'),choices=document.getElementById('choices');function showChoices(items){choices.innerHTML='';(items||[]).forEach(item=>{const b=document.createElement('button');b.type='button';b.className='submit';b.style.marginTop='8px';b.textContent=(item.title||item.lessonTitle||item.id)+'（点击进入）';b.onclick=async()=>{button.disabled=true;status.textContent='正在进入课堂…';const r=await window.lingdongGate.login(document.getElementById('login').value,document.getElementById('password').value,item.id);if(!r.ok)status.textContent=r.message||'进入课堂失败';else status.textContent='课堂已就绪，正在启动…';button.disabled=false};choices.appendChild(b)})}form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;choices.innerHTML='';status.textContent='正在登录…';try{const r=await window.lingdongGate.login(document.getElementById('login').value,document.getElementById('password').value);if(!r.ok){status.textContent=r.message||'登录失败';if(r.classrooms)showChoices(r.classrooms)}else status.textContent='课堂已就绪，正在启动…'}catch(e){status.textContent=String(e)}finally{button.disabled=false}});</script></main></body></html>`;
+  :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#15171c;color:#f5f7fb;font:14px system-ui,"Microsoft YaHei",sans-serif;display:flex;min-height:100vh;align-items:center;justify-content:center}.card{width:390px;padding:30px;border:1px solid #343943;border-radius:18px;background:#20232a;box-shadow:0 18px 60px #0008}h1{margin:0 0 8px;font-size:26px}p{color:#aab1bf;line-height:1.6;margin:8px 0 20px}.field{display:block;margin:14px 0}.field span{display:block;margin-bottom:7px;color:#cdd3df}.field input{width:100%;padding:11px 12px;border-radius:10px;border:1px solid #444b58;background:#17191f;color:#fff;font:inherit;outline:none}.field input:focus{border-color:#6d8cff}.submit{width:100%;margin-top:12px;padding:12px;border:0;border-radius:10px;background:#5575f4;color:#fff;font:inherit;font-weight:600;cursor:pointer}.submit:disabled{opacity:.6;cursor:wait}.status{min-height:22px;margin-top:14px;color:#ffb5b5;white-space:pre-wrap}.small{font-size:12px;color:#858e9e;margin-top:18px}</style></head><body><main class="card"><h1>灵动ai</h1><p>请登录平台账号，进入当前课堂后开始使用 ZCode。</p><form id="form"><label class="field"><span>账号</span><input id="login" autocomplete="username" required></label><label class="field"><span>密码</span><input id="password" type="password" autocomplete="current-password" required></label><button class="submit" id="submit">登录并进入课堂</button><div class="status" id="status"></div></form><div class="small">模型请求统一经过灵动ai平台网关。</div><script>const form=document.getElementById('form'),status=document.getElementById('status'),button=document.getElementById('submit');form.addEventListener('submit',async e=>{e.preventDefault();button.disabled=true;status.textContent='正在登录…';try{const r=await window.lingdongGate.login(document.getElementById('login').value,document.getElementById('password').value);if(!r.ok)status.textContent=r.message||'登录失败';else status.textContent='课堂已就绪，正在启动…'}catch(e){status.textContent=String(e)}finally{button.disabled=false}});</script></main></body></html>`;
 }
 
 export function isLingdongPlatformGatePending(): boolean {
@@ -462,5 +439,4 @@ export async function disposeLingdongPlatformGate(): Promise<void> {
   providerBinding = null;
   await binding?.dispose();
   activeState = null;
-  pendingLogin = null;
 }

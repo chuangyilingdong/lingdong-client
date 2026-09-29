@@ -171,12 +171,29 @@ Mac 暂不推进。现有发布脚本仍有双端版本一致性约束；Windows
 
 `pnpm smoke:platform:windows` 在独立数据根 + localhost mock 下通过，覆盖预设弹窗与交作品弹窗；两条路径都经由 `IPlatformService.classroom`。
 
-## 课堂唯一性规则核对结论（2026-09-29）
+## 课堂进入验证结论（2026-09-29）
 
-按用户口径「一个学生在同一时间只能存在 1 个进行中的课堂」核对了平台源码，结论如下：
+按产品口径「一个学生同时只能有 1 个进行中的课堂，不存在选择逻辑」核对并修改了客户端：
 
-- **规则确实存在且被强制**：`classroomSessions.js` 的 `activeParticipationFor` 在"候选人名单"和"加学生进课堂"两条写路径都拦未终态占用，reason `IN_OTHER_SESSION`。
-- **但服务端仍下发 `classrooms` 列表并要求客户端在 >1 时让学生选**：平台注释写明线上存在两场 ACTIVE 的历史/种子脏数据，旧行为"取最近一场"会造成"做 A 课作业拿到 B 课上限与预设"的静默错配。
-- 因此客户端保留课堂选择**不是多余功能**，而是平台明确要求的兜底；正常数据下它不会触发。
+- 客户端**删除全部课堂选择逻辑**：不再传 `sessionId`、不再渲染选择 UI、不再保存待选课堂。
+- 登录后直接用 `client-context` 返回的 `classroom` 进入；无可进课堂时原样展示平台 `message`。
+- 平台源码确认该规则被强制：`activeParticipationFor` 在两条写路径拦未终态占用（`IN_OTHER_SESSION`）。
+- 平台 `studentRuntime.js` 里"多于一节时让客户端选"的旧注释与本次口径冲突，已列为平台侧对齐项。
 
-待平台侧确认：如果平台决定清理脏数据并保证 `classrooms` 恒 ≤1，客户端的选择分支可以简化为"多于一节即报错"，但这属于后续决定，当前保留选择更安全。
+本地 E2E 矩阵（独立数据根 + localhost mock，`node .tmp/run-all-local-e2e.mjs`）：
+
+| 场景 | 期望 | 结果 |
+|---|---|---|
+| 只有 1 节进行中课堂 | 直接进入，无选择 UI | 通过 |
+| 2 节 ACTIVE（模拟脏数据） | 仍无选择 UI，使用平台默认那一节 | 通过 |
+| 老师还没开始上课 | 展示"老师还没有开始上课"，不建工作区 | 通过 |
+| 当前是画布课堂 | 展示"当前是画布课堂，请在学生端进入画布课堂"，不建工作区 | 通过 |
+| 主流程（流式 + 两轮工具 + 交作品含封面 + 预设） | 通过 | 通过 |
+| 额度 0 / 1 / 无限 | 见上文额度表 | 3/3 通过 |
+
+命令入口：
+```text
+node packages/desktop/tests/windows-classroom-entry.e2e.mjs single|two-active|not-started|canvas
+pnpm smoke:platform:windows      # 主流程
+pnpm smoke:platform:quota*       # 额度
+```
