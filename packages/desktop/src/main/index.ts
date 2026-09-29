@@ -112,7 +112,12 @@ import {
   type AppShutdownKind,
 } from "./appShutdownPolicy.js";
 import { createPrimaryWindowCoordinator } from "./primaryWindowCoordinator.js";
-import { disposeLingdongPlatformGate, isLingdongPlatformGatePending, runLingdongPlatformGate } from "./lingdongPlatformGate.js";
+import {
+  disposeLingdongPlatformGate,
+  finishLingdongPlatformGate,
+  isLingdongPlatformGatePending,
+  runLingdongPlatformGate,
+} from "./lingdongPlatformGate.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
 import { flushMainE2ECoverage } from "./e2eCoverage.js";
 import { resolveStartupWindowBootstrap, type StartupWindowBootstrap } from "./startupWorkspace.js";
@@ -1932,9 +1937,16 @@ app.whenReady().then(async () => {
   // 灵动ai 平台登录与课堂上下文必须先于首个 Host/Agent 启动。
   // ZCode 的 managed provider 配置、课堂 workspace 与平台网关凭据都由这里注入。
   const lingdongPlatform = await runLingdongPlatformGate();
+  if (!lingdongPlatform) {
+    // 用户在登录窗直接关闭应用：干净退出，不启动 Host，也不留未处理的拒绝。
+    logger.info("[lingdong-gate] 登录窗口被关闭，应用退出。");
+    markExplicitQuit("lingdong-gate-cancelled");
+    app.quit();
+    return;
+  }
   Object.assign(hostProcessLocalEnv, {
     LINGDONG_API_BASE: process.env.LINGDONG_API_BASE,
-    PLATFORM_GATEWAY_KEY: lingdongPlatform.session.token,
+    PLATFORM_GATEWAY_KEY: String(lingdongPlatform.context.gateway?.key || ""),
     PLATFORM_GATEWAY_BASE_URL: lingdongPlatform.context.gateway?.baseUrl ?? "",
     ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: lingdongPlatform.providerConfigPath,
     ZCODE_LINGDONG_WORKSPACE_PATH: lingdongPlatform.workspacePath,
@@ -2297,6 +2309,8 @@ app.whenReady().then(async () => {
 
   logger.info("[startup] 创建主窗口");
   await primaryWindowCoordinator.ensurePrimaryWindow("app-ready");
+  // 主窗口已就绪，登录门收口：此时销毁登录窗不会再触发提前退出。
+  finishLingdongPlatformGate();
 
   const primaryWindow = getApplicationWindowsExcludingCuaIndicator()[0];
   if (primaryWindow) {

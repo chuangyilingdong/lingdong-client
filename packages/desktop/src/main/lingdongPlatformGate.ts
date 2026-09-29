@@ -192,8 +192,10 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
     process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom.id;
     process.env.ZCODE_LINGDONG_SEND_LIMIT = String(context.sends?.limit ?? "");
     process.env.ZCODE_LINGDONG_SEND_USED = String(context.sends?.used ?? 0);
-    platformGatePending = false;
-    gateWindow?.close();
+    // 登录成功后只隐藏登录窗，不销毁：此刻主窗口尚未创建，
+    // 最后一个窗口一旦销毁，Windows 会立即触发 window-all-closed 退出应用。
+    // 待主窗口就绪后由 finishLingdongPlatformGate() 真正销毁登录窗。
+    gateWindow?.hide();
     return { ok: true, user: session.user, classroom: context.classroom, workspacePath };
   } catch (error) {
     pendingLogin = null;
@@ -419,11 +421,13 @@ export function isLingdongPlatformGatePending(): boolean {
   return platformGatePending;
 }
 
-export async function runLingdongPlatformGate(): Promise<LingdongPlatformState> {
+export async function runLingdongPlatformGate(): Promise<LingdongPlatformState | null> {
   registerPlatformHandlers();
   platformGatePending = true;
   if (activeState) return activeState;
-  return await new Promise<LingdongPlatformState>((resolve, reject) => {
+  // 用户直接关闭登录窗时 resolve(null) 表示取消启动；绝不 reject，
+  // 否则 app.whenReady() 链上会出现无人处理的 Promise 拒绝。
+  return await new Promise<LingdongPlatformState | null>((resolve) => {
     const onLogin = async (_event: Electron.IpcMainInvokeEvent, payload: unknown) => {
       const result = await handleLogin(payload);
       if (result.ok && activeState) resolve(activeState);
@@ -447,8 +451,12 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState> 
     gateWindow.once("ready-to-show", () => gateWindow?.show());
     gateWindow.on("closed", () => {
       gateWindow = null;
-      platformGatePending = false;
-      if (!activeState) reject(new Error("登录窗口已关闭。"));
+      // 仅在取消登录时放下待启动标记；登录成功后到主窗口就绪之间的空窗期内
+      // 必须继续保持，否则 Windows 的 window-all-closed 会提前退出应用。
+      if (!activeState) {
+        platformGatePending = false;
+        resolve(null);
+      }
       ipcMain.removeHandler("lingdong:gate-login");
     });
     void gateWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(gateHtml())}`);
@@ -457,6 +465,14 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState> 
 
 export function getLingdongPlatformState(): LingdongPlatformState | null {
   return activeState;
+}
+
+// 主窗口就绪后收口登录门：此后 window-all-closed 才允许按常规逻辑退出应用。
+export function finishLingdongPlatformGate(): void {
+  platformGatePending = false;
+  const window = gateWindow;
+  gateWindow = null;
+  if (window && !window.isDestroyed()) window.close();
 }
 
 export async function disposeLingdongPlatformGate(): Promise<void> {
