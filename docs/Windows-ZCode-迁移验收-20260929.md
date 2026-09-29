@@ -222,3 +222,48 @@ E2E 全矩阵（11 项）由 `.tmp/run-all-local-e2e.mjs` 一次跑完，全部�
 - `MAX_HISTORY=40`（约 13 轮）静默截断：建议改为可配 + 在响应里给出截断标记；详见平台契约文档。
 - "一次都不许发"的课堂状态：平台口径下 `0 = 不限`，无法表达；产品需要的话要先定口径。
 - `submit-upload` 的 `works` 发版（发版前客户端自动回落，不影响功能）。
+
+## 发布候选验证（0.2.0-zcode.2，2026-09-29）
+
+版本从 `0.2.0-zcode.1` 升到 `0.2.0-zcode.2`（更新类 E2E 改为从 `package.json` 推导当前/下一版本，不再手工同步）。
+
+Windows 正式身份构建（`ZCODE_ENV=production`，非 Preview 身份）：
+
+```text
+文件：lingdong-client-0.2.0-zcode.2-win-x64.exe
+大小：149,754,872 字节（142.8 MiB，限制 500 MiB）
+SHA256：F958CE216945475E6804AE2565E57C8BF6B76087BF3B1C2D594633BDF60AFA48
+未签名（ZCODE_ENABLE_WIN_SIGN=0）
+```
+
+| 验证 | 结果 |
+|---|---|
+| 发布二进制（win-unpacked）课堂全链路 | 通过 |
+| 发布二进制生产更新路径（清单→下载→sha256 校验） | 通过 |
+| NSIS 静默安装到自定义目录 | 通过（exit 0，文件齐全） |
+| 已安装实例启动 → 显示登录门 | 通过 |
+| NSIS 静默卸载 | 通过（安装目录已删除） |
+
+**未验证**：从旧版本更新到本版本的"安装器实际替换"（需要两次完整出包 + 真机更新）。
+electron-updater 的下载与校验已验证，替换动作属标准路径。
+
+### 回滚基线（发布前线上清单，2026-09-29 21:2x）
+
+```json
+{
+  "version": "0.1.7-rc.2.10",
+  "files": {
+    "win-x64": { "name": "lingdong-client-0.1.7-rc.2.10-win-x64.exe", "size": 429679192, "sha256": "fe639784042ada4543488d08046a961f98dfe058dfc86b4ab156e9fcab433d0b" },
+    "mac-arm64": { "name": "lingdong-client-0.1.7-rc.2.10-mac-arm64.dmg", "size": 536242178, "sha256": "39e37e6382b0cb15eea5bca25bdf4b96918754dac141c9673a99c6f8bca8728e" }
+  }
+}
+```
+
+回滚方式：把 `manifest.json` 的两端 version/name/size/sha256 改回上表并原子写回（对应安装包仍在
+`/srv/ai-kids-platform/downloads/`，发布脚本不会删除旧包）。
+
+### 发布注意
+
+- 平台 `publish-client.sh` **要求两端同版本**：只发 Windows 会被脚本拒绝（mac 条目版本不一致）。
+  因此本次同时产出 Mac 产物一并发布。
+- Mac 为未签名测试包，首次打开需要 Gatekeeper 手动放行（与此前口径一致）。
