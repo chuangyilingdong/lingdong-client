@@ -1,8 +1,5 @@
 import {
-  DEFAULT_ZCODE_ENDPOINT_ORIGIN,
   ZCODE_VERSION,
-  buildZCodeEndpointUrls,
-  getForceUpdateMinimalVersionFromConfig,
   resolveForceUpdateRequirement,
   type ForceUpdateRequirement,
   type Locale,
@@ -10,9 +7,35 @@ import {
 import { requestForceAutoUpdate, type ForceAutoUpdateState } from "./autoUpdater.js";
 import { showForceUpdatePrompt } from "./forceUpdatePrompt.js";
 
-const ZCODE_CLIENT_CONFIG_API_PATH = "/api/v1/client/configs";
 const FORCE_UPDATE_CONFIG_REQUEST_TIMEOUT_MS = 10_000;
 const FORCE_UPDATE_CONFIG_MAX_RESPONSE_BYTES = 1024 * 1024;
+const DEFAULT_LINGDONG_MANIFEST_URL = "https://aicyld.com/downloads/manifest.json";
+const LINGDONG_DOWNLOAD_PAGE_URL = "https://aicyld.com/downloads/";
+
+// 强制升级只看灵动ai平台自己的下载清单：上游 ZCode 发布渠道的版本号与灵动ai
+// 客户端版本号不是一个体系（上游按 3.x 递增，灵动ai 走 0.x），
+// 读上游配置会把每个正式包都误判成"必须升级"，从而永远建不出主窗口。
+function resolveLingdongManifestUrl(): string {
+  const base = process.env.LINGDONG_API_BASE?.trim().replace(/\/+$/u, "");
+  return base ? `${base}/downloads/manifest.json` : DEFAULT_LINGDONG_MANIFEST_URL;
+}
+
+type LingdongForceUpdateManifest = {
+  readonly version?: unknown;
+  readonly enabled?: unknown;
+  readonly mandatory?: unknown;
+  readonly minVersion?: unknown;
+};
+
+// mandatory 为真时以清单最新版本作为门槛：运维只想"必须升到最新"时
+// 不必每次发布都手工维护 minVersion。enabled=false 表示平台停发，不拦启动。
+function resolveLingdongMandatoryVersion(manifest: LingdongForceUpdateManifest): string {
+  if (manifest.enabled === false) return "";
+  const minVersion = typeof manifest.minVersion === "string" ? manifest.minVersion.trim() : "";
+  if (minVersion) return minVersion;
+  if (manifest.mandatory !== true) return "";
+  return typeof manifest.version === "string" ? manifest.version.trim() : "";
+}
 
 export interface ForceUpdateDialogText {
   title: string;
@@ -44,35 +67,7 @@ interface ForceUpdateGuardOptions {
   onBlocked?: (requirement: ForceUpdateRequirement) => void;
 }
 
-function resolveForceUpdateClientConfigUrl(endpointOrigin = DEFAULT_ZCODE_ENDPOINT_ORIGIN): string {
-  const url = new URL(
-    `${buildZCodeEndpointUrls(endpointOrigin).origin}${ZCODE_CLIENT_CONFIG_API_PATH}`,
-  );
-  url.searchParams.set("app_version", ZCODE_VERSION);
-  url.searchParams.set("platform", `${process.platform}-${process.arch}`);
-  return url.toString();
-}
-
-function getForceUpdateMinimalVersionFromClientConfig(config: unknown): string | undefined {
-  if (typeof config !== "object" || config === null) {
-    return undefined;
-  }
-
-  const envelope = config as {
-    code?: unknown;
-    data?: {
-      configs?: unknown;
-    };
-  };
-  if (typeof envelope.code === "number" && envelope.code !== 0) {
-    // /client/configs 与服务层一样只有 code=0 才可信，避免错误 envelope 携带旧 data 时误触发启动强更。
-    throw new Error(`ZCode client config failed: ${envelope.code}`);
-  }
-  return getForceUpdateMinimalVersionFromConfig(envelope.data?.configs);
-}
-
 async function fetchRemoteForceUpdateConfig(
-  endpointOrigin?: string,
   fetchRemoteConfig?: () => Promise<unknown>,
 ): Promise<unknown> {
   if (fetchRemoteConfig) {
@@ -111,7 +106,7 @@ async function fetchRemoteForceUpdateConfig(
     }, FORCE_UPDATE_CONFIG_REQUEST_TIMEOUT_MS);
     timer.unref?.();
 
-    request = net.request(resolveForceUpdateClientConfigUrl(endpointOrigin));
+    request = net.request(resolveLingdongManifestUrl());
     request.on("response", (response) => {
       const statusCode = response.statusCode ?? 0;
       if (statusCode < 200 || statusCode >= 300) {
@@ -149,7 +144,6 @@ async function fetchRemoteForceUpdateConfig(
 
 async function resolveDesktopForceUpdateRequirement(options: {
   logger: ForceUpdateGuardLogger;
-  endpointOrigin?: string;
   fetchRemoteConfig?: () => Promise<unknown>;
 }): Promise<ForceUpdateRequirement | null> {
   const resolveFromConfig = (config: unknown) =>
@@ -157,17 +151,14 @@ async function resolveDesktopForceUpdateRequirement(options: {
       currentVersion: ZCODE_VERSION,
       forceUpdate: {
         minimalVersion:
-          getForceUpdateMinimalVersionFromClientConfig(config) ??
-          getForceUpdateMinimalVersionFromConfig(config) ??
-          "",
+          config && typeof config === "object"
+            ? resolveLingdongMandatoryVersion(config as LingdongForceUpdateManifest)
+            : "",
       },
     });
 
   try {
-    const remoteConfig = await fetchRemoteForceUpdateConfig(
-      options.endpointOrigin,
-      options.fetchRemoteConfig,
-    );
+    const remoteConfig = await fetchRemoteForceUpdateConfig(options.fetchRemoteConfig);
     const remoteRequirement = resolveFromConfig(remoteConfig);
     if (remoteRequirement) {
       return remoteRequirement;
@@ -181,12 +172,10 @@ async function resolveDesktopForceUpdateRequirement(options: {
   return null;
 }
 
-function resolveForceUpdateDownloadUrl(
-  locale: Locale,
-  endpointOrigin = DEFAULT_ZCODE_ENDPOINT_ORIGIN,
-): string {
-  const origin = buildZCodeEndpointUrls(endpointOrigin).origin;
-  return locale === "zh-CN" ? `${origin}/cn` : `${origin}/en`;
+// 手动升级统一指向灵动ai平台下载页；上游 ZCode 官网对灵动ai用户没有可用的安装包。
+function resolveForceUpdateDownloadUrl(): string {
+  const base = process.env.LINGDONG_API_BASE?.trim().replace(/\/+$/u, "");
+  return base ? `${base}/downloads/` : LINGDONG_DOWNLOAD_PAGE_URL;
 }
 
 function formatForceUpdateDialogText(
@@ -195,17 +184,17 @@ function formatForceUpdateDialogText(
 ): ForceUpdateDialogText {
   if (locale === "zh-CN") {
     return {
-      title: "需要升级 ZCode",
+      title: "需要升级灵动ai客户端",
       message: "当前版本无法继续使用",
       detail: `当前版本：v${requirement.currentVersion}\n最低可用版本：v${requirement.minimalVersion}`,
       autoUpdateButton: "自动升级",
-      manualUpdateButton: "手动升级",
+      manualUpdateButton: "手动下载",
       quitButton: "退出",
     };
   }
 
   return {
-    title: "Update ZCode",
+    title: "Update Lingdong Client",
     message: "The current version can no longer be used",
     detail: `Current version: v${requirement.currentVersion}\nMinimum supported version: v${requirement.minimalVersion}`,
     autoUpdateButton: "Auto update",
@@ -218,8 +207,8 @@ export async function maybeBlockStartupForForceUpdate(
   options: ForceUpdateGuardOptions,
 ): Promise<ForceUpdateGuardResult> {
   const requirement = await resolveDesktopForceUpdateRequirement({
-    ...options,
-    endpointOrigin: options.endpointOrigin,
+    logger: options.logger,
+    fetchRemoteConfig: options.fetchRemoteConfig,
   });
   if (!requirement) {
     return { blocked: false };
@@ -243,7 +232,7 @@ export async function maybeBlockStartupForForceUpdate(
   }
 
   if (action === "manual") {
-    const url = resolveForceUpdateDownloadUrl(options.locale, options.endpointOrigin);
+    const url = resolveForceUpdateDownloadUrl();
     options.logger.info(`[force-update] 用户选择手动升级：${url}`);
     await shell.openExternal(url);
   }
