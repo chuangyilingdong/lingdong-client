@@ -4515,7 +4515,7 @@ const enUS: Record<string, string> = {
   "chat.empty.greeting.noon": "Noon break?",
   "chat.empty.greeting.afternoon": "Good afternoon! Leave the rest to me.",
   "chat.empty.greeting.evening": "Evening, nice work today",
-  "chat.empty.greeting.lateNight": "It's late—remember to take care of yourself.",
+  "chat.empty.greeting.lateNight": "Xiaoling is here to VibeCoding with you.",
   "chat.draft.suggestedPrompt.recentCommits": "Review commits from the last 7 days",
   "chat.draft.suggestedPrompt.recentCommits.prompt":
     "Review Git commits from the last 7 days in this workspace, summarize the main changes, and identify potential risks.",
@@ -4557,9 +4557,8 @@ const enUS: Record<string, string> = {
   "chat.emptyResult.title": "No visible output",
   "chat.emptyResult.description":
     "This task finished without any chat content. It may have been stopped before the model produced a response.",
-  "chat.placeholder.newTask":
-    "Ask ZCode anything, @ to add context, / for commands or capabilities",
-  "chat.placeholder.newTaskMobile": "Ask ZCode anything…",
+  "chat.placeholder.newTask": "Ask Xiaoling and start creating.",
+  "chat.placeholder.newTaskMobile": "Ask Xiaoling and start creating.",
   "chat.placeholder.followUpAsk": "Ask for follow-up changes",
   "chat.placeholder.followUpQueue": "Keep typing to queue follow-up changes",
   "chat.placeholder.loading": "Initializing task...",

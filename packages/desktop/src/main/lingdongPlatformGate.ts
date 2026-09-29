@@ -599,6 +599,10 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState |
       minimizable: false,
       maximizable: false,
       show: false,
+      autoHideMenuBar: true,
+      icon: app.isPackaged
+        ? join(process.resourcesPath, "icon_lingdong.png")
+        : join(app.getAppPath(), "build/icon_installer.png"),
       title: "灵动ai创作客户端",
       webPreferences: {
         contextIsolation: true,
@@ -606,6 +610,7 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState |
         preload: join(import.meta.dirname, "../preload/lingdongGate.cjs"),
       },
     });
+    gateWindow.removeMenu();
     gateWindow.once("ready-to-show", () => gateWindow?.show());
     gateWindow.on("closed", () => {
       gateWindow = null;

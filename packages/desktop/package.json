@@ -78,6 +78,7 @@
     "electron-builder": "^26.8.1",
     "http-mitm-proxy": "^1.1.0",
     "istanbul-lib-instrument": "^6.0.3",
+    "rcedit": "4.0.1",
     "tailwindcss": "^4.2.2",
     "tsup": "^8.5.0",
     "typescript": "^6.0.2",

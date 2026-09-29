@@ -98,6 +98,7 @@ const DEFAULT_ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
 // Linux CI（pnpm hoisted）往往解析不到该二进制，`asar list` 未运行即 exit 1。
 // 显式依赖 @electron/asar 并用 Node 直接执行 CLI，避免跨平台找不齐 shim。
 const requireFromConfig = createRequire(import.meta.url);
+const rcedit = requireFromConfig("rcedit");
 let nsisInstallSectionPatched = false;
 let nsisInstallSectionOriginalSource = null;
 let nsisInstallSectionPath = null;
@@ -341,6 +342,26 @@ function resolveMissingRuntimeModules(appAsarPath) {
   });
 }
 
+async function writeUnsignedWindowsExecutableBranding(context) {
+  const productName = desktopProductIdentity.productName;
+  const productFilename = context.packager?.appInfo?.productFilename ?? productName;
+  const executablePath = resolve(context.appOutDir, `${productFilename}.exe`);
+  const iconPath = resolve(desktopPackageRoot, "build/icon_installer.ico");
+  const windowsVersion = buildMetadata.appVersion.split("-", 1)[0] || "0.0.0";
+  await rcedit(executablePath, {
+    "version-string": {
+      FileDescription: productName,
+      ProductName: productName,
+      CompanyName: "灵动ai",
+      LegalCopyright: "Copyright © 灵动ai",
+      InternalName: productFilename,
+      OriginalFilename: `${productFilename}.exe`,
+    },
+    "file-version": windowsVersion,
+    "product-version": windowsVersion,
+    icon: iconPath,
+  });
+}
 async function injectHoistedRuntimeModulesIntoAsar(context) {
   const appAsarPath = resolveAppAsarPath(context);
   if (!existsSync(appAsarPath)) {
@@ -562,6 +583,11 @@ export default {
     runTimedSync("afterPack:assertPackagedNodePtyPrebuild", () =>
       assertPackagedNodePtyPrebuild(context),
     );
+    if (actualWindowsTarget && process.env.ZCODE_ENABLE_WIN_SIGN !== "1") {
+      await runTimedAsync("afterPack:writeUnsignedWindowsExecutableBranding", () =>
+        writeUnsignedWindowsExecutableBranding(context),
+      );
+    }
     if (actualWindowsTarget) {
       await runTimedAsync("afterPack:writeWindowsInstallManifest", () =>
         writeWindowsInstallManifest(context),
@@ -603,6 +629,11 @@ export default {
       // 应用图标：打包后放入 resources 目录，主进程通过 process.resourcesPath 加载
       from: "build/icon.png",
       to: "icon.png",
+    },
+    {
+      // 登录窗标题栏/任务栏使用灵动ai方形图标，不能回退到 ZCode。
+      from: "build/icon_installer.png",
+      to: "icon_lingdong.png",
     },
     ...(targetPlatform.os === "linux"
       ? [
@@ -699,9 +730,9 @@ export default {
   win: {
     target: ["nsis"],
     artifactName: buildDesktopArtifactName("win"),
-    // Windows unsigned/local validation builds must not download winCodeSign; that archive
-    // contains macOS symlinks and fails on machines without SeCreateSymbolicLinkPrivilege.
-    // Release CI can set ZCODE_ENABLE_WIN_SIGN=1 and provide the signing certificate.
+    icon: "build/icon_installer.ico",
+    // 未签名构建不能走 electron-builder 的 winCodeSign 解包（Windows 无符号链接权限时会失败）。
+    // 图标和版本资源改由 afterPack 调用 app-builder 自带 rcedit 写入。
     signAndEditExecutable: process.env.ZCODE_ENABLE_WIN_SIGN === "1",
   },
   linux: {

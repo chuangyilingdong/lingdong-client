@@ -42,3 +42,12 @@ Windows 客户端迁移到 ZCode 底座后，生产运行时仍使用 `ZCode` �
 - 预置其他工作区历史时，课堂模式侧栏不展示这些工作区。
 - 登录页加载 `resources/gate/login.html`，包含 DSH 品牌资源并沿用 mock 登录选择器。
 - `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed` 和现有平台 E2E 通过。
+
+## 2026-09-30 品牌替换补充
+
+- App logo、侧栏折叠 logo、桌面顶部 logo、启动页 HTML/React logo 全部使用灵动ai图标。
+- 登录窗使用灵动ai方形图标，并移除原生菜单栏（文件/编辑/视图/窗口/帮助）。
+- 停止自动挂载职业/工作方向引导，移除设置页对应入口。
+- 对话空态水印改为灵动ai字标；夜间问候改为“小灵陪你一起VibeCoding”。
+- 新任务输入框提示改为“向小灵提问，小灵即可开启创造”。
+- Windows 未签名构建通过 `rcedit` 在 afterPack 写入 exe 图标/版本资源，系统任务栏显示灵动ai图标。
