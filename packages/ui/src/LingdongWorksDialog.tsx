@@ -81,8 +81,19 @@ export function LingdongWorksDialog({
         items: selectedFiles.map((file) => ({ path: file.path, name: file.relativePath })),
       });
       if (result?.ok === false) throw new Error(result.message || "提交失败。");
-      const works = await classroom.listWorks();
-      const nextCount = Array.isArray(works?.items) ? works.items.length : Array.isArray(works?.works) ? works.works.length : null;
+      // 平台新版提交响应直接带 works；未发版时回落到作品列表接口，两条路都要能用。
+      const submitted = Array.isArray(result?.works) ? result.works : null;
+      let nextCount: number | null = null;
+      if (submitted) {
+        nextCount = submitted.length;
+      } else {
+        const works = await classroom.listWorks();
+        nextCount = Array.isArray(works?.items)
+          ? works.items.length
+          : Array.isArray(works?.works)
+            ? works.works.length
+            : null;
+      }
       setMessage(nextCount === null ? "作品已提交，平台正在处理。" : `作品已提交，平台当前返回 ${nextCount} 条作品记录。`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));

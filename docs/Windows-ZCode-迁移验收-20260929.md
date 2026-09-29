@@ -130,7 +130,7 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 | 打包态额度 0 / 1 / 无限 | `pnpm smoke:platform:quota*`（配合 `LINGDONG_E2E_SESSION`） | 3/3 通过 |
 | 打包态生产更新路径（无 dev 开关）：清单→下载→sha256 校验 | `pnpm smoke:platform:update:packaged` | 通过 |
 | 单课堂直接进入（平台规则主路径） | `node packages/desktop/tests/windows-classroom-selection.e2e.mjs single` | 通过 |
-| 多课堂必须先选择 + 课堂/额度隔离 | `node packages/desktop/tests/windows-classroom-selection.e2e.mjs multiple` | 通过 |
+| 平台下发 2 节 ACTIVE（脏数据）仍无选择 UI | `node packages/desktop/tests/windows-classroom-entry.e2e.mjs two-active` | 通过 |
 
 打包态产物（源码提交 `5a9ac9d`，仅用于验证，**不是发布候选**）：
 
@@ -197,3 +197,28 @@ node packages/desktop/tests/windows-classroom-entry.e2e.mjs single|two-active|no
 pnpm smoke:platform:windows      # 主流程
 pnpm smoke:platform:quota*       # 额度
 ```
+
+## 平台回复（2026-09-29）后的补充验证
+
+平台侧 7 条待办 + 更新清单 5 条 + 发送次数 5 条逐条核完，其中会影响客户端的四点已改并验证：
+
+| 场景 | 期望 | 命令 |
+|---|---|---|
+| 平台不下发 `workspacePath`（生产事实） | 回退到本机 `Documents/灵动ai创作/<学生>-<课时>`，并创建成功 | `windows-platform-contract.e2e.mjs no-workspace-path` |
+| 账号在别处登录（401 `SESSION_SUPERSEDED`） | 登录窗展示平台 message "当前账号已在其他设备登录"，不进工作区 | `… session-superseded` |
+| 提交响应直接带 `works`（未发版的新形状） | 用响应里的 `works` 回显（mock 故意让列表接口返回 0 条以区分） | `… submit-includes-works` |
+| `sends.limit=0` | 按平台口径视为**不限**（原实现会误判为"一次都不许发"） | `… quota-flow.e2e.mjs limit-0` |
+
+另外：mock 的 5 个客户端接口已改用平台真实包络 `{success,ok,data}` / 错误 `{error:{code,message}}`，
+所以上面所有场景同时验证了客户端的解包逻辑。
+
+E2E 全矩阵（11 项）由 `.tmp/run-all-local-e2e.mjs` 一次跑完，全部通过。
+
+⚠️ 该 E2E 会在真实 `Documents/灵动ai创作` 下创建"联调学生-联调测试课堂"目录（生产回退路径所致），
+脚本会在实例退出后删除；**若该目录在运行前已存在则一律不删**（同目录下有真实学生作业）。
+
+### 仍待平台决定
+
+- `MAX_HISTORY=40`（约 13 轮）静默截断：建议改为可配 + 在响应里给出截断标记；详见平台契约文档。
+- "一次都不许发"的课堂状态：平台口径下 `0 = 不限`，无法表达；产品需要的话要先定口径。
+- `submit-upload` 的 `works` 发版（发版前客户端自动回落，不影响功能）。

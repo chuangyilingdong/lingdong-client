@@ -318,10 +318,13 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   if (Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_WORK_REQUEST_BYTES) {
     throw new Error("作品编码后太大，请减少素材后再提交。");
   }
-  return callPlatform("/api/student/runtime/submit-upload", {
-    method: "POST",
-    body: JSON.stringify(body),
-  });
+  // 平台新版在提交响应里直接回 works（形状同 GET /student/works）；解包后交给 renderer。
+  return unwrap<Record<string, unknown>>(
+    await callPlatform("/api/student/runtime/submit-upload", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  );
 }
 
 async function callPlatform(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -347,7 +350,9 @@ function registerPlatformHandlers(): void {
   if (handlersRegistered) return;
   handlersRegistered = true;
   ipcMain.handle("lingdong:platform-snapshot", () => getLingdongPlatformSnapshot());
-  ipcMain.handle("lingdong:platform-works", () => callPlatform("/api/student/works?page=1&limit=20"));
+  ipcMain.handle("lingdong:platform-works", async () =>
+    unwrap<Record<string, unknown>>(await callPlatform("/api/student/works?page=1&limit=20")),
+  );
   ipcMain.handle("lingdong:platform-scan-workspace", () => scanLingdongWorkspaceFiles());
   ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => submitWorkFromDesktop(payload));
   ipcMain.handle("lingdong:platform-refresh-context", async () => {

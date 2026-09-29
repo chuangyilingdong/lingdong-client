@@ -44,6 +44,14 @@ let updateState = null;
 let updateBytes = null;
 const updateDownloads = [];
 let revision = 1;
+// 平台真实行为开关（默认与生产一致）：
+//   omitWorkspacePath 平台不下发工作区（生产事实：学生本机工作区只有客户端知道）。
+//     默认 false 是为了让多数 E2E 保持在本仓库 .tmp 下；生产分支由专门场景开启验证。
+//   sessionSuperseded 账号在别处登录 → 401 SESSION_SUPERSEDED
+//   submitIncludesWorks 提交响应直接带 works（新版，未发版前为 false）
+let omitWorkspacePath = false;
+let sessionSuperseded = false;
+let submitIncludesWorks = false;
 let mode = "text";
 let toolRound = 0;
 const origin = "http://127.0.0.1:19090";
@@ -53,6 +61,10 @@ const json = (res, status, value) => {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(value));
 };
+// 平台成功响应统一是 {success, ok, data}；错误体是 {error:{code,message}}。
+const ok = (res, data) => json(res, 200, { success: true, ok: true, data });
+const fail = (res, status, code, message) =>
+  json(res, status, { error: { code, message } });
 async function body(req) {
   let raw = "";
   for await (const c of req) raw += c;
@@ -115,12 +127,19 @@ function context(sessionId) {
       used,
       remaining: quotaLimit === null ? null : Math.max(0, quotaLimit - used),
     },
-    workspacePath: selected.workspace,
+    ...(omitWorkspacePath ? {} : { workspacePath: selected.workspace }),
   };
 }
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, origin).pathname;
+    if (pathname === "/__test/platform" && req.method === "POST") {
+      const data = await body(req);
+      if (typeof data.omitWorkspacePath === "boolean") omitWorkspacePath = data.omitWorkspacePath;
+      if (typeof data.sessionSuperseded === "boolean") sessionSuperseded = data.sessionSuperseded;
+      if (typeof data.submitIncludesWorks === "boolean") submitIncludesWorks = data.submitIncludesWorks;
+      return json(res, 200, { omitWorkspacePath, sessionSuperseded, submitIncludesWorks });
+    }
     if (pathname === "/__test/classrooms" && req.method === "POST") {
       const data = await body(req);
       classroomMode =
@@ -163,28 +182,40 @@ const server = http.createServer(async (req, res) => {
       });
     if (pathname === "/api/auth/login" && req.method === "POST") {
       await body(req);
-      return json(res, 200, {
+      return ok(res, {
         token: "mock-session-token",
         user: { id: "e2e-student", login: "mock", displayName: "联调学生" },
       });
     }
     if (pathname === "/api/student/runtime/client-context") {
+      if (sessionSuperseded)
+        return fail(res, 401, "SESSION_SUPERSEDED", "当前账号已在其他设备登录");
       const sessionId = new URL(req.url, origin).searchParams.get("sessionId");
-      return json(res, 200, context(sessionId));
+      return ok(res, context(sessionId));
     }
     if (pathname === "/api/auth/logout") return json(res, 200, { ok: true });
-    if (pathname === "/api/student/works")
-      return json(res, 200, { items: works, total: works.length });
+    if (pathname === "/api/student/works") {
+      // submitIncludesWorks 场景下故意让列表接口落后，用于区分客户端到底用了哪条数据。
+      if (submitIncludesWorks) return ok(res, { items: [], total: 0 });
+      return ok(res, { items: works, total: works.length });
+    }
     if (pathname === "/api/student/runtime/submit-upload" && req.method === "POST") {
       const data = await body(req);
-      if (!data.copyrightConfirmed) return json(res, 400, { message: "缺少版权确认" });
+      if (!data.copyrightConfirmed)
+        return fail(res, 400, "WORK_COPYRIGHT_CONFIRMATION_REQUIRED", "请先确认作品为本人原创");
       works.push({
         id: "work-" + (works.length + 1),
         name: data.name,
         files: data.files?.map((f) => f.name),
         cover: !!data.cover,
       });
-      return json(res, 200, { ok: true, works: [works.at(-1)], warnings: [], missing: [] });
+      return ok(res, {
+        ok: true,
+        warnings: [],
+        missing: [],
+        // 新版平台：提交响应直接回 works（形状同 GET /student/works 条目）
+        ...(submitIncludesWorks ? { works: [works.at(-1)] } : {}),
+      });
     }
     if (pathname === "/downloads/manifest.json") {
       if (updateState) return json(res, 200, updateState);

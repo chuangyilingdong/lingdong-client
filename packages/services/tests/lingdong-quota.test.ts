@@ -21,16 +21,21 @@ after(async () => {
   }
 });
 
-test("无限额度不会被空值解释为 0；显式 0 会拦截", async () => {
-  for (const value of [undefined, null, "", " ", "bad", -1]) {
+test("不限次数的各种写法都不拦截（含平台口径的 0）", async () => {
+  // 平台确认：sends.limit 只下发 null 或正整数，且后台"不填或填 0"都表示不限次。
+  for (const value of [undefined, null, "", " ", "bad", -1, 0, "0"]) {
     const { q } = await ledger(value);
     const slot = await q.reserve("input-a");
     assert.ok(slot.fresh);
-    assert.equal((await q.read()).limit, null);
+    assert.equal((await q.read()).limit, null, `limit=${String(value)} 应视为不限`);
   }
-  const { q } = await ledger(0);
+});
+test("正整数上限才会拦截，remaining 归零即用尽", async () => {
+  const { q } = await ledger(1);
+  await q.settle(await q.reserve("input-a"), "accepted");
+  assert.deepEqual(await q.read(), { limit: 1, used: 1, remaining: 0 });
   await assert.rejects(
-    q.reserve("input-a"),
+    q.reserve("input-b"),
     (e) => (e as { code?: string }).code === "SEND_QUOTA_EXCEEDED",
   );
 });

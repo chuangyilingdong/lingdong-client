@@ -26,7 +26,7 @@ ZCode 作为客户端底座，平台服务端继续保持现有账号、课堂�
     "title": "课堂标题"
   },
   "gateway": {
-    "baseUrl": "https://aicyld.com/api/runtime-gateway",
+    "baseUrl": "https://aicyld.com/api/gateway/v1",
     "key": "短期运行时凭据"
   },
   "models": [
@@ -122,7 +122,7 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 ## 平台侧待办
 
 1. 保持以上 5 个账号/课堂/作品接口路径不变。
-2. 确认 `client-context.gateway.baseUrl` 是可直接用于 OpenAI Chat Completions 的地址。
+2. `client-context.gateway.baseUrl` 是 `https://aicyld.com/api/gateway/v1`（**不含** `/chat/completions`）；客户端请求 `<baseUrl>/chat/completions`。⚠️ 契约早期示例里的 `/api/runtime-gateway` 平台不存在（404），一律以 `client-context` 下发值为准。
 3. 网关兼容 ZCode 的标准 tool call 和流式 usage。
 4. 补齐缓存 token 透传和每轮耗时日志。
 5. 保持 401/403/`SESSION_SUPERSEDED` 与 429 错误码语义不变。
@@ -410,3 +410,44 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 3. 客户端本地 `limit=null` 视为不限；平台 `sends.limit` 为 `null`/`undefined`/空串/`""` 时都必须表达“不限”，不要下发 `0` 表示不限。
 4. 额度耗尽后平台返回 429 + `error.code=SEND_QUOTA_EXCEEDED`；客户端已能显示专用提示，请在真实课堂验证一次。
 5. `client-context.sends.used` 用于登录基线；平台若在课堂中重置用量，请保持 `used` 单调或配合客户端重新登录，避免本机投影与平台账目长期背离。
+
+## 平台侧回复核对（2026-09-29 版）
+
+平台逐条核完 7 条待办 + 更新清单 5 条 + 发送次数 5 条，结论与客户端实现对照如下。
+
+### 已确认一致（客户端无需改动）
+
+| 项 | 平台结论 | 客户端 |
+|---|---|---|
+| 5 个接口路径 | 不变，且加常驻守卫 | 一致 |
+| `gateway.baseUrl` | `https://aicyld.com/api/gateway/v1`，不含 `/chat/completions` | 一致（SDK 自行拼 `/chat/completions`） |
+| tool call + 流式 usage | 已支持并真请求验过 | 一致 |
+| 缓存 token + 每轮耗时日志 | 已支持两套命名 | 一致 |
+| 401/403/`SESSION_SUPERSEDED`/429 | `SESSION_SUPERSEDED`=401；超限=429 | 客户端原样展示 `error.message`（已测） |
+| 不依赖 DSH 字段 | 响应无任何 DSH 字段 | 一致 |
+| `classroom` / `models` / `presets` 形状 | `{id,lessonId,title}` / `{id,displayName}` / `[{title,text}]` | 一致（显示用 displayName，请求用 id） |
+| 响应包络 | 成功 `{success,ok,data}`，错误 `{error:{code,message}}` | 客户端统一 `unwrap(data)` + 取 `error.message`（已用 mock 包络验证） |
+| 作品上限 | 60 文件 / 16 MiB / 24 MB body | 与客户端默认一致 |
+| 封面失败不阻断 | 只记 warnings | 客户端把封面当 best-effort |
+
+### 本次按平台回复做的客户端改动
+
+1. **`sends.limit=0` 按"不限"处理**（平台口径：`null` 或正整数，后台"不填或填 0"都是不限）。
+   原先客户端把 0 当"一次都不许发"，一旦平台把后台原始值透传下来会整节课误拦，已改为 `limit>0` 才是上限。
+   ⚠️ 请平台确认：`sends.limit` 永远不下发 0（当前实现满足）。
+2. **提交响应里的 `works`**：客户端优先用提交响应自带的 `works` 回显，缺省时回落 `GET /student/works`，
+   因此**新版未发版前也能正常工作**，发版后自动少一次请求。
+3. **平台不下发 `workspacePath`**：客户端回退到本机 `Documents/灵动ai创作/<学生>-<课时>`，已按生产事实验证。
+4. **交作品不再依赖 `sessionId`**：平台不读 `sessionId`/`classroomId`（课堂由运行时密钥解出），客户端已停止下发 `sessionId`。
+
+### 平台侧仍需定/改
+
+1. **`limit=0` 与"一次都不许发"**：平台口径下 `0 = 不限`，无法表达"一次都不许发"。
+   客户端目前也没有这个状态（老师要停发请用"结束课堂"）。若产品确实需要"零次课堂"，需先定口径。
+2. **网关历史截断 `MAX_HISTORY=40`（约 13 轮）**：超出后早期上下文被**静默丢弃**、不报错。
+   客户端建议：
+   - 该值**做成可配**（环境变量或课时级设置），默认不低于 80；
+   - 发生截断时**在响应里给一个显式标记**（header 或 usage 字段），客户端才能提示"早期上下文已截断"；
+   - 客户端侧由 ZCode 自己的上下文压缩负责长期记忆，网关截断不宜作为主要机制，
+     否则学生做到第 15 轮会突然"忘记"前面的要求，且界面上看不出原因。
+3. **`submit-upload` 的 `works` 待发版**：发版前客户端走 `GET /student/works` 回落，功能不受影响。

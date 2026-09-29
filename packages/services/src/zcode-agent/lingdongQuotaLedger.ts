@@ -14,6 +14,9 @@ interface QuotaFile {
   entries: Record<string, "pending" | "accepted">;
 }
 const empty = (): QuotaFile => ({ version: 1, limit: null, used: 0, entries: {} });
+// 平台口径（2026-09-29 平台侧确认）：sends.limit 只下发 null 或正整数；
+// 后台"不填或填 0"都表示不限次。因此 0 必须按"不限"处理，
+// 否则平台一旦把后台原始值 0 透传下来，整节课会被本地误拦。
 export function normalizeSendLimit(value: unknown): number | null {
   if (
     value === null ||
@@ -23,7 +26,7 @@ export function normalizeSendLimit(value: unknown): number | null {
   )
     return null;
   const number = Number(value);
-  return Number.isInteger(number) && number >= 0 ? number : null;
+  return Number.isInteger(number) && number > 0 ? number : null;
 }
 function snapshot(file: QuotaFile): QuotaSnapshot {
   return {

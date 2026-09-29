@@ -6,6 +6,7 @@ import { chromium } from "playwright-core";
 const cdp = process.env.LINGDONG_E2E_CDP || "http://127.0.0.1:9229";
 const mock = process.env.LINGDONG_E2E_MOCK || "http://127.0.0.1:19090";
 // 场景由命令行参数传入（不引入 cross-env 依赖）：limit-1 / limit-0 / unlimited。
+// limit-0 断言平台口径「0 = 不限次」，而不是"一次都不许发"。
 const scenario = process.argv[2] || process.env.LINGDONG_E2E_QUOTA_SCENARIO || "limit-1";
 for (const url of [cdp, mock]) {
   assert.ok(
@@ -62,19 +63,14 @@ try {
     assert.fail(`网关未观察到第 ${expectedTotal} 次流式请求`);
   };
 
-  if (scenarioLimit === null) {
-    // 无限额度：limit 为 null 不能被当成 0（历史回归是 Number("") === 0）。
+  if (scenarioLimit === null || scenarioLimit === 0) {
+    // 不限次数：null 和平台口径的 0 都不能被当成"一次都不许发"。
     for (const index of [1, 2, 3]) {
-      await sendAndWaitForGateway(`无限额度第 ${index} 条`, index);
+      await sendAndWaitForGateway(`不限次数第 ${index} 条`, index);
     }
     await page.waitForTimeout(1_000);
-    assert.equal(await quotaBanner.count(), 0, "无限额度不得出现用尽提示");
+    assert.equal(await quotaBanner.count(), 0, "不限次数不得出现用尽提示");
     assert.equal(await streamCount(), 3);
-  } else if (scenarioLimit === 0) {
-    await input.fill("额度为零的消息");
-    await send.click();
-    await quotaBanner.waitFor({ timeout: 15_000 });
-    assert.equal(await streamCount(), 0, "limit=0 不得抵达平台网关");
   } else {
     await sendAndWaitForGateway("第一条课堂消息", 1);
     const before = await streamCount();
@@ -94,18 +90,21 @@ try {
   );
   const directory = join(session.profile, ".zcode", "v2", "runtime", "lingdong-quota");
   const files = (await readdir(directory)).filter((name) => name.endsWith(".json"));
-  if (scenarioLimit === 0) {
-    assert.equal(files.length, 1);
+  assert.equal(files.length, 1);
+  const ledgerData = JSON.parse(await readFile(join(directory, files[0]), "utf8"));
+  if (scenarioLimit === null || scenarioLimit === 0) {
+    assert.equal(ledgerData.used, 3, "不限次数场景应记录三次已接受发送");
+    assert.equal(ledgerData.limit, null, "0 与 null 都必须落成不限（limit=null）");
   } else {
-    const data = JSON.parse(await readFile(join(directory, files[0]), "utf8"));
-    assert.equal(data.used, scenarioLimit === null ? 3 : 1);
+    assert.equal(ledgerData.used, 1, "limit=1 场景只应记录一次已接受发送");
+    assert.equal(ledgerData.limit, 1);
   }
   console.log(
     JSON.stringify({
       pass: true,
       scenario,
       gatewayStreamRequests: await streamCount(),
-      quotaMessageVisible: scenarioLimit === null ? false : true,
+      quotaMessageVisible: !(scenarioLimit === null || scenarioLimit === 0),
     }),
   );
 } finally {
