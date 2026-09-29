@@ -28,7 +28,7 @@ const session = {
   logPath: null,
 };
 
-async function launchApp({ profileName, digest, withAuth = true }) {
+async function launchApp({ profileName, digest, withAuth = true, omitPlatformEntry = false }) {
   const profile = await mkdtemp(join(root, profileName + "-"));
   await mkdir(join(profile, ".zcode", "v2"), { recursive: true });
   await mkdir(join(profile, "electron"), { recursive: true });
@@ -39,15 +39,17 @@ async function launchApp({ profileName, digest, withAuth = true }) {
     );
   }
   const manifest = {
-    version: "0.2.0-zcode.2",
+    version: NEXT_VERSION,
     enabled: true,
     mandatory: false,
     minVersion: "",
     publishedAt: new Date().toISOString(),
     note: "更新联动 E2E",
-    files: {
-      "win-x64": { version: NEXT_VERSION, name: artifactName, size: bytes.byteLength, sha256: digest },
-    },
+    files: omitPlatformEntry
+      ? {}
+      : {
+          "win-x64": { version: NEXT_VERSION, name: artifactName, size: bytes.byteLength, sha256: digest },
+        },
   };
   const configured = await fetch(`${mock}/__test/update`, {
     method: "POST",
@@ -169,12 +171,37 @@ try {
   );
   stopApp();
 
+  // 第三场景：清单里没有本平台条目（例如单平台发布时移除了另一平台）→
+  // 客户端必须判定"本平台暂无更新"，不得落到 YAML 回退分支后抛错。
+  const missing = await launchApp({
+    profileName: "no-entry",
+    digest: sha256,
+    omitPlatformEntry: true,
+  });
+  await loginThroughGate();
+  const missingLog = await waitForLog(
+    missing.logPath,
+    (text) => text.includes("[auto-update] already up to date") || /\[auto-update\] error:/.test(text),
+    120_000,
+    "缺少本平台条目",
+  );
+  assert.ok(
+    missingLog.includes("[auto-update] already up to date"),
+    "缺少本平台条目时应判定为暂无更新",
+  );
+  assert.ok(
+    !/\[auto-update\] error:/.test(missingLog),
+    "缺少本平台条目不得记成更新失败",
+  );
+  stopApp();
+
   console.log(
     JSON.stringify({
       pass: true,
       manifestApplied: true,
       downloadedAndVerified: true,
       tamperedArtifactRejected: true,
+      missingPlatformEntryTreatedAsNoUpdate: true,
     }),
   );
 } finally {

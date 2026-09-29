@@ -4,6 +4,12 @@
 # 用法：
 #   bash deploy/publish-client.sh <安装包> [--dry-run]
 #   bash deploy/publish-client.sh <Windows 安装包> <macOS DMG> [--dry-run]
+#   bash deploy/publish-client.sh <Windows 安装包> --single-platform [--dry-run]
+#
+# 单平台发布（--single-platform）：本次只发一个平台时使用。清单顶层 version 只有一个，
+# 另一平台仍是旧版本会造成"顶层说新、该平台文件却是旧包"的坏更新，因此本模式会
+# **移除另一平台的条目**（对方客户端只会看到"本平台暂无更新"，不会被推错包），
+# 并在输出里明确提示。等另一平台出包后，用双包一次发布即可恢复正常。
 #
 # 支持：
 #   lingdong-client-<版本>-win-x64.exe
@@ -20,6 +26,7 @@ REMOTE_DIR="/srv/ai-kids-platform/downloads"
 KNOWN_HOSTS="${PUBLISH_CLIENT_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"
 SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS")
 DRY=0
+SINGLE=0
 
 file_size() {
   if stat -c %s "$1" >/dev/null 2>&1; then stat -c %s "$1"; else stat -f %z "$1"; fi
@@ -53,6 +60,7 @@ ARTIFACTS=()
 for argument in "$@"; do
   case "$argument" in
     --dry-run) DRY=1 ;;
+    --single-platform) SINGLE=1 ;;
     -*) echo "未知参数：$argument"; exit 2 ;;
     *) ARTIFACTS+=("$argument") ;;
   esac
@@ -78,6 +86,11 @@ for artifact in "${ARTIFACTS[@]}"; do
   NAMES+=("$name"); TARGETS+=("$target"); VERSIONS+=("$version")
   SIZES+=("$(file_size "$artifact")"); SHAS+=("$(file_sha256 "$artifact")")
 done
+
+if [ "${#ARTIFACTS[@]}" -eq 2 ] && [ "$SINGLE" = "1" ]; then
+  echo "!! --single-platform 只能传一个安装包"
+  exit 2
+fi
 
 if [ "${#ARTIFACTS[@]}" -eq 2 ]; then
   [ "${TARGETS[0]}" != "${TARGETS[1]}" ] || { echo "!! 两个安装包目标不能相同：${TARGETS[0]}"; exit 2; }
@@ -108,7 +121,7 @@ for index in "${!ARTIFACTS[@]}"; do
   fi
 done
 
-if [ "${#ARTIFACTS[@]}" -eq 1 ]; then
+if [ "${#ARTIFACTS[@]}" -eq 1 ] && [ "$SINGLE" != "1" ]; then
   target="${TARGETS[0]}"
   version="${VERSIONS[0]}"
   other="$(other_target "$target")"
@@ -146,6 +159,11 @@ for index in "${!ARTIFACTS[@]}"; do
   FILTER="$FILTER | .files[\"${TARGETS[$index]}\"] = {version: \$version$index, name: \$name$index, size: \$size$index, sha256: \$sha$index}"
   JQ_ARGS+=(--arg "version$index" "${VERSIONS[$index]}" --arg "name$index" "${NAMES[$index]}" --arg "sha$index" "${SHAS[$index]}" --argjson "size$index" "${SIZES[$index]}")
 done
+if [ "$SINGLE" = "1" ]; then
+  other="$(other_target "${TARGETS[0]}")"
+  FILTER="$FILTER | del(.files[\"$other\"])"
+  echo "[single-platform] 将移除 $other 条目（本次只发 ${TARGETS[0]}）"
+fi
 FILTER="$FILTER | .enabled = (if has(\"enabled\") then .enabled else true end) | .mandatory = (if has(\"mandatory\") then .mandatory else false end) | .minVersion = (if has(\"minVersion\") then .minVersion else \"\" end) | .note = (if has(\"note\") then .note else \"灵动ai创作客户端新版本已发布。\" end) | .channel = (if has(\"channel\") then .channel else \"stable\" end)"
 
 JQ_ARGS_TEXT=""

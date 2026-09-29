@@ -2,6 +2,7 @@ import { posix } from "node:path";
 import type { CustomPublishOptions, PackageFileInfo } from "builder-util-runtime";
 import {
   DEFAULT_ZCODE_ENDPOINT_ORIGIN,
+  ZCODE_VERSION,
   normalizeZCodeEndpointOrigin,
   type ElectronReleaseChannel,
 } from "@zcode/shared";
@@ -271,9 +272,22 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
       throw new Error(`Empty electron update manifest: ${manifestUrl.toString()}`);
     }
 
-    const lingdong = isLingdongDownloadManifestUrl(this.options.manifestUrl)
+    // 平台下载清单（/downloads/manifest.json）与 electron-builder 的 YAML 清单是两种格式。
+    // 平台清单里可能没有"本平台"的条目 —— 例如本轮只发 Windows、Mac 条目被移除，
+    // 或反之。这属于"本平台暂无更新"，不是清单损坏：
+    // 返回当前版本让 updater 走 update-not-available；否则会落到 YAML 回退分支，
+    // 因缺少 files 抛错，把每次检查都记成失败。
+    const isLingdongManifest = isLingdongDownloadManifestUrl(this.options.manifestUrl);
+    const lingdong = isLingdongManifest
       ? parseLingdongDownloadManifest(raw, manifestUrl, this.releasePlatform)
       : null;
+    if (isLingdongManifest && !lingdong) {
+      return {
+        version: ZCODE_VERSION,
+        files: [],
+        zcodeReleaseChannel: releaseChannel,
+      } as unknown as UpdateInfo;
+    }
     const parsed = lingdong ?? parseYaml(raw);
     if (!isRecord(parsed) || typeof parsed.version !== "string") {
       throw new Error(`Invalid electron update manifest: ${manifestUrl.toString()}`);
