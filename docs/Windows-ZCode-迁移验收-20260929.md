@@ -119,6 +119,29 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 - 从最终提交重新构建 Windows 安装包，再在真实清单上验证“下载 → 用户确认 → 安装替换 → 版本变更”。
 - 平台侧确认 `downloads/` 目录与 `manifest.json` 同源，安装包公网可下且 `sha256`/`size` 与实际字节严格一致。
 
+## 打包态验证（app.isPackaged = true，2026-09-29）
+
+前面两个阻断缺陷（强更门误拦、Provider schema 不合法）只在打包/真实路径暴露，因此本轮补做了打包态验证。使用 `win-unpacked` 产物（未安装到系统，避免污染本机），连本地 mock：
+
+| 验证 | 命令 | 结果 |
+|---|---|---|
+| 打包态启动不被强更门拦截，显示平台登录门 | `pnpm e2e:packaged:launch` | 通过 |
+| 打包态课堂全链路（登录/流式/两轮工具/交作品+封面/预设） | `pnpm smoke:platform:packaged` | 通过 |
+| 打包态额度 0 / 1 / 无限 | `pnpm smoke:platform:quota*`（配合 `LINGDONG_E2E_SESSION`） | 3/3 通过 |
+| 打包态生产更新路径（无 dev 开关）：清单→下载→sha256 校验 | `pnpm smoke:platform:update:packaged` | 通过 |
+
+打包态产物（源码提交 `5a9ac9d`，仅用于验证，**不是发布候选**）：
+
+```text
+文件：.tmp/verify-win/lingdong-client-0.2.0-zcode.1-win-x64.exe
+大小：149,751,501 字节
+SHA256：1F53D8D0A7C9EB974475EC403F6CBF1B71767BAFBCC6690612F238E372F64ED2
+```
+
+注意：该产物构建于后续仅测试脚本改动之前，且未做代码签名；正式发布必须从最终提交重新构建并重新采集 size/SHA256。
+
+未在打包态验证的部分：NSIS 安装/卸载流程、安装后真实更新替换、代码签名校验——这些需要真实发布环境，等用户确认后再做。
+
 ## 安装包状态
 
 本轮运行验收使用的是最新源码产物，不是最终安装包。

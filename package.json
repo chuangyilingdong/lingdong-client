@@ -51,7 +51,10 @@
     "smoke:platform:quota": "node packages/desktop/tests/windows-quota-flow.e2e.mjs limit-1",
     "smoke:platform:quota:unlimited": "node packages/desktop/tests/windows-quota-flow.e2e.mjs unlimited",
     "smoke:platform:quota:zero": "node packages/desktop/tests/windows-quota-flow.e2e.mjs limit-0",
-    "smoke:platform:update": "node packages/desktop/tests/windows-update-flow.e2e.mjs"
+    "smoke:platform:update": "node packages/desktop/tests/windows-update-flow.e2e.mjs",
+    "e2e:packaged:launch": "node packages/desktop/tests/launch-packaged-e2e.mjs",
+    "smoke:platform:packaged": "node packages/desktop/tests/windows-classroom-flow.e2e.mjs",
+    "smoke:platform:update:packaged": "node packages/desktop/tests/windows-update-packaged.e2e.mjs"
   },
   "dependencies": {
     "border-beam": "^1.0.1",

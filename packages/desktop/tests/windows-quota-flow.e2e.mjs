@@ -85,7 +85,13 @@ try {
     assert.equal(await streamCount(), before, "超限命令不得抵达平台网关");
   }
 
-  const session = JSON.parse(await readFile(".tmp/windows-platform-e2e/session.json", "utf8"));
+  // 允许把同一套断言跑在打包态实例上（用 LINGDONG_E2E_SESSION 指向对应 session.json）。
+  const session = JSON.parse(
+    await readFile(
+      process.env.LINGDONG_E2E_SESSION || ".tmp/windows-platform-e2e/session.json",
+      "utf8",
+    ),
+  );
   const directory = join(session.profile, ".zcode", "v2", "runtime", "lingdong-quota");
   const files = (await readdir(directory)).filter((name) => name.endsWith(".json"));
   if (scenarioLimit === 0) {
