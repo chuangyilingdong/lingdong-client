@@ -2984,15 +2984,27 @@ export function SessionPane({
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);
         const runtimeModelUnavailable = detail.includes("provider.notInRegistry");
+        const classroomQuotaExceeded =
+          (error &&
+            typeof error === "object" &&
+            "code" in error &&
+            error.code === "SEND_QUOTA_EXCEEDED") ||
+          detail.includes("本节课发送次数已用完");
         // 首发前 switchModelConfig 失败只会抛回 Composer；Composer 为了保留草稿
         // 仅写日志，不会生成 snapshot.control.lastError，用户看到的结果就是“点击没反应”。
         // 这里把 admission 前失败收口为 pane-local 错误横幅，不改变 desktop continuous 或
         // Web remote replayable 的发送/恢复语义，草稿仍由 Composer 原路径保留。
         setSendSubmissionError({
-          code: runtimeModelUnavailable ? "ZCODE_RUNTIME_MODEL_UNAVAILABLE" : "SEND_FAILED",
-          message: runtimeModelUnavailable
-            ? detail
-            : intl.formatMessage({ id: "chat.error.sendFailed" }),
+          code: classroomQuotaExceeded
+            ? "SEND_QUOTA_EXCEEDED"
+            : runtimeModelUnavailable
+              ? "ZCODE_RUNTIME_MODEL_UNAVAILABLE"
+              : "SEND_FAILED",
+          message: classroomQuotaExceeded
+            ? intl.formatMessage({ id: "chat.error.classroomQuotaExceeded" })
+            : runtimeModelUnavailable
+              ? detail
+              : intl.formatMessage({ id: "chat.error.sendFailed" }),
           detail,
           ...(sessionId ? { taskId: sessionId } : {}),
         });

@@ -2808,3 +2808,5 @@ export async function disposeServiceResourcesAndWait(services: ServiceCollection
     ?.disposeAndWait()
     .catch(() => {});
 }
+
+export { createLingdongQuotaLedger } from "./zcode-agent/lingdongQuotaLedger.js";

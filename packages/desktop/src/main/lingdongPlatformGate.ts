@@ -1,10 +1,11 @@
 /* eslint-disable max-lines -- 平台登录、课堂上下文、作品提交与封面采集共享 Main 单一所有者；迁移阶段保持边界收口。 */
 import { app, BrowserWindow, ipcMain } from "electron";
+import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, extname, join, relative, resolve, sep } from "node:path";
-import { getAppConfigDir } from "@zcode/services/node";
+import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 
@@ -39,6 +40,7 @@ export type LingdongPlatformState = Readonly<{
   providerConfigPath: string;
   workspacePath: string;
   workspaceIdentity: string;
+  quotaFilePath: string;
 }>;
 
 const API_BASE = String(process.env.LINGDONG_API_BASE || "https://aicyld.com").replace(/\/+$/u, "");
@@ -107,6 +109,12 @@ async function buildProviderConfig(context: LingdongContext, targetPath?: string
   return path;
 }
 
+// 课堂额度投影按 workspace identity 隔离，同机多个 Window Host 共用一个带文件锁的文件。
+function quotaFilePathForIdentity(identity: string): string {
+  const key = createHash("sha256").update(identity).digest("hex");
+  return join(getAppConfigDir(), "runtime", "lingdong-quota", `${key}.json`);
+}
+
 async function handleLogin(payload: unknown): Promise<{ ok: true; user?: LingdongUser; classroom: LingdongClassroom; workspacePath: string } | { ok: false; message: string; classrooms?: readonly LingdongGateClassroom[] }> {
   try {
     const input = record<unknown>(payload) ? payload : {};
@@ -139,13 +147,18 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
     if (!context.classroom) throw new Error(context.message || "当前没有正在进行的课堂。");
     const workspacePath = resolveWorkspace(context, session.user);
     await mkdir(workspacePath, { recursive: true });
+    const workspaceIdentity = `${session.user?.id || session.user?.login || login}:${context.classroom.id}`;
+    const quotaFilePath = quotaFilePathForIdentity(workspaceIdentity);
+    // 登录基线以平台 used 为准：换课堂换桶，同一课堂重新登录时对齐平台账目。
+    await createLingdongQuotaLedger(quotaFilePath).sync(context.sends ?? {}, true);
     const providerPath = await buildProviderConfig(context);
     activeState = {
       session,
       context,
       providerConfigPath: providerPath,
       workspacePath,
-      workspaceIdentity: `${session.user?.id || session.user?.login || login}:${context.classroom.id}`,
+      workspaceIdentity,
+      quotaFilePath,
     };
     process.env.LINGDONG_API_BASE = API_BASE;
     process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
@@ -153,8 +166,7 @@ async function handleLogin(payload: unknown): Promise<{ ok: true; user?: Lingdon
     process.env.ZCODE_LINGDONG_WORKSPACE_PATH = workspacePath;
     process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY = activeState.workspaceIdentity;
     process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom.id;
-    process.env.ZCODE_LINGDONG_SEND_LIMIT = String(context.sends?.limit ?? "");
-    process.env.ZCODE_LINGDONG_SEND_USED = String(context.sends?.used ?? 0);
+    process.env.ZCODE_LINGDONG_QUOTA_FILE = quotaFilePath;
     // 登录成功后关闭登录窗，但 platformGatePending 会一直保持到主窗口就绪：
     // 应用进入"零窗口"瞬间时 window-all-closed 会被 pending 拦住，不会误退出。
     gateWindow?.close();
@@ -367,6 +379,8 @@ function registerPlatformHandlers(): void {
       sessionId: activeState.context.sessionId,
     };
     await buildProviderConfig(context, activeState.providerConfigPath);
+    // 刷新只把本机投影向平台已用量收敛，不因较旧响应降低已接受的计数。
+    await createLingdongQuotaLedger(activeState.quotaFilePath).sync(context.sends ?? {});
     process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
     process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
     activeState = { ...activeState, context };

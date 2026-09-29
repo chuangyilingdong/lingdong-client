@@ -12,6 +12,7 @@ await writeFile(join(workspace, "notes.txt"), "MOCK_CLASSROOM_FILE\n");
 const requests = [];
 const works = [];
 let used = 0;
+let quotaLimit = 10;
 let revision = 1;
 let mode = "text";
 let toolRound = 0;
@@ -34,7 +35,11 @@ function context() {
     models: [{ id: "mock-model", displayName: "Mock Model" }],
     defaultModel: "mock-model",
     presets: [{ title: "读取课堂文件", text: "读取 notes.txt 并总结内容" }],
-    sends: { limit: 10, used, remaining: 10 - used },
+    sends: {
+      limit: quotaLimit,
+      used,
+      remaining: quotaLimit === null ? null : Math.max(0, quotaLimit - used),
+    },
     workspacePath: workspace,
   };
 }
@@ -46,6 +51,12 @@ const server = http.createServer(async (req, res) => {
       mode = data.mode;
       toolRound = 0;
       return json(res, 200, { mode });
+    }
+    if (pathname === "/__test/quota" && req.method === "POST") {
+      const data = await body(req);
+      quotaLimit = data.limit;
+      used = data.used ?? 0;
+      return json(res, 200, { quotaLimit, used });
     }
     if (pathname === "/__test/state") return json(res, 200, { requests, works, used, revision });
     if (pathname === "/api/auth/login" && req.method === "POST") {

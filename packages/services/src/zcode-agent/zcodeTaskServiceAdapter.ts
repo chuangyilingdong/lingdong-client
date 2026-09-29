@@ -1,5 +1,4 @@
 /* oxlint-disable eslint(max-lines) -- 迁移期需要在一个门面里集中维护旧 task projection 到 ZCode session 的协议适配。 */
-import { consumeLingdongSend } from "./lingdongQuota.js";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -392,7 +391,6 @@ export function createZCodeTaskServiceAdapter(
     } & ZCodeBackgroundTurnAttribution,
   ): Promise<void> {
     const startedAt = Date.now();
-    consumeLingdongSend();
     notifySyncerSession(target);
     // live tool projection 只用于当前运行的终态收口。
     // 新输入开始时必须清掉上一轮 live-only 子工具，避免后续 snapshot 把旧工具补到新回复尾部。

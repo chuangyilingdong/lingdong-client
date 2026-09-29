@@ -1984,8 +1984,7 @@ app.whenReady().then(async () => {
     ZCODE_LINGDONG_WORKSPACE_PATH: lingdongPlatform.workspacePath,
     ZCODE_LINGDONG_WORKSPACE_IDENTITY: lingdongPlatform.workspaceIdentity,
     ZCODE_LINGDONG_CLASSROOM_ID: lingdongPlatform.context.classroom.id,
-    ZCODE_LINGDONG_SEND_LIMIT: process.env.ZCODE_LINGDONG_SEND_LIMIT,
-    ZCODE_LINGDONG_SEND_USED: process.env.ZCODE_LINGDONG_SEND_USED,
+    ZCODE_LINGDONG_QUOTA_FILE: lingdongPlatform.quotaFilePath,
   });
   Object.assign(process.env, hostProcessLocalEnv);
   markMainLaunchAppReady();

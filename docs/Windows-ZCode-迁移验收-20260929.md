@@ -50,13 +50,41 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 - 测试实例必须隔离 `HOME`、`ZCODE_DESKTOP_HOME_DIR`、`ZCODE_DATA_BASE_DIR`、`ZCODE_DESKTOP_USER_DATA_DIR`，并设置 `LINGDONG_API_BASE` 为 mock 地址。不要用日常真实账号或个人配置目录运行测试。
 - 当前开发 Electron 依赖缺少可执行文件，本次使用本地 Electron 41.0.3 缓存解压的运行时，没有重新安装依赖。Node 实际为 24.19.0，`mise.toml` 固定值为 24.14.0，最终 CI/发布应按固定版本再验收。
 
+## 已完成的阶段验证（2026-09-29 追加）
+
+- `pnpm test:platform` 9/9；额度单元测试另 6/6；`pnpm smoke:platform` 通过。
+- `pnpm smoke:platform:windows`：流式文本 + 两轮工具 + 带封面交作品通过。
+- `pnpm smoke:platform:quota` / `:zero` / `:unlimited`：三个额度场景通过。
+- 正常退出：个人配置文件保留、本课堂平台条目清除。
+
 ## 必须继续完成的项
 
-### 发送次数（已确认缺口）
+### 发送次数（本机投影已完成，平台口径待联调）
 
-当前 `consumeLingdongSend()` 只挂在 `zcodeTaskServiceAdapter.sendPromptToAgent()`，本次 UI 正常发送实际走 `zcodeAgentService.sendConversationCommandV4()`。因此新 V4 主路径未经过现有客户端计数逻辑。
+已完成：
 
-后续应在实际命令 admission 边界覆盖 V4 及带附件兼容路径，并以 commandId/inputId 去重；重试和 tool call 不能再扣一次。还要修正缺省 limit 被 `Number("")` 解释为 0 的情况，验证额度耗尽、平台 429、课堂刷新和 Desktop/mobile 两种交付语义。平台仍是额度和账单的最终权威。
+- 新增 `packages/services/src/zcode-agent/lingdongQuotaLedger.ts`：同机多 Host 共享一个带文件锁的课堂额度投影，原子写，按 workspace identity + sessionId + commandId 幂等。
+- 计数收口到 Service 实际命令入口：V4 `sendText`、`createSession.firstInput`、附件兼容 `session/send`；空会话预热、工具回合、`workspaceGenerateText` 不计数。
+- Main 在登录时按平台 used 建立基线，课堂上下文刷新时向平台 used 单调收敛；不同课堂用不同 identity 桶。
+- 仅 `lingdong-platform-gateway` 消耗课堂投影；学生自配 Provider 不受影响。
+- 删除旧的 `lingdongQuota.ts`（只挂在旧 adapter，V4 主路径绕不过去）及其失效环境变量。
+- UI 增加专用提示“本节课发送次数已用完，请先保存当前想法或联系老师。”，不再显示通用发送失败。
+
+实测（独立测试数据根 + localhost mock，`pnpm smoke:platform:quota*`）：
+
+| 场景 | 网关流式请求 | 额度提示 |
+|---|---|---|
+| `limit=0` | 0 | 显示 |
+| `limit=1` | 1（第二次本地拦截，无新请求） | 显示 |
+| `limit=null` 连发 3 次 | 3 | 不显示 |
+
+额度单元测试 6/6：空值不误判为 0、显式 0 拦截、同命令重放只占一次、明确拒绝释放预留、ACK 不确定保留、两个 ledger 实例并发只放行最后一个名额、平台 used 更新不会压低本机已接受计数。
+
+尚未完成（需要平台配合/真实课堂）：
+
+- 平台 `enforceVibecodingSendLimit` 与客户端“一次提交 = 一次”的口径对齐；客户端工具回合会多次请求网关，平台不得重复计数。
+- 真实平台 429 + `SEND_QUOTA_EXCEEDED` 端到端一次，以及多课堂切换时额度隔离。
+- `limit` 为 null 时平台必须下发 null/空值而不是 0。
 
 ### 平台与 UI 边界
 

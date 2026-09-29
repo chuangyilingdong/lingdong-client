@@ -139,7 +139,7 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 - 登录会话、课堂上下文、运行时网关凭据：`packages/desktop/src/main/lingdongPlatformGate.ts`（Electron Main 单一所有者）。
 - 当前课堂工作区：平台上下文初始化后由 `startupWorkspace` 启动参数与 ZCode workspace/session store 共同消费；Main 只注入 canonical path/identity，不复制任务状态。
-- 发送次数：现有 `packages/services/src/zcode-agent/lingdongQuota.ts` 仅覆盖旧 adapter，V4 command admission 尚需补齐与去重（详见 Windows 阶段验收文档）；UI 不作为最终事实来源，平台 429 仍是最终门禁。
+- 发送次数：`packages/services/src/zcode-agent/lingdongQuotaLedger.ts` 在 Service 的实际命令入口（V4 `sendText`、`createSession.firstInput`、附件兼容 `session/send`）预留与结算，按 workspace identity + sessionId + commandId 幂等；UI 不作为最终事实来源，平台 sends / 网关 429 仍是最终门禁。
 - 作品候选：renderer 读取当前 workspace 文件服务得到派生候选；提交命令只经过 `window.lingdong.submitWork` 回 Main，由 Main 使用平台 token 调用 `submit-upload`。
 
 ### 事件顺序
@@ -282,3 +282,59 @@ Windows 品牌验收：桌面主窗口 HTML 标题必须为“灵动ai创作客�
 - 拥有可用 Personal Provider（平台或学生自行配置）时，缺少 `providerFamilyDomain` 不应阻断启动。
 - 无可用模型且无完整底座登录状态时，仍保留账号/API Key 引导；用户主动打开厂商账号连接仍按既有流程处理。
 - 验收：平台 Provider 可用、无 OAuth 用户、无 family 时不打开启动登录页；空 Registry 仍打开；显式手动登录不受本次启动条件改变影响。
+
+## 课堂发送次数 V4 admission 与本机投影（2026-09-29）
+
+### 产品规则与所有权
+
+- 平台的 sends / 网关 429 / 账单仍是最终权威。服务层持有本机课堂额度投影，只用于提前提示；不修改平台账单接口。
+- 本机同账号同课堂的多个 Window Host 共用一个锁定投影文件（配置目录 `runtime/lingdong-quota/<identity-hash>.json`），避免每个进程独立计数。
+- `sendText`、带 firstInput 的会话创建和附件兼容 `session/send` 进入统一 admission 包装；空会话预热、工具回合、workspaceGenerateText（内部标题等）不扣课堂发送次数。
+- 只限制 `lingdong-platform-gateway` Provider。学生自带 API Key/外部 Provider 不消耗平台课堂投影。
+- 幂等键由 workspace identity（本地 path fallback）、sessionId 和 commandId/inputId 组成；Desktop continuous 与 mobile replayable 复用同一 Host/键，原有 owner/lease/stale-run 裁决不改变。
+- limit 缺省、null、空串或非法值表示无限；只有显式 0 才表示没有可用次数。
+
+### 事件顺序与失败语义
+
+```text
+Main 登录/上下文刷新 → 服务层投影初始化/同步（文件锁 + 原子写）
+用户命令 → Service 实际入口 → 预留一次额度
+  → 既有 CLI CommandInbox admission
+  → accepted：确认；已计数 duplicate：不再计数
+  → rejected/stale/noop/failed：释放本次新预留
+  → transport/ACK 丢失：保留不确定预留，相同 commandId 重放不重复扣减
+工具调用与模型重试 → 仍属于该命令，不进入新的发送计数
+Renderer → 平台 adapter 只读取投影，不自行维护计数
+```
+
+上下文刷新更新 limit 并将 used 向平台已用量收敛，不因为较旧服务端响应降低本机已接受的计数。新课堂使用新的 identity 桶；新登录在 Host 启动前以平台 used 建立新基线。
+
+Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
+
+| 场景 | 网关请求 | 额度提示 |
+|---|---|---|
+| `limit=0` | 0（本地即拦） | 显示 |
+| `limit=1` | 1（第二次本地拦截） | 显示 |
+| `limit=null` 连发 3 次 | 3（不误判为 0） | 不显示 |
+
+补充事实：同一轮含 2 次工具往返回合时会话共产生 4 次网关流式请求，账本 `used` 仍为 2，证明工具回合与模型重试不重复扣减。
+
+### 验收场景
+
+1. limit 空/null/缺省不拦截；limit=0 立即给出 SEND_QUOTA_EXCEEDED。
+2. Desktop V4 sendText、createSession.firstInput、附件兼容入口各计一次。
+3. 同 commandId 重放、两轮工具调用不重复计数。
+4. 两个 ledger 实例并发争最后一次额度，只允许一个新命令。
+5. 被 CLI 明确拒绝时释放新预留；ACK 不确定时相同 ID 可重试但不增加 used。
+6. 平台 used/limit 刷新可观察；不同 classroom identity 不串额度。
+7. 外部 Provider/内部生成/空预热会话不消耗平台投影。
+
+## 平台侧仍需确认（发送次数，2026-09-29）
+
+客户端已按上面的本机投影拦截，但**平台侧计费口径仍需联调确认**：
+
+1. 平台 `enforceVibecodingSendLimit` 以“消息里看起来像学生发的条数”为判据、按请求 +1。请与客户端“一次用户提交 = 一次”对齐，避免客户端放行而平台判超。
+2. 客户端工具回合会多次请求网关，平台不得因此重复计数（当前平台实现按 `looksLikeFreshSend` 处理，需真实联调确认）。
+3. 客户端本地 `limit=null` 视为不限；平台 `sends.limit` 为 `null`/`undefined`/空串/`""` 时都必须表达“不限”，不要下发 `0` 表示不限。
+4. 额度耗尽后平台返回 429 + `error.code=SEND_QUOTA_EXCEEDED`；客户端已能显示专用提示，请在真实课堂验证一次。
+5. `client-context.sends.used` 用于登录基线；平台若在课堂中重置用量，请保持 `used` 单调或配合客户端重新登录，避免本机投影与平台账目长期背离。

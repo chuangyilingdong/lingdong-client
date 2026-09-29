@@ -6,6 +6,7 @@ import {
 } from "@zcode/shared";
 /* oxlint-disable eslint(max-lines) -- ZCode Protocol transport、通知 wiring 和 app-facing session 方法必须共享同一个 client/emitter 上下文。 */
 import { randomUUID } from "node:crypto";
+import { createLingdongQuotaLedger } from "./lingdongQuotaLedger.js";
 import { ensureIndependentPlanSupport } from "./independentPlanSupport.js";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -1200,6 +1201,31 @@ export function createZCodeAgentService(
   const accountRequestAuthService = options?.accountRequestAuthService;
   const accountProviderConfigSource = options?.accountProviderConfigSource;
   const modelSelectionReadinessSource = options?.modelSelectionReadinessSource;
+  // 课堂额度的本机投影由 Main 在登录后初始化；Host 只按同一文件锁进行 admission。
+  // 没有课堂身份的 CLI/远程 Host 不建立投影，平台网关仍是最终权威。
+  const lingdongQuota = process.env.ZCODE_LINGDONG_QUOTA_FILE?.trim()
+    ? createLingdongQuotaLedger(process.env.ZCODE_LINGDONG_QUOTA_FILE.trim())
+    : null;
+  async function reserveClassroomSend(input: {
+    workspacePath: string;
+    workspaceIdentity?: string;
+    sessionId: string | null;
+    commandId: string;
+    selection?: { providerId: string };
+  }) {
+    if (!lingdongQuota) return null;
+    const providerId =
+      input.selection?.providerId ??
+      (await modelSelectionReadinessSource?.getView())?.preferredSelection?.providerId;
+    if (providerId !== "lingdong-platform-gateway") return null;
+    const id = JSON.stringify([
+      input.workspaceIdentity?.trim() || input.workspacePath,
+      input.sessionId,
+      input.commandId,
+    ]);
+    return lingdongQuota.reserve(id);
+  }
+
   const sessionRuntimePreferencesAuthority = options?.sessionRuntimePreferencesAuthority ?? "local";
   const resolveSessionRuntimePreferences = options?.resolveSessionRuntimePreferences;
 
@@ -4456,12 +4482,20 @@ export function createZCodeAgentService(
         workspaceKey: resolveWorkspaceKey(params),
         workspacePath: params.workspacePath,
       });
+      const slot = await reserveClassroomSend({
+        workspacePath: params.workspacePath,
+        workspaceIdentity: params.workspaceIdentity,
+        sessionId: params.sessionId,
+        commandId: params.inputId?.trim() || params.messageId?.trim() || randomUUID(),
+        selection: params.modelSelection,
+      });
       try {
         const result = await client.request(
           zcodeProtocolMethods.sessionSend,
           buildSessionSendParams(protocolParams),
           zcodeSessionSendResultSchema,
         );
+        if (slot && lingdongQuota) await lingdongQuota.settle(slot, "accepted");
         logger.info(logTraceId, "ZCode Agent session/send ACK", {
           durationMs: Date.now() - startedAt,
           inputId: params.inputId,
@@ -4487,8 +4521,10 @@ export function createZCodeAgentService(
             buildSessionSendParams(protocolParams, new Set(compatFields)),
             zcodeSessionSendResultSchema,
           );
+          if (slot && lingdongQuota) await lingdongQuota.settle(slot, "accepted");
           return result;
         }
+        if (slot && lingdongQuota) await lingdongQuota.settle(slot, "uncertain");
         logger.warn(logTraceId, "ZCode Agent session/send 失败", {
           durationMs: Date.now() - startedAt,
           error: error instanceof Error ? error.message : String(error),
@@ -5099,7 +5135,39 @@ export function createZCodeAgentService(
           };
         }
       }
-      const ack: CommandAck = await client.request(V4_METHODS.command, envelope, commandAckSchema);
+      const input =
+        envelope.type === "sendText"
+          ? commandPayloadSchemas.sendText.parse(envelope.payload)
+          : envelope.type === "createSession"
+            ? commandPayloadSchemas.createSession.parse(envelope.payload).firstInput
+            : null;
+      const slot = input
+        ? await reserveClassroomSend({
+            workspacePath: params.workspacePath,
+            workspaceIdentity: params.workspaceIdentity,
+            sessionId: envelope.sessionId,
+            commandId: envelope.commandId,
+            selection: input.modelSelection,
+          })
+        : null;
+      let ack: CommandAck;
+      try {
+        ack = await client.request(V4_METHODS.command, envelope, commandAckSchema);
+      } catch (error) {
+        // ACK 丢失不能假定命令未被 CLI 接纳；保留同 ID 预留，重放不会重复扣次。
+        if (slot && lingdongQuota) await lingdongQuota.settle(slot, "uncertain");
+        throw error;
+      }
+      if (slot && lingdongQuota) {
+        await lingdongQuota.settle(
+          slot,
+          ack.status === "accepted"
+            ? "accepted"
+            : ack.status === "duplicate"
+              ? "duplicate"
+              : "rejected",
+        );
+      }
       // Prompt command 在 committed TurnStarted 或 committed WorkspaceHookReviewRequested
       // 任一 authority 到达后即返回；人工审核不能占用 Host RPC，因此继续使用统一默认
       // timeout/watchdog。放宽到审核领域 deadline 只会掩盖串行协议队列死锁。
