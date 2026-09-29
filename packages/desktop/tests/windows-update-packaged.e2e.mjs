@@ -2,26 +2,29 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { openSync } from "node:fs";
+import { openSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
+const APP_VERSION = JSON.parse(readFileSync("package.json", "utf8")).version;
+/** 末位数字 +1，例如 0.2.0-zcode.2 → 0.2.0-zcode.3 */
+const NEXT_VERSION = APP_VERSION.replace(/(\d+)(?!.*\d)/, (n) => String(Number(n) + 1));
 const mock = "http://127.0.0.1:19090";
 const root = resolve(".tmp/windows-packaged-e2e");
 await mkdir(root, { recursive: true });
 
-const artifactName = "lingdong-client-0.2.0-zcode.2-win-x64.exe";
+const artifactName = `lingdong-client-${NEXT_VERSION}-win-x64.exe`;
 const bytes = randomBytes(2 * 1024 * 1024);
 const sha256 = createHash("sha256").update(bytes).digest("hex");
 const manifest = {
-  version: "0.2.0-zcode.2",
+  version: NEXT_VERSION,
   enabled: true,
   mandatory: false,
   minVersion: "",
   publishedAt: new Date().toISOString(),
   note: "打包态更新验证",
   files: {
-    "win-x64": { version: "0.2.0-zcode.2", name: artifactName, size: bytes.byteLength, sha256 },
+    "win-x64": { version: NEXT_VERSION, name: artifactName, size: bytes.byteLength, sha256 },
   },
 };
 const configured = await fetch(`${mock}/__test/update`, {
@@ -92,14 +95,14 @@ const deadline = Date.now() + 150_000;
 let log = "";
 while (Date.now() < deadline) {
   log = await readFile(logPath, "utf8").catch(() => "");
-  if (log.includes("[auto-update] downloaded: 0.2.0-zcode.2")) break;
+  if (log.includes(`[auto-update] downloaded: ${NEXT_VERSION}`)) break;
   await new Promise((r) => setTimeout(r, 750));
 }
 spawnSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], { stdio: "ignore" });
 
-assert.ok(log.includes("[auto-update] downloaded: 0.2.0-zcode.2"), `打包态未完成更新下载；日志尾部：\n${log.slice(-1500)}`);
-assert.ok(log.includes("[auto-update] initializing, current version: 0.2.0-zcode.1"));
-assert.ok(log.includes("[auto-update] new version available: 0.2.0-zcode.2"));
+assert.ok(log.includes(`[auto-update] downloaded: ${NEXT_VERSION}`), `打包态未完成更新下载；日志尾部：\n${log.slice(-1500)}`);
+assert.ok(log.includes(`[auto-update] initializing, current version: ${APP_VERSION}`));
+assert.ok(log.includes(`[auto-update] new version available: ${NEXT_VERSION}`));
 const state = await (await fetch(`${mock}/__test/state`)).json();
 assert.ok(state.updateDownloads.length >= 1, "mock 未收到安装包下载请求");
 console.log(

@@ -346,6 +346,25 @@ export async function getLingdongPlatformSnapshot(): Promise<unknown> {
   };
 }
 
+/**
+ * 退出平台登录。
+ *
+ * 先通知平台注销 token（失败不阻塞——本地必须回到未登录态），再清理本地 Provider 条目。
+ * 清理后整个 Host/session 上下文都已失效，"重启回到登录门"是最可靠的收口方式，
+ * 也顺带保证共享电脑上不会残留上一个学生的会话。
+ */
+async function logoutFromPlatform(): Promise<void> {
+  const state = activeState;
+  if (state) {
+    try {
+      await apiRequest("/api/auth/logout", { method: "POST" }, state.session.token);
+    } catch (error) {
+      console.warn("[lingdong-gate] 平台登出失败，仅清理本地登录态。", error);
+    }
+  }
+  await disposeLingdongPlatformGate();
+}
+
 function registerPlatformHandlers(): void {
   if (handlersRegistered) return;
   handlersRegistered = true;
@@ -355,6 +374,11 @@ function registerPlatformHandlers(): void {
   );
   ipcMain.handle("lingdong:platform-scan-workspace", () => scanLingdongWorkspaceFiles());
   ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) => submitWorkFromDesktop(payload));
+  ipcMain.handle("lingdong:platform-logout", async () => {
+    await logoutFromPlatform();
+    app.relaunch();
+    app.quit();
+  });
   ipcMain.handle("lingdong:platform-refresh-context", async () => {
     if (!activeState) return null;
     const context = unwrap<LingdongContext>(

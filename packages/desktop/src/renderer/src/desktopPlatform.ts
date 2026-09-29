@@ -18,6 +18,7 @@ export function createDesktopPlatform(options: {
         scanWorkspaceFiles: () => window.lingdong!.scanWorkspaceFiles(),
         submitWork: (payload) => window.lingdong!.submitWork(payload),
         listWorks: () => window.lingdong!.listWorks(),
+        logout: () => window.lingdong!.logout(),
       }
     : undefined;
 

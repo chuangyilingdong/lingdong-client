@@ -579,6 +579,8 @@ export interface IClassroomPlatformService {
   submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
   /** 查询历史作品，用于提交后回显 */
   listWorks(): Promise<ClassroomWorksList>;
+  /** 退出平台登录：注销 token 并回到登录门（宿主负责清理会话与重启） */
+  logout(): Promise<void>;
 }
 
 /**

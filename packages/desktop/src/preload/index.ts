@@ -250,6 +250,7 @@ contextBridge.exposeInMainWorld("lingdong", {
   listWorks: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-works"),
   scanWorkspaceFiles: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-scan-workspace"),
   submitWork: (payload: unknown): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-submit-work", payload),
+  logout: (): Promise<void> => ipcRenderer.invoke("lingdong:platform-logout"),
 });
 
 contextBridge.exposeInMainWorld("zcode", {

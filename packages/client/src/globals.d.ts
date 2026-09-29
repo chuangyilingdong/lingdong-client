@@ -75,6 +75,7 @@ declare global {
       listWorks(): Promise<ClassroomWorksList>;
       scanWorkspaceFiles(): Promise<ClassroomWorkspaceScan>;
       submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
+      logout(): Promise<void>;
     };
     zcode: {
       connectRemote(

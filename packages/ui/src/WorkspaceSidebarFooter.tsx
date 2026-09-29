@@ -13,6 +13,14 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar.js";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog.js";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -182,6 +190,8 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
   const [worksOpen, setWorksOpen] = useState(false);
   const [presetsOpen, setPresetsOpen] = useState(false);
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false);
+  const [logoutBusy, setLogoutBusy] = useState(false);
   const [desktopZoomLevel, setDesktopZoomLevel] = useState(0);
   const runDesktopZoomCommand = useCallback(
     (command: (typeof DesktopCommandIds)["ZoomIn" | "ZoomOut" | "ResetZoom"]) => {
@@ -399,7 +409,7 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
           </ControlHintTooltip>
         </div>
       </div>
-        {typeof window !== "undefined" && (window as Window & { lingdong?: unknown }).lingdong ? (
+        {platform.classroom ? (
           <div className="flex gap-2">
           <Button type="button" variant="outline" className="w-full justify-start gap-2" onClick={() => setWorksOpen(true)}>
             <FileUp className="size-4" />
@@ -408,11 +418,42 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
           <Button type="button" variant="outline" size="icon" aria-label="课堂提示词预设" onClick={() => setPresetsOpen(true)}>
             <BookOpen className="size-4" />
           </Button>
+          <Button type="button" variant="outline" size="icon" aria-label="退出登录" onClick={() => setLogoutConfirmOpen(true)}>
+            <LogOut className="size-4" />
+          </Button>
           </div>
         ) : null}
       </footer>
       <LingdongWorksDialog open={worksOpen} onOpenChange={setWorksOpen} />
       <LingdongPresetsDialog open={presetsOpen} onOpenChange={setPresetsOpen} workspacePath={workspacePath} workspaceIdentity={workspaceIdentity} />
+      {/* 退出登录会注销平台 token 并重启回到登录门；先确认，避免学生误点丢当前会话。 */}
+      <Dialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen}>
+        <DialogContent className="max-w-md gap-3">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-ui-lg">
+              <LogOut className="size-5" />退出登录
+            </DialogTitle>
+            <DialogDescription>
+              退出后将注销当前平台账号并重新启动客户端，需要重新登录才能继续上课。课堂作品请先提交。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setLogoutConfirmOpen(false)} disabled={logoutBusy}>
+              取消
+            </Button>
+            <Button
+              type="button"
+              disabled={logoutBusy}
+              onClick={() => {
+                setLogoutBusy(true);
+                void platform.classroom?.logout().catch(() => setLogoutBusy(false));
+              }}
+            >
+              {logoutBusy ? "正在退出…" : "退出登录"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 });

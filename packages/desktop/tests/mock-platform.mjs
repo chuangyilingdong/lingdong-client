@@ -44,11 +44,15 @@ let updateState = null;
 let updateBytes = null;
 const updateDownloads = [];
 let revision = 1;
+// 退出登录调用记录：E2E 用它证明客户端确实通知了平台注销 token。
+const logoutCalls = [];
 // 平台真实行为开关（默认与生产一致）：
 //   omitWorkspacePath 平台不下发工作区（生产事实：学生本机工作区只有客户端知道）。
 //     默认 false 是为了让多数 E2E 保持在本仓库 .tmp 下；生产分支由专门场景开启验证。
 //   sessionSuperseded 账号在别处登录 → 401 SESSION_SUPERSEDED
 //   submitIncludesWorks 提交响应直接带 works（新版，未发版前为 false）
+// 网关 usage 可配；默认 90% 命中（客户端生产构建只在 >=78% 时展示命中率）。
+let usageOverride = { prompt: 100, completion: 10, cached: 90 };
 let omitWorkspacePath = false;
 let sessionSuperseded = false;
 let submitIncludesWorks = false;
@@ -133,6 +137,15 @@ function context(sessionId) {
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, origin).pathname;
+    if (pathname === "/__test/usage" && req.method === "POST") {
+      const data = await body(req);
+      usageOverride = {
+        prompt: Number(data.prompt ?? usageOverride.prompt),
+        completion: Number(data.completion ?? usageOverride.completion),
+        cached: Number(data.cached ?? usageOverride.cached),
+      };
+      return json(res, 200, usageOverride);
+    }
     if (pathname === "/__test/platform" && req.method === "POST") {
       const data = await body(req);
       if (typeof data.omitWorkspacePath === "boolean") omitWorkspacePath = data.omitWorkspacePath;
@@ -176,6 +189,7 @@ const server = http.createServer(async (req, res) => {
         used,
         revision,
         updateDownloads,
+        logoutCalls,
         activeClassroomId: activeClassroom.id,
         classroomMode,
         activeClassroomCount,
@@ -193,7 +207,10 @@ const server = http.createServer(async (req, res) => {
       const sessionId = new URL(req.url, origin).searchParams.get("sessionId");
       return ok(res, context(sessionId));
     }
-    if (pathname === "/api/auth/logout") return json(res, 200, { ok: true });
+    if (pathname === "/api/auth/logout") {
+      logoutCalls.push({ authorization: req.headers.authorization ?? null, at: Date.now() });
+      return ok(res, { ok: true });
+    }
     if (pathname === "/api/student/works") {
       // submitIncludesWorks 场景下故意让列表接口落后，用于区分客户端到底用了哪条数据。
       if (submitIncludesWorks) return ok(res, { items: [], total: 0 });
@@ -280,10 +297,13 @@ const server = http.createServer(async (req, res) => {
           },
         ],
         usage: {
-          prompt_tokens: 120,
-          completion_tokens: 12,
-          total_tokens: 132,
-          prompt_tokens_details: { cached_tokens: 80 },
+          prompt_tokens: usageOverride.prompt,
+          completion_tokens: usageOverride.completion,
+          total_tokens: usageOverride.prompt + usageOverride.completion,
+          prompt_tokens_details: { cached_tokens: usageOverride.cached },
+          // 平台同时支持另一套命名；这里一并给出，用于验证客户端不会因字段名不同而丢缓存。
+          prompt_cache_hit_tokens: usageOverride.cached,
+          prompt_cache_miss_tokens: usageOverride.prompt - usageOverride.cached,
         },
       };
       if (mode === "tools" && data.stream && toolRound < 2) {

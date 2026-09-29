@@ -1,6 +1,7 @@
 // 更新联动 E2E：真实清单 → 下载 → sha256 校验，正/负两个场景。
 // 前提：已启动 packages/desktop/tests/mock-platform.mjs（默认 19090）。
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { openSync } from "node:fs";
@@ -8,13 +9,16 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 // Electron 主进程固定用自己的调试端口（--remote-debugging-port 传入值不生效）。
+const APP_VERSION = JSON.parse(readFileSync("package.json", "utf8")).version;
+/** 末位数字 +1，例如 0.2.0-zcode.2 → 0.2.0-zcode.3 */
+const NEXT_VERSION = APP_VERSION.replace(/(\d+)(?!.*\d)/, (n) => String(Number(n) + 1));
 const cdpPort = Number(process.env.LINGDONG_E2E_CDP_PORT || 9229);
 const mockPort = 19090;
 const mock = `http://127.0.0.1:${mockPort}`;
 const root = resolve(".tmp/windows-update-e2e");
 await mkdir(root, { recursive: true });
 
-const artifactName = "lingdong-client-0.2.0-zcode.2-win-x64.exe";
+const artifactName = `lingdong-client-${NEXT_VERSION}-win-x64.exe`;
 const bytes = randomBytes(2 * 1024 * 1024);
 const sha256 = createHash("sha256").update(bytes).digest("hex");
 
@@ -42,7 +46,7 @@ async function launchApp({ profileName, digest, withAuth = true }) {
     publishedAt: new Date().toISOString(),
     note: "更新联动 E2E",
     files: {
-      "win-x64": { version: "0.2.0-zcode.2", name: artifactName, size: bytes.byteLength, sha256: digest },
+      "win-x64": { version: NEXT_VERSION, name: artifactName, size: bytes.byteLength, sha256: digest },
     },
   };
   const configured = await fetch(`${mock}/__test/update`, {
@@ -62,7 +66,7 @@ async function launchApp({ profileName, digest, withAuth = true }) {
     ZCODE_DESKTOP_USER_DATA_DIR: join(profile, "electron"),
     LINGDONG_API_BASE: mock,
     ZCODE_AUTO_UPDATE_DEV: "1",
-    ZCODE_AUTO_UPDATE_DEV_VERSION: "0.2.0-zcode.1",
+    ZCODE_AUTO_UPDATE_DEV_VERSION: APP_VERSION,
   };
   delete env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE;
   delete env.ELECTRON_RUN_AS_NODE;
@@ -134,12 +138,12 @@ try {
   await loginThroughGate();
   const goodLog = await waitForLog(
     good.logPath,
-    (text) => text.includes("[auto-update] downloaded: 0.2.0-zcode.2"),
+    (text) => text.includes(`[auto-update] downloaded: ${NEXT_VERSION}`),
     120_000,
     "正向更新下载",
   );
-  assert.ok(goodLog.includes("[auto-update] initializing, current version: 0.2.0-zcode.1"));
-  assert.ok(goodLog.includes("[auto-update] new version available: 0.2.0-zcode.2"));
+  assert.ok(goodLog.includes(`[auto-update] initializing, current version: ${APP_VERSION}`));
+  assert.ok(goodLog.includes(`[auto-update] new version available: ${NEXT_VERSION}`));
   assert.ok(/download progress: [\d.]+%/.test(goodLog), "缺少下载进度日志");
   const goodState = await (await fetch(`${mock}/__test/state`)).json();
   assert.ok(goodState.updateDownloads.length >= 1, "mock 未收到安装包下载请求");
@@ -151,7 +155,7 @@ try {
   await loginThroughGate();
   const badLog = await waitForLog(
     bad.logPath,
-    (text) => text.includes("[auto-update] downloaded: 0.2.0-zcode.2") || /\[auto-update\] error:/.test(text),
+    (text) => text.includes(`[auto-update] downloaded: ${NEXT_VERSION}`) || /\[auto-update\] error:/.test(text),
     120_000,
     "反向更新校验",
   );
@@ -160,7 +164,7 @@ try {
     "sha256 不匹配时必须报错",
   );
   assert.ok(
-    !badLog.includes("[auto-update] downloaded: 0.2.0-zcode.2"),
+    !badLog.includes(`[auto-update] downloaded: ${NEXT_VERSION}`),
     "sha256 不匹配时不得进入已下载状态",
   );
   stopApp();
