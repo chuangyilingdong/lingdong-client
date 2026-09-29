@@ -133,6 +133,52 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 平台可以先按兼容层上线，不必立刻修改数据库结构。客户端底座替换不改变课堂、账号、账单、网关和作品的业务归属。
 
+## 课堂唯一性规则与客户端选择行为（2026-09-29 已核对平台源码）
+
+### 平台规则（权威）
+
+**一个学生全局最多属于一个「未终态」课堂。** 平台在加人时强制：
+
+- `apps/server/src/services/classroomSessions.js` 顶部注释即为用户口径：
+  ① 已完课不能加进同一节课；② **未结束的参与（待上课/上课中）不允许被别的课堂同时占用**；③ 被移除 = 解锁。
+- 判据函数 `activeParticipationFor({ studentId })`（"学生全局非终态占用：不区分课包或课程；REMOVED 不算占用"）
+  在两个写路径都会拦：
+  - 候选人名单：reason `IN_OTHER_SESSION`；
+  - 把学生加进课堂：skip reason `IN_OTHER_SESSION`。
+
+因此正常情况下 `client-context.classrooms` 至多 1 项，客户端应**直接进入**该课堂。
+
+### 为什么客户端仍必须做课堂选择
+
+`apps/server/src/routes/studentRuntime.js` 的 `client-context` 注释写明：**库里不一定干净** ——
+线上实测存在一个学生同时挂着两场 ACTIVE 课堂（种子/历史数据绕过了校验）。旧行为只取"最近开始的那一场"，
+导致学生做 A 课作业却拿到 B 课的上限与预设，界面上看不出异常。
+
+平台因此要求：**多于一节时由客户端让学生自己选**；不传 `sessionId` 时保持"最近一场"的旧语义，老客户端不会坏。
+
+### 服务端契约
+
+| 情况 | 返回 |
+|---|---|
+| 恰好 1 节可进课堂 | `classroom` 有值 + `classrooms` 列表 + `gateway`/`presets`/`sends` |
+| 多节 ACTIVE | `classrooms` 列全部候选，客户端传 `?sessionId=` 指定；选定后用该节的预设/上限/密钥 |
+| 没在上课 | `classroom:null`、`upcoming` 给出"接下来哪一节"、`message:"老师还没有开始上课"`、**不下发密钥** |
+| 点名的那节已结束 | `reason:CLASSROOM_NOT_AVAILABLE`、`message:"你选的那节课已经结束了"` |
+| 当前是画布课堂 | `classroom:null`/`classrooms:[]`/`upcoming:null`、`message:"当前是画布课堂，请在学生端进入画布课堂"`、**不带 gateway/presets/sends** |
+
+客户端要求：把 `message` 原样展示给学生（已是当前实现），**不得静默换课**。
+
+### 客户端行为（已验证）
+
+| 场景 | 期望 | 结果 |
+|---|---|---|
+| `classrooms` 只有 1 节 | 不弹选择，直接进该课堂工作区 | 通过 |
+| `classrooms` 有 2 节 | 选择前**不创建主窗口**；选 B 后进 B 的工作区 | 通过 |
+| 多课堂额度隔离 | 只创建所选课堂的额度桶，未进入的课堂不留桶 | 通过 |
+
+命令：`node packages/desktop/tests/windows-classroom-selection.e2e.mjs single|multiple`
+（需先启动本地 mock 与应用；见 Windows 阶段验收文档）。
+
 ## 客户端的课堂能力边界（2026-09-29）
 
 Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂能力统一收敛为

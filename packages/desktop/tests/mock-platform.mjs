@@ -2,13 +2,34 @@ import http from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 const root = resolve(".tmp/windows-platform-e2e");
-const workspace = join(root, "classroom");
-await mkdir(workspace, { recursive: true });
-await writeFile(
-  join(workspace, "index.html"),
-  "<!doctype html><html><body><h1>Mock Classroom</h1></body></html>",
-);
-await writeFile(join(workspace, "notes.txt"), "MOCK_CLASSROOM_FILE\n");
+
+/** 每个课堂有独立工作区，用于验证课堂隔离（工作区 + 额度桶都不能串）。 */
+const CLASSROOMS = [
+  {
+    id: "classroom-e2e",
+    lessonId: "lesson-e2e",
+    title: "联调测试课堂",
+    workspace: join(root, "classroom"),
+  },
+  {
+    id: "classroom-e2e-b",
+    lessonId: "lesson-e2e-b",
+    title: "联调测试课堂 B",
+    workspace: join(root, "classroom-b"),
+  },
+];
+for (const item of CLASSROOMS) {
+  await mkdir(item.workspace, { recursive: true });
+  await writeFile(
+    join(item.workspace, "index.html"),
+    `<!doctype html><html><body><h1>Mock ${item.id}</h1></body></html>`,
+  );
+  await writeFile(join(item.workspace, "notes.txt"), `MOCK_CLASSROOM_FILE ${item.id}\n`);
+}
+// 多课堂模式：登录后先返回课堂列表，由客户端选择再进课堂。
+let multiClassroomMode = false;
+// 最近一次 client-context 选中的课堂，供工具回合解析工作区内文件。
+let activeClassroom = CLASSROOMS[0];
 const requests = [];
 const works = [];
 let used = 0;
@@ -32,9 +53,21 @@ async function body(req) {
   for await (const c of req) raw += c;
   return raw ? JSON.parse(raw) : {};
 }
-function context() {
+function context(sessionId) {
+  const selected =
+    CLASSROOMS.find((item) => item.id === sessionId) ??
+    (multiClassroomMode ? null : CLASSROOMS[0]);
+  if (!selected) {
+    // 多课堂且未选择：只给列表，客户端必须让用户选一个课堂。
+    return {
+      classroom: null,
+      classrooms: CLASSROOMS.map(({ id, lessonId, title }) => ({ id, lessonId, title })),
+      message: "请选择要进入的课堂。",
+    };
+  }
+  activeClassroom = selected;
   return {
-    classroom,
+    classroom: { id: selected.id, lessonId: selected.lessonId, title: selected.title },
     gateway: { baseUrl: `${origin}/gateway/v1`, key: fakeKey },
     models: [{ id: "mock-model", displayName: "Mock Model" }],
     defaultModel: "mock-model",
@@ -44,12 +77,20 @@ function context() {
       used,
       remaining: quotaLimit === null ? null : Math.max(0, quotaLimit - used),
     },
-    workspacePath: workspace,
+    workspacePath: selected.workspace,
   };
 }
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, origin).pathname;
+    if (pathname === "/__test/classrooms" && req.method === "POST") {
+      const data = await body(req);
+      multiClassroomMode = data.mode === "multiple";
+      return json(res, 200, {
+        multiClassroomMode,
+        classrooms: CLASSROOMS.map(({ id, title }) => ({ id, title })),
+      });
+    }
     if (pathname === "/__test/mode" && req.method === "POST") {
       const data = await body(req);
       mode = data.mode;
@@ -69,7 +110,15 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, { ok: true, version: updateState?.version ?? null });
     }
     if (pathname === "/__test/state")
-      return json(res, 200, { requests, works, used, revision, updateDownloads });
+      return json(res, 200, {
+        requests,
+        works,
+        used,
+        revision,
+        updateDownloads,
+        activeClassroomId: activeClassroom.id,
+        multiClassroomMode,
+      });
     if (pathname === "/api/auth/login" && req.method === "POST") {
       await body(req);
       return json(res, 200, {
@@ -77,7 +126,10 @@ const server = http.createServer(async (req, res) => {
         user: { id: "e2e-student", login: "mock", displayName: "联调学生" },
       });
     }
-    if (pathname === "/api/student/runtime/client-context") return json(res, 200, context());
+    if (pathname === "/api/student/runtime/client-context") {
+      const sessionId = new URL(req.url, origin).searchParams.get("sessionId");
+      return json(res, 200, context(sessionId));
+    }
     if (pathname === "/api/auth/logout") return json(res, 200, { ok: true });
     if (pathname === "/api/student/works")
       return json(res, 200, { items: works, total: works.length });
@@ -170,7 +222,7 @@ const server = http.createServer(async (req, res) => {
           function: {
             name: "Read",
             arguments: JSON.stringify({
-              file_path: join(workspace, toolRound === 1 ? "notes.txt" : "index.html"),
+              file_path: join(activeClassroom.workspace, toolRound === 1 ? "notes.txt" : "index.html"),
             }),
           },
         };
@@ -208,3 +260,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.listen(19090, "127.0.0.1", () => console.log("WINDOWS_PLATFORM_MOCK_READY 19090"));
+

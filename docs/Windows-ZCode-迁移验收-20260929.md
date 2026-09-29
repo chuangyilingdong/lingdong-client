@@ -129,6 +129,8 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 | 打包态课堂全链路（登录/流式/两轮工具/交作品+封面/预设） | `pnpm smoke:platform:packaged` | 通过 |
 | 打包态额度 0 / 1 / 无限 | `pnpm smoke:platform:quota*`（配合 `LINGDONG_E2E_SESSION`） | 3/3 通过 |
 | 打包态生产更新路径（无 dev 开关）：清单→下载→sha256 校验 | `pnpm smoke:platform:update:packaged` | 通过 |
+| 单课堂直接进入（平台规则主路径） | `node packages/desktop/tests/windows-classroom-selection.e2e.mjs single` | 通过 |
+| 多课堂必须先选择 + 课堂/额度隔离 | `node packages/desktop/tests/windows-classroom-selection.e2e.mjs multiple` | 通过 |
 
 打包态产物（源码提交 `5a9ac9d`，仅用于验证，**不是发布候选**）：
 
@@ -168,3 +170,13 @@ Mac 暂不推进。现有发布脚本仍有双端版本一致性约束；Windows
 ### 验收
 
 `pnpm smoke:platform:windows` 在独立数据根 + localhost mock 下通过，覆盖预设弹窗与交作品弹窗；两条路径都经由 `IPlatformService.classroom`。
+
+## 课堂唯一性规则核对结论（2026-09-29）
+
+按用户口径「一个学生在同一时间只能存在 1 个进行中的课堂」核对了平台源码，结论如下：
+
+- **规则确实存在且被强制**：`classroomSessions.js` 的 `activeParticipationFor` 在"候选人名单"和"加学生进课堂"两条写路径都拦未终态占用，reason `IN_OTHER_SESSION`。
+- **但服务端仍下发 `classrooms` 列表并要求客户端在 >1 时让学生选**：平台注释写明线上存在两场 ACTIVE 的历史/种子脏数据，旧行为"取最近一场"会造成"做 A 课作业拿到 B 课上限与预设"的静默错配。
+- 因此客户端保留课堂选择**不是多余功能**，而是平台明确要求的兜底；正常数据下它不会触发。
+
+待平台侧确认：如果平台决定清理脏数据并保证 `classrooms` 恒 ≤1，客户端的选择分支可以简化为"多于一节即报错"，但这属于后续决定，当前保留选择更安全。
