@@ -53,6 +53,11 @@ try {
     .getByText("向小灵提问，小灵即可开启创造", { exact: true })
     .waitFor({ timeout: 15_000 });
   assert.equal(await page.getByText("你的主要工作方向是？", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("连接使用", { exact: true }).count(), 0);
+  await page
+    .getByRole("button", { name: "课堂提示词预设", exact: true })
+    .waitFor({ timeout: 15_000 });
+  await page.getByRole("button", { name: "退出登录", exact: true }).waitFor({ timeout: 15_000 });
   assert.ok((await page.locator('img[alt="灵动ai"]').count()) > 0);
   await fetch(`${mock}/__test/mode`, { method: "POST", body: JSON.stringify({ mode: "text" }) });
   await page.locator('[data-testid="v4-composer-input"]').fill("请回复：课堂联调成功。");
@@ -76,6 +81,7 @@ try {
   await page.getByRole("button", { name: "课堂提示词预设", exact: true }).click();
   const presetsDialog = page.getByRole("dialog");
   await presetsDialog.getByText("读取课堂文件", { exact: true }).waitFor({ timeout: 15_000 });
+  assert.equal(await presetsDialog.getByText("ZCode", { exact: false }).count(), 0);
   await page.keyboard.press("Escape");
   await presetsDialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
 
