@@ -221,6 +221,16 @@ https://aicyld.com/downloads/manifest.json
 
 ZCode 的更新 Provider 会按当前平台选择 `win-x64` / `mac-arm64`，把 `sha256` 映射为 electron-updater 的 SHA-256 校验字段，下载路径相对 `https://aicyld.com/downloads/` 解析。平台清单的双端版本仍必须保持一致。
 
+### 更新联动的平台侧要求（2026-09-29 客户端已验证）
+
+客户端已用真实 `autoUpdater` + `ManifestUpdateProvider` 在本地清单上跑通「检出更新 → 下载 → sha256 校验 → 可安装」，并验证被篡改的安装包会被拒绝。平台侧需要保证：
+
+1. `manifest.json` 里的 `files.<target>.name` 必须是 `downloads/` 下的真实文件名，安装包与清单同目录可直接 GET 下载。
+2. `size` 与 `sha256` 必须与实际字节严格一致；客户端按 `sha256` 校验，不一致会直接失败且不会进入可安装状态。
+3. `version` 必须递增且与安装包内版本一致，否则 `electron-updater` 会认为没有更新或反复提示。
+4. 未配置强更时 `mandatory=false`、`minVersion=""`；客户端不会因此拦截启动（详见「平台强制更新门」）。
+5. 发布必须原子：先上传两个平台的安装包，再一次性写回 `manifest.json`，避免用户拿到“新清单 + 旧安装包”。
+
 ## Windows Provider 注入与启动门（2026-09-29）
 
 ### 设计边界

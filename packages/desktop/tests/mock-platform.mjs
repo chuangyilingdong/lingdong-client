@@ -13,6 +13,10 @@ const requests = [];
 const works = [];
 let used = 0;
 let quotaLimit = 10;
+// 更新联动测试注入：manifest 指向的安装包字节由 /__test/update 提供。
+let updateState = null;
+let updateBytes = null;
+const updateDownloads = [];
 let revision = 1;
 let mode = "text";
 let toolRound = 0;
@@ -58,7 +62,14 @@ const server = http.createServer(async (req, res) => {
       used = data.used ?? 0;
       return json(res, 200, { quotaLimit, used });
     }
-    if (pathname === "/__test/state") return json(res, 200, { requests, works, used, revision });
+    if (pathname === "/__test/update" && req.method === "POST") {
+      const data = await body(req);
+      updateState = data.manifest;
+      updateBytes = data.bytes ? Buffer.from(data.bytes, "base64") : null;
+      return json(res, 200, { ok: true, version: updateState?.version ?? null });
+    }
+    if (pathname === "/__test/state")
+      return json(res, 200, { requests, works, used, revision, updateDownloads });
     if (pathname === "/api/auth/login" && req.method === "POST") {
       await body(req);
       return json(res, 200, {
@@ -81,7 +92,8 @@ const server = http.createServer(async (req, res) => {
       });
       return json(res, 200, { ok: true, works: [works.at(-1)], warnings: [], missing: [] });
     }
-    if (pathname === "/downloads/manifest.json")
+    if (pathname === "/downloads/manifest.json") {
+      if (updateState) return json(res, 200, updateState);
       return json(res, 200, {
         version: "0.2.0-zcode.1",
         enabled: true,
@@ -96,6 +108,23 @@ const server = http.createServer(async (req, res) => {
           },
         },
       });
+    }
+    // 安装包下载：只在更新测试注入字节后提供，其余情况 404 以便暴露路径错误。
+    if (pathname.startsWith("/downloads/") && updateBytes) {
+      const name = pathname.slice("/downloads/".length);
+      if (updateState?.files?.["win-x64"]?.name !== name) {
+        res.writeHead(404);
+        res.end("update artifact name mismatch");
+        return;
+      }
+      updateDownloads.push({ name, at: Date.now() });
+      res.writeHead(200, {
+        "content-type": "application/octet-stream",
+        "content-length": String(updateBytes.byteLength),
+      });
+      res.end(updateBytes);
+      return;
+    }
     if (pathname === "/gateway/v1/chat/completions" && req.method === "POST") {
       const data = await body(req);
       const keyMatches = req.headers.authorization === `Bearer ${fakeKey}`;

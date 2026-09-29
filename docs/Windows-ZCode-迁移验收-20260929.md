@@ -44,6 +44,8 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 ## 可重复入口
 
 - 单元/运行时回归：`pnpm test:platform`
+- 额度场景：`pnpm smoke:platform:quota` / `:zero` / `:unlimited`
+- 更新联动：`pnpm smoke:platform:update`
 - 本地 mock：`node packages/desktop/tests/mock-platform.mjs`
 - 已启动的独立 Windows Electron 测试实例：`pnpm smoke:platform:windows`
 - E2E 默认 CDP `http://127.0.0.1:9229`、mock `http://127.0.0.1:19090`，仅允许 localhost 地址；可用 `LINGDONG_E2E_CDP` / `LINGDONG_E2E_MOCK` 指定。
@@ -93,7 +95,31 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 - ~~课堂预设/交作品 UI 直接调用 `window.lingdong`~~ **已完成**：课堂能力已纳入 `IPlatformService.classroom`（`IClassroomPlatformService`），UI 通过 `usePlatform()` 消费；`window.lingdong` 只保留在 `desktopPlatform.ts` 适配层一处，Web/手机按能力缺省处理并在缺失时给出明确提示。
 - 平台身份展示、退出/切号全流程、启动更新在正式安装包中的验证。
 
-### 安装包状态
+### 更新联动（2026-09-29 已验证客户端侧闭环）
+
+已用真实 `autoUpdater` + `ManifestUpdateProvider` + 本地 mock 清单跑通：
+
+| 场景 | 期望 | 结果 |
+|---|---|---|
+| 清单 `version=0.2.0-zcode.2`、`sha256` 与安装包一致 | 检出更新 → 下载 → 校验通过 → `update-downloaded` | 通过 |
+| 清单 `sha256` 被篡改 | 校验失败报错，且不得进入 `update-downloaded` | 通过 |
+
+证据来自 main 进程日志与 mock 侧下载计数：
+
+- `[auto-update] initializing, current version: 0.2.0-zcode.1`
+- `[auto-update] new version available: 0.2.0-zcode.2`
+- `[auto-update] download progress: …%`
+- `[auto-update] downloaded: 0.2.0-zcode.2`（仅正例）
+- `[auto-update] error:`（仅反例）
+
+运行方式：`pnpm smoke:platform:update`（需先启动 `packages/desktop/tests/mock-platform.mjs`）。该脚本使用 `ZCODE_AUTO_UPDATE_DEV=1` 开发态开关，仅用于本地验证清单/下载/校验链路，不改变生产包行为。
+
+仍待完成（需要真实环境）：
+
+- 从最终提交重新构建 Windows 安装包，再在真实清单上验证“下载 → 用户确认 → 安装替换 → 版本变更”。
+- 平台侧确认 `downloads/` 目录与 `manifest.json` 同源，安装包公网可下且 `sha256`/`size` 与实际字节严格一致。
+
+## 安装包状态
 
 本轮运行验收使用的是最新源码产物，不是最终安装包。
 
