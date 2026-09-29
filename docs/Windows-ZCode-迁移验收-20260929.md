@@ -288,7 +288,7 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 
 ### 最终 UI/隔离候选包（未发布）
 
-- 文件：`lingdong-client-0.2.0-zcode.2-win-x64.exe`
-- 大小：`150,831,395` 字节
-- SHA256：`e16dea120cab3d2afe460828f4f4043a30e1d7d22098a86a4670d162a17fadf2`
+- 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
+- 大小：`150,827,826` 字节
+- SHA256：`75d8aca6fb7e3adf4e1426b3be3b1f0a360d7e22dd160a86f5d4c8a4a4f1abea`
 - 打包态课堂全链路、最终安装器静默安装/启动/卸载均通过。
