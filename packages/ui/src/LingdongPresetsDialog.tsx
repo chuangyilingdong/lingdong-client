@@ -3,6 +3,7 @@ import { BookOpen, Check, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
+import { usePlatform } from "@/hooks/usePlatform.js";
 
 type Preset = Readonly<{ title?: unknown; text?: unknown }>;
 function asPresets(value: unknown): Preset[] {
@@ -25,10 +26,11 @@ export function LingdongPresetsDialog({
   const [selected, setSelected] = useState<Preset | null>(null);
   const [message, setMessage] = useState("");
 
+  // 课堂能力由宿主平台合同提供；Web/手机缺省时按"没有预设"处理。
+  const classroom = usePlatform().classroom;
   const refresh = useCallback(async () => {
-    const snapshot = (await (window as Window & { lingdong?: { getPlatformSnapshot(): Promise<unknown> } }).lingdong?.getPlatformSnapshot()) as { presets?: unknown } | null | undefined;
-    setPresets(asPresets(snapshot?.presets));
-  }, []);
+    setPresets(asPresets(classroom ? await classroom.getPresets() : undefined));
+  }, [classroom]);
 
   useEffect(() => { if (open) void refresh(); }, [open, refresh]);
 

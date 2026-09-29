@@ -10,21 +10,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { cn } from "@/components/lib/utils.js";
-
-type Candidate = Readonly<{
-  path: string;
-  relativePath: string;
-  size: number;
-  updatedAt: number;
-}>;
-
-type ScanResult = Readonly<{
-  ok?: boolean;
-  message?: string;
-  files?: readonly Candidate[];
-  workspacePath?: string;
-  workspaceIdentity?: string;
-}>;
+import type { ClassroomWorkspaceScan } from "@zcode/shared";
+import { usePlatform } from "@/hooks/usePlatform.js";
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -39,7 +26,8 @@ export function LingdongWorksDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const [scan, setScan] = useState<ScanResult | null>(null);
+  const classroom = usePlatform().classroom;
+  const [scan, setScan] = useState<ClassroomWorkspaceScan | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -48,8 +36,9 @@ export function LingdongWorksDialog({
     setBusy(true);
     setMessage("");
     try {
-      const result = (await (window as Window & { lingdong?: { scanWorkspaceFiles(): Promise<unknown> } }).lingdong?.scanWorkspaceFiles()) as ScanResult | undefined;
-      if (!result?.ok) throw new Error(result?.message || "无法扫描课堂工作区。");
+      if (!classroom) throw new Error("当前环境不支持课堂作品提交。");
+      const result = await classroom.scanWorkspaceFiles();
+      if (!result?.ok) throw new Error(result.message || "无法扫描课堂工作区。");
       setScan(result);
       const files = result.files ?? [];
       setSelected(new Set(files.slice(0, 1).map((file) => file.path)));
@@ -58,7 +47,7 @@ export function LingdongWorksDialog({
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [classroom]);
 
   useEffect(() => {
     if (open) void refresh();
@@ -85,15 +74,14 @@ export function LingdongWorksDialog({
     setBusy(true);
     setMessage("");
     try {
-      const result = (await (window as Window & { lingdong?: { submitWork(payload: unknown): Promise<unknown> } }).lingdong?.submitWork({
+      if (!classroom) throw new Error("当前环境不支持课堂作品提交。");
+      // copyrightConfirmed 只在用户点击提交按钮后置真；UI 不做默认确认。
+      const result = await classroom.submitWork({
         copyrightConfirmed: true,
-        classroomId: undefined,
-        workspacePath: scan.workspacePath,
-        workspaceIdentity: scan.workspaceIdentity,
-        items: selectedFiles,
-      })) as { message?: string; ok?: boolean } | undefined;
+        items: selectedFiles.map((file) => ({ path: file.path, name: file.relativePath })),
+      });
       if (result?.ok === false) throw new Error(result.message || "提交失败。");
-      const works = (await (window as Window & { lingdong?: { listWorks(): Promise<unknown> } }).lingdong?.listWorks()) as { items?: unknown[]; works?: unknown[] } | undefined;
+      const works = await classroom.listWorks();
       const nextCount = Array.isArray(works?.items) ? works.items.length : Array.isArray(works?.works) ? works.works.length : null;
       setMessage(nextCount === null ? "作品已提交，平台正在处理。" : `作品已提交，平台当前返回 ${nextCount} 条作品记录。`);
     } catch (error) {
@@ -155,7 +143,8 @@ export function LingdongWorksDialog({
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
           <Button type="button" onClick={() => void submit()} disabled={busy || selectedFiles.length === 0}>
-            {busy ? "处理中…" : `提交 ${selectedFiles.length} 个文件`}
+            {/* 该按钮即“确认原创并提交”，copyrightConfirmed 只在用户点击后置真。 */}
+            {busy ? "处理中…" : `确认并提交 ${selectedFiles.length} 个文件`}
           </Button>
         </DialogFooter>
       </DialogContent>

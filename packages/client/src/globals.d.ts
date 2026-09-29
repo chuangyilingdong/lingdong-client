@@ -46,6 +46,11 @@ import type {
   UpdateCheckResultPayload,
   UpdateStatePayload,
   OpenInEditorOptions,
+  ClassroomPreset,
+  ClassroomSubmitResult,
+  ClassroomWorksList,
+  ClassroomWorkspaceScan,
+  ClassroomWorkSubmission,
 } from "@zcode/shared";
 
 /**
@@ -55,12 +60,21 @@ import type {
  */
 declare global {
   interface Window {
+    /**
+     * 灵动ai 平台 preload 桥。
+     *
+     * 仅供 renderer 的 IPlatformService 适配层（desktopPlatform.classroom）调用；
+     * UI 组件必须通过 usePlatform().classroom 访问，禁止直接读写此对象。
+     */
     lingdong?: {
-      getPlatformSnapshot(): Promise<unknown>;
+      getPlatformSnapshot(): Promise<{
+        presets?: readonly ClassroomPreset[];
+        [key: string]: unknown;
+      } | null>;
       refreshPlatformContext(): Promise<unknown>;
-      listWorks(): Promise<unknown>;
-      scanWorkspaceFiles(): Promise<unknown>;
-      submitWork(payload: unknown): Promise<unknown>;
+      listWorks(): Promise<ClassroomWorksList>;
+      scanWorkspaceFiles(): Promise<ClassroomWorkspaceScan>;
+      submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
     };
     zcode: {
       connectRemote(

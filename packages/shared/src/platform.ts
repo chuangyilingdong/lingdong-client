@@ -516,6 +516,71 @@ export type CuaOsSupport =
   | { kind: "macos-below-minimum"; minimumMacOs: string; currentMacOs: string }
   | { kind: "not-applicable" };
 
+/** 灵动ai 课堂提示词预设：插入草稿，不自动发送。 */
+export interface ClassroomPreset {
+  readonly title?: string;
+  readonly text?: string;
+}
+
+/** 课堂工作区候选文件；path 用于提交，relativePath 用于展示。 */
+export interface ClassroomWorkspaceFile {
+  readonly path: string;
+  readonly relativePath: string;
+  readonly size: number;
+  readonly updatedAt: number;
+}
+
+export interface ClassroomWorkspaceScan {
+  readonly ok: boolean;
+  readonly message?: string;
+  readonly files: readonly ClassroomWorkspaceFile[];
+  readonly workspacePath?: string;
+  readonly workspaceIdentity?: string;
+}
+
+export interface ClassroomWorkItem {
+  readonly path: string;
+  readonly name?: string;
+}
+
+export interface ClassroomWorkSubmission {
+  /** 用户必须显式确认后才能为 true；UI 不得默认置真。 */
+  readonly copyrightConfirmed: boolean;
+  readonly items: readonly ClassroomWorkItem[];
+}
+
+export interface ClassroomSubmitResult {
+  readonly ok?: boolean;
+  readonly message?: string;
+  readonly warnings?: readonly unknown[];
+  readonly missing?: readonly unknown[];
+  readonly works?: readonly unknown[];
+}
+
+export interface ClassroomWorksList {
+  readonly items?: readonly unknown[];
+  readonly works?: readonly unknown[];
+  readonly total?: number;
+}
+
+/**
+ * 灵动ai 课堂能力。
+ *
+ * 平台 token、运行时网关 key 与发送次数投影只存在于宿主进程；renderer 只能通过这些
+ * 方法读写课堂事实，禁止直接接触凭据或自行维护额度。Web/手机端不提供该能力，
+ * 消费方必须按可缺省处理。
+ */
+export interface IClassroomPlatformService {
+  /** 平台下发的当前课堂提示词预设 */
+  getPresets(): Promise<readonly ClassroomPreset[]>;
+  /** 扫描当前课堂工作区候选文件 */
+  scanWorkspaceFiles(): Promise<ClassroomWorkspaceScan>;
+  /** 提交课堂作品；封面由宿主在提交时采集，失败不阻断正文 */
+  submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
+  /** 查询历史作品，用于提交后回显 */
+  listWorks(): Promise<ClassroomWorksList>;
+}
+
 /**
  * 平台操作接口 —— 替代直接访问 window.zcode
  *
@@ -527,6 +592,9 @@ export type CuaOsSupport =
  * 业务服务（文件、终端、凭据等）走 IServiceAccessor 的 RPC 通道。
  */
 export interface IPlatformService {
+  /** 灵动ai 课堂能力；仅桌面宿主实现，Web/手机缺省。 */
+  classroom?: IClassroomPlatformService;
+
   /** 当前平台的文件选择框是否能返回 agent 可访问的本地绝对路径 */
   canSelectFilePath?: boolean;
 

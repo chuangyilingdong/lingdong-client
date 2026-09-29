@@ -1,15 +1,31 @@
 import { recordArmsCustomEventForE2E } from "@zcode/ui";
-import { DesktopCommandIds, buildLocalMediaPreviewUrl, type IPlatformService } from "@zcode/shared";
+import {
+  DesktopCommandIds,
+  buildLocalMediaPreviewUrl,
+  type IClassroomPlatformService,
+  type IPlatformService,
+} from "@zcode/shared";
 
 import { desktopBrowserPlatformBridge } from "./desktopBrowserPlatformBridge.js";
 
 export function createDesktopPlatform(options: {
   isLocalDevelopmentRuntime: boolean;
 }): IPlatformService {
+  // 课堂能力只在 main 登录门就绪后存在；preload 未注入时保持缺省，UI 按可缺省处理。
+  const classroom: IClassroomPlatformService | undefined = window.lingdong
+    ? {
+        getPresets: async () => (await window.lingdong!.getPlatformSnapshot())?.presets ?? [],
+        scanWorkspaceFiles: () => window.lingdong!.scanWorkspaceFiles(),
+        submitWork: (payload) => window.lingdong!.submitWork(payload),
+        listWorks: () => window.lingdong!.listWorks(),
+      }
+    : undefined;
+
   return {
     canSelectFilePath: true,
     createLocalMediaPreviewUrl: buildLocalMediaPreviewUrl,
     isLocalDevelopmentRuntime: options.isLocalDevelopmentRuntime,
+    ...(classroom ? { classroom } : {}),
     selectDirectory: () => window.zcode.selectDirectory(),
     selectFile: () => window.zcode.selectFile(),
     selectFiles: () => window.zcode.selectFiles?.() ?? Promise.resolve([]),

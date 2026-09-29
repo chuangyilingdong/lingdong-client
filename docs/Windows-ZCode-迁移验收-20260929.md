@@ -52,8 +52,8 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 
 ## 已完成的阶段验证（2026-09-29 追加）
 
-- `pnpm test:platform` 9/9；额度单元测试另 6/6；`pnpm smoke:platform` 通过。
-- `pnpm smoke:platform:windows`：流式文本 + 两轮工具 + 带封面交作品通过。
+- `pnpm test:platform`（Provider/启动门/额度）全部通过；`pnpm smoke:platform` 通过。
+- `pnpm smoke:platform:windows`：流式文本 + 两轮工具 + 带封面交作品 + 课堂预设（均经 `IPlatformService.classroom`）通过。
 - `pnpm smoke:platform:quota` / `:zero` / `:unlimited`：三个额度场景通过。
 - 正常退出：个人配置文件保留、本课堂平台条目清除。
 
@@ -90,7 +90,7 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 
 - 真实平台账号/多课堂切换、401/403/SESSION_SUPERSEDED、额度耗尽。
 - 真实平台的流式 usage / 缓存 token / compute_attempts 与 usage_records 对账。
-- 课堂预设/交作品 UI 仍有旧适配的直接 `window.lingdong` 调用，应按当前 AGENTS 约定收口至 hook 与 IPlatformService；不能只为 Desktop 绕过跨端合同。
+- ~~课堂预设/交作品 UI 直接调用 `window.lingdong`~~ **已完成**：课堂能力已纳入 `IPlatformService.classroom`（`IClassroomPlatformService`），UI 通过 `usePlatform()` 消费；`window.lingdong` 只保留在 `desktopPlatform.ts` 适配层一处，Web/手机按能力缺省处理并在缺失时给出明确提示。
 - 平台身份展示、退出/切号全流程、启动更新在正式安装包中的验证。
 
 ### 安装包状态
@@ -100,3 +100,22 @@ mock 观测到 tool result 数量依次为 0、1、2；作品包含 index.html �
 `dist/win-x64` 与 `.tmp/verify-win` 中现有同版本 EXE 早于后续 Provider/首屏修复，**不是可发布候选**，不可复用或直接发给学生。所有本地代码验收完成后应从最终提交重新构建 Windows 包，采集 size/SHA256，验证安装和更新，再等用户单独确认发布。
 
 Mac 暂不推进。现有发布脚本仍有双端版本一致性约束；Windows-only 发布策略留待发布前确认，不能为了绕过脚本直接改线上清单。
+
+## 课堂平台边界收口（2026-09-29 追加）
+
+### 所有者与接口
+
+- 契约：`packages/shared/src/platform.ts` 新增 `IClassroomPlatformService` 与 `ClassroomPreset / ClassroomWorkspaceScan / ClassroomWorkSubmission / ClassroomSubmitResult / ClassroomWorksList`，并作为 `IPlatformService.classroom` 暴露。
+- 适配：`packages/desktop/src/renderer/src/desktopPlatform.ts` 是唯一读取 `window.lingdong` 的位置；preload 未注入时 `classroom` 缺省。
+- 消费：`LingdongPresetsDialog` 用 `classroom.getPresets()`；`LingdongWorksDialog` 用 `scanWorkspaceFiles() / submitWork() / listWorks()`。
+- 凭据仍只在 main：renderer 只拿到预设、文件候选、提交结果与作品列表，拿不到平台 token 或网关 key。
+
+### 语义
+
+- `copyrightConfirmed` 只在用户点击“确认并提交 N 个文件”后置真；按钮文案即确认动作，UI 不再隐式默认。
+- 缺少 `classroom` 能力（Web/手机）时提示“当前环境不支持课堂作品提交。”，不再退化成“无法扫描课堂工作区”。
+- 可选封面失败仍不阻断正文提交（由 main 采集，客户端不感知）。
+
+### 验收
+
+`pnpm smoke:platform:windows` 在独立数据根 + localhost mock 下通过，覆盖预设弹窗与交作品弹窗；两条路径都经由 `IPlatformService.classroom`。

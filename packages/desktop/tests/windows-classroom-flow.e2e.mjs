@@ -52,21 +52,36 @@ try {
     .getByText("MOCK_TWO_TOOL_ROUNDS_OK", { exact: false })
     .last()
     .waitFor({ timeout: 30_000 });
+  // 课堂预设弹窗走 IPlatformService.classroom.getPresets()，与交作品同一条平台边界。
+  await page.getByRole("button", { name: "课堂提示词预设", exact: true }).click();
+  const presetsDialog = page.getByRole("dialog");
+  await presetsDialog.getByText("读取课堂文件", { exact: true }).waitFor({ timeout: 15_000 });
+  await page.keyboard.press("Escape");
+  await presetsDialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
+
   await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: "提交 1 个文件", exact: true }).click();
+  await dialog.getByRole("button", { name: "确认并提交 1 个文件", exact: true }).click();
   await dialog.getByText("作品已提交", { exact: false }).waitFor({ timeout: 20_000 });
   const result = await (await fetch(`${mock}/__test/state`)).json();
   assert.ok(result.requests.length > 0 && result.requests.every((r) => r.keyMatches));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 1));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 2));
   assert.ok(result.works.some((w) => w.name === "index.html" && w.cover === true));
-  await dialog.getByRole("button", { name: "关闭", exact: true }).click();
   const directory = resolve(".tmp/windows-platform-e2e");
   await mkdir(directory, { recursive: true });
   await page.screenshot({ path: resolve(directory, "e2e-pass.png") });
+  // 收尾用 Escape 关闭弹窗：此处只做清理，不把易受挂载时序影响的按钮点击当作断言。
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
   console.log(
-    JSON.stringify({ pass: true, stream: true, twoToolRounds: true, submitWithCover: true }),
+    JSON.stringify({
+      pass: true,
+      stream: true,
+      twoToolRounds: true,
+      submitWithCover: true,
+      presetsFromPlatformService: true,
+    }),
   );
 } finally {
   await browser.close();

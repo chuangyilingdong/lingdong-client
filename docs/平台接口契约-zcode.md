@@ -133,6 +133,25 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 平台可以先按兼容层上线，不必立刻修改数据库结构。客户端底座替换不改变课堂、账号、账单、网关和作品的业务归属。
 
+## 客户端的课堂能力边界（2026-09-29）
+
+Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂能力统一收敛为
+`IPlatformService.classroom`（`IClassroomPlatformService`）：
+
+| 方法 | 用途 | 说明 |
+|---|---|---|
+| `getPresets()` | 当前课堂提示词预设 | 插入草稿，不自动发送 |
+| `scanWorkspaceFiles()` | 扫描课堂工作区候选 | 返回 path/relativePath/size/updatedAt |
+| `submitWork(payload)` | 提交作品 | `copyrightConfirmed` 必须来自用户显式确认 |
+| `listWorks()` | 查询历史作品 | 提交后回显 |
+
+约束：
+
+1. 平台 token、运行时网关 key、发送次数投影只存在于宿主进程；Renderer 只能通过上述方法读写课堂事实。
+2. `window.lingdong` 只允许在 Desktop 的 `IPlatformService` 适配层出现；UI 组件必须走 `usePlatform()`。
+3. Web/手机不提供该能力，消费方按缺省处理并给出明确提示，不得静默失败。
+4. 封面采集失败不得阻断正文提交。
+
 ## ZCode 课堂工作台状态与交作品所有权（2026-09-28）
 
 ### 所有者
