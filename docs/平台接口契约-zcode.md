@@ -107,13 +107,20 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 当前 `submit-upload` 接口继续兼容即可。建议支持：
 
-- `sessionId`
-- `classroomId`
 - `files[]`，每项为 `{ name, content, binary }`；文本文件 `content` 为 UTF-8，二进制文件 `content` 为 base64
 - `cover`（可选 PNG base64 或平台已有文件引用）
 - `copyrightConfirmed`
 
-客户端默认最多提交 60 个文件、总原始大小 16 MiB，JSON 请求上限约 24 MiB；平台应返回 `warnings` / `missing` / `works` 供客户端回显。
+**客户端会带上入口 HTML 引用的本地素材**（2026-09-30 起，见 `docs/specs/lingdong-work-asset-bundle.md`）：
+
+- 从入口扫 `src=` / `href=` / `poster=` 与 CSS `url()`，丢掉 `http(s)://`、`//`、`data:`、`#`、`/` 开头；
+- `name` 用相对路径且与 HTML 里写的**逐字一致**（`src="assets/hero.png"` → `name: "assets/hero.png"`），
+  相对**入口文件所在目录**计算；`.css`/`.js` 仍按 `binary: false`，图片/视频/音频按 `binary: true`；
+- 名字白名单（平台逐段校验）：≤6 段、单段 ≤64 字、整名 ≤120 字，段首中英文/数字、段内可含 `._-`；
+  禁 `..`、隐藏文件、绝对路径、盘符与反斜杠。
+
+客户端默认最多提交 60 个文件、总原始大小 16 MiB，JSON 请求上限约 24 MiB；平台应返回 `warnings` / `missingAssets` / `works` 供客户端回显。
+客户端**不自己拼** `/api/student/file-assets/...` 地址——相对引用的改写由平台做。
 
 提交失败不能因可选封面失败而阻断正文作品上传。
 

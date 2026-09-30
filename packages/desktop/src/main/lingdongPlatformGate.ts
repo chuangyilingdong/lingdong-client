@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
-import { basename, extname, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
@@ -238,7 +238,7 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
   return { ok: true, files, workspacePath: root, workspaceIdentity: activeState.workspaceIdentity };
 }
 
-type SubmitItem = Readonly<{ path?: unknown; relativePath?: unknown }>;
+type SubmitItem = Readonly<{ path?: unknown; relativePath?: unknown; name?: unknown }>;
 type WorkFilePayload = Readonly<{ name: string; content: string; binary: boolean }>;
 const WORK_TEXT_EXTENSIONS = new Set([
   ".css",
@@ -264,6 +264,7 @@ const WORK_TEXT_EXTENSIONS = new Set([
 const WORK_ALLOWED_EXTENSIONS = new Set([
   ".htm",
   ".html",
+  ".css",
   ".docx",
   ".xlsx",
   ".pptx",
@@ -311,6 +312,86 @@ const MAX_WORK_REQUEST_BYTES = 24 * 1024 * 1024;
 const COVER_MAX_BYTES = Math.floor(1.5 * 1024 * 1024);
 const COVER_TIMEOUT_MS = 12_000;
 const SUBMITTABLE_ENTRY_EXTENSIONS = new Set([".htm", ".html", ".docx", ".xlsx", ".pptx"]);
+const HTML_ENTRY_EXTENSIONS = new Set([".htm", ".html"]);
+/**
+ * 平台侧资源名白名单（服务端逐段校验，不合规整单 400、不静默改名）：
+ * ≤6 段（5 层目录）、单段 ≤64 字、整名 ≤120 字；段首必须是中英文/数字，段内可含 . _ -；
+ * 禁止 `..`、隐藏文件、绝对路径、盘符与反斜杠。
+ */
+const WORK_ASSET_NAME_MAX_SEGMENTS = 6;
+const WORK_ASSET_NAME_MAX_SEGMENT_CHARS = 64;
+const WORK_ASSET_NAME_MAX_CHARS = 120;
+const WORK_ASSET_SEGMENT_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u;
+
+/** 规整成一个通过平台白名单的相对路径名；不合法返回 null。 */
+function normalizeWorkAssetName(raw: string): string | null {
+  const unified = raw.trim().replaceAll("\\", "/");
+  if (!unified) return null;
+  if (unified.startsWith("/") || /^[A-Za-z]:/u.test(unified)) return null;
+  const segments = unified.split("/").filter((segment) => segment.length > 0 && segment !== ".");
+  if (segments.length === 0 || segments.length > WORK_ASSET_NAME_MAX_SEGMENTS) return null;
+  for (const segment of segments) {
+    if (segment === ".." || segment.startsWith(".")) return null;
+    if (segment.length > WORK_ASSET_NAME_MAX_SEGMENT_CHARS) return null;
+    if (!WORK_ASSET_SEGMENT_PATTERN.test(segment)) return null;
+  }
+  const name = segments.join("/");
+  return name.length <= WORK_ASSET_NAME_MAX_CHARS ? name : null;
+}
+
+// 入口 HTML / CSS 里的本地引用：HTML 属性（src|href|poster）与 CSS url()。
+const HTML_LOCAL_REFERENCE_PATTERN =
+  /\b(?:src|href|poster)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/giu;
+const CSS_URL_REFERENCE_PATTERN = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/giu;
+const HTML_STYLE_BLOCK_PATTERN = /<style\b[^>]*>([\s\S]*?)<\/style>/giu;
+
+function firstReferenceGroup(match: RegExpMatchArray): string | undefined {
+  return match[1] ?? match[2] ?? match[3];
+}
+
+/**
+ * 只保留「工作区内的相对引用」：丢掉 http(s)、//、data: 等协议、页内锚点与 `/` 开头的站点绝对路径，
+ * 再去掉 ?query/#hash。返回的是逐字引用串，它同时是平台侧匹配用的 name。
+ */
+function normalizeLocalReference(value: string | undefined): string | null {
+  if (typeof value !== "string") return null;
+  let reference = value.trim();
+  if (!reference) return null;
+  if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/iu.test(reference)) return null;
+  reference = reference.replace(/[?#].*$/u, "").trim();
+  if (!reference || reference.startsWith("/")) return null;
+  reference = reference.replace(/^\.\//u, "").trim();
+  if (!reference || reference === "." || reference.startsWith("..")) return null;
+  return reference;
+}
+
+function extractLocalReferences(content: string, kind: "html" | "css"): string[] {
+  const references: string[] = [];
+  const collect = (pattern: RegExp, text: string) => {
+    for (const match of text.matchAll(pattern)) {
+      const reference = normalizeLocalReference(firstReferenceGroup(match));
+      if (reference) references.push(reference);
+    }
+  };
+  if (kind === "css") {
+    collect(CSS_URL_REFERENCE_PATTERN, content);
+    return references;
+  }
+  collect(HTML_LOCAL_REFERENCE_PATTERN, content);
+  for (const styleBlock of content.matchAll(HTML_STYLE_BLOCK_PATTERN)) {
+    collect(CSS_URL_REFERENCE_PATTERN, styleBlock[1] ?? "");
+  }
+  return references;
+}
+
+/** 素材名按「入口文件所在目录」算，才能和 HTML 里写的相对引用逐字一致。 */
+function toEntryRelativeName(entryDir: string, absolute: string): string | null {
+  const relativeName = relative(entryDir, absolute);
+  if (!relativeName || relativeName === "." || relativeName.startsWith("..") || isAbsolute(relativeName)) {
+    return null;
+  }
+  return relativeName.replaceAll("\\", "/");
+}
 
 function pathInside(root: string, candidate: string): boolean {
   const rootResolved = resolve(root);
@@ -324,36 +405,120 @@ async function prepareSubmitFiles(
 ): Promise<{ readonly files: WorkFilePayload[]; readonly entryPath: string }> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const root = await realpath(activeState.workspacePath);
-  const files: WorkFilePayload[] = [];
-  let totalBytes = 0;
-  let entryPath = "";
-  const usedNames = new Set<string>();
+
+  // 先解析勾选项并锁定入口文件：素材名要按「入口文件所在目录」计算，
+  // 才能和 HTML 里写的相对引用逐字一致（平台按字面匹配后改写预览地址）。
+  const candidates: Array<{ absolute: string; extension: string }> = [];
+  const seenPaths = new Set<string>();
   for (const item of items.slice(0, MAX_WORK_FILES)) {
     const rawPath = typeof item.path === "string" ? item.path.trim() : "";
     if (!rawPath || !pathInside(root, rawPath)) continue;
     const absolute = await realpath(rawPath).catch(() => "");
-    if (!absolute || !pathInside(root, absolute)) continue;
+    if (!absolute || !pathInside(root, absolute) || seenPaths.has(absolute)) continue;
     const info = await stat(absolute).catch(() => null);
     if (!info?.isFile()) continue;
+    seenPaths.add(absolute);
+    candidates.push({ absolute, extension: extname(absolute).toLowerCase() });
+  }
+  if (candidates.length === 0) throw new Error("没有找到可以提交的作品文件。");
+
+  const entryCandidate = candidates.find((candidate) =>
+    SUBMITTABLE_ENTRY_EXTENSIONS.has(candidate.extension),
+  );
+  if (!entryCandidate) throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
+  const entryDir = dirname(entryCandidate.absolute);
+  const entryName = normalizeWorkAssetName(basename(entryCandidate.absolute));
+  if (!entryName) {
+    throw new Error(
+      `作品入口文件名不符合平台规则：${basename(entryCandidate.absolute)}（段首须为中英文或数字，段内可含 . _ -）`,
+    );
+  }
+
+  const files: WorkFilePayload[] = [];
+  const usedNames = new Set<string>();
+  const includedPaths = new Set<string>();
+  let totalBytes = 0;
+
+  const addFile = async (absolute: string, relativeName: string): Promise<boolean> => {
+    if (includedPaths.has(absolute) || files.length >= MAX_WORK_FILES) return false;
+    const name = normalizeWorkAssetName(relativeName);
+    if (!name || usedNames.has(name)) return false;
     const extension = extname(absolute).toLowerCase();
-    if (!WORK_ALLOWED_EXTENSIONS.has(extension)) continue;
-    if (info.size > MAX_WORK_TOTAL_BYTES || totalBytes + info.size > MAX_WORK_TOTAL_BYTES) continue;
+    if (!WORK_ALLOWED_EXTENSIONS.has(extension)) return false;
+    const info = await stat(absolute).catch(() => null);
+    if (!info?.isFile()) return false;
+    if (info.size > MAX_WORK_TOTAL_BYTES || totalBytes + info.size > MAX_WORK_TOTAL_BYTES)
+      return false;
     const bytes = await readFile(absolute);
-    // 平台作品协议要求文件名平铺，不能传目录分隔符；同名素材用序号区分。
-    let name = basename(absolute);
-    if (usedNames.has(name)) name = `${files.length}-${name}`;
-    usedNames.add(name);
     const binary = !WORK_TEXT_EXTENSIONS.has(extension);
     files.push({
       name,
       content: binary ? bytes.toString("base64") : bytes.toString("utf8"),
       binary,
     });
-    if (!entryPath && SUBMITTABLE_ENTRY_EXTENSIONS.has(extension)) entryPath = absolute;
+    usedNames.add(name);
+    includedPaths.add(absolute);
     totalBytes += info.size;
+    return true;
+  };
+
+  // 入口先落进 files，保证 files[0] 与顶层 name 指向主产物。
+  await addFile(entryCandidate.absolute, entryName);
+  for (const candidate of candidates) {
+    if (candidate.absolute === entryCandidate.absolute) continue;
+    const name =
+      toEntryRelativeName(entryDir, candidate.absolute) ?? basename(candidate.absolute);
+    await addFile(candidate.absolute, name);
   }
+
+  // 入口 HTML 引用的本地素材一并带上：图片/视频/音频按二进制，css/js 仍按文本（平台会内联进预览）。
+  if (HTML_ENTRY_EXTENSIONS.has(entryCandidate.extension)) {
+    await collectReferencedWorkAssets({
+      root,
+      entryAbsolute: entryCandidate.absolute,
+      entryDir,
+      addFile,
+    });
+  }
+
   if (files.length === 0) throw new Error("没有找到可以提交的作品文件。");
-  return { files, entryPath };
+  return { files, entryPath: entryCandidate.absolute };
+}
+
+/**
+ * 从入口 HTML 出发，沿着 src/href/poster 与 CSS url() 收集工作区内的本地素材。
+ * 引用串（去掉 ./、?query、#hash 之后）就是提交给平台的 name，
+ * 平台据此把预览里的相对引用改写成它自己的文件地址。
+ */
+async function collectReferencedWorkAssets(input: {
+  root: string;
+  entryAbsolute: string;
+  entryDir: string;
+  addFile: (absolute: string, relativeName: string) => Promise<boolean>;
+}): Promise<void> {
+  const visited = new Set<string>();
+  const pending: string[] = [input.entryAbsolute];
+  while (pending.length > 0) {
+    const current = pending.shift();
+    if (!current || visited.has(current)) continue;
+    visited.add(current);
+    const extension = extname(current).toLowerCase();
+    const kind = extension === ".css" ? "css" : HTML_ENTRY_EXTENSIONS.has(extension) ? "html" : null;
+    if (!kind) continue;
+    const content = await readFile(current, "utf8").catch(() => "");
+    if (!content) continue;
+    const currentDir = dirname(current);
+    for (const reference of extractLocalReferences(content, kind)) {
+      const target = resolve(currentDir, reference);
+      if (!pathInside(input.root, target)) continue;
+      const absolute = await realpath(target).catch(() => "");
+      if (!absolute || !pathInside(input.root, absolute)) continue;
+      const name = toEntryRelativeName(input.entryDir, absolute);
+      if (!name) continue;
+      await input.addFile(absolute, name);
+      if (extname(absolute).toLowerCase() === ".css") pending.push(absolute);
+    }
+  }
 }
 
 function coverMimeType(path: string): string {

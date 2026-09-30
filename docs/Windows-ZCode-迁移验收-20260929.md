@@ -289,8 +289,8 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 ### 最终 UI/隔离候选包（未发布）
 
 - 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
-- 大小：`151,131,513` 字节
-- SHA256：`111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`
+- 大小：`151,142,800` 字节
+- SHA256：`61eff2157f5aac4e03a06293149e87091d637e8ed5c6bfe8f67562db675230c1`
 - 打包态课堂全链路、最终安装器静默安装/启动/卸载均通过。
 
 ## 品牌与首屏清理（2026-09-30）
@@ -311,7 +311,7 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 - `build/icon_installer.png/ico` 重做为纯白底灵动ai方形图标；打包资源新增 `icon_lingdong.png`。
 - 安装目录/更新缓存目录名来自 electron-updater 的 `updaterCacheDirName`（由 package.json `name` 推导，旧值为 `@zcodedesktop-updater`）；`extraMetadata.name` 改为 `灵动ai创作客户端`，打包后 `resources/app-update.yml` 为 `updaterCacheDirName: 灵动ai创作客户端-updater`。
 - 新增 `migrateLegacyUpdaterCacheDir()`：Windows 打包态启动时把 `%LOCALAPPDATA%\@zcodedesktop-updater` 重命名为 `%LOCALAPPDATA%\灵动ai创作客户端-updater`（目标已存在则跳过，失败只 warn）。
-- 更新后的候选包（未发布）：`lingdong-client-0.2.0-zcode.3-win-x64.exe`，`151,131,513` 字节，SHA256 `111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`。
+- 更新后的候选包（未发布）：`lingdong-client-0.2.0-zcode.3-win-x64.exe`，`151,142,800` 字节，SHA256 `111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`。
 - 本轮验证：打包态课堂全链路 E2E 通过、NSIS 静默安装/启动登录门冒烟通过、exe 图标与安装态 `app-update.yml` 人工核对通过。
 
 ## 平台网关历史截断提示接入（2026-09-30 续二）
@@ -324,7 +324,7 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 ### 更新后的候选包（未发布）
 
 - 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
-- 大小：`151,131,513` 字节
+- 大小：`151,142,800` 字节
 - SHA256：`111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`
 
 ## 课堂入口深链对齐（2026-09-30 续三）
@@ -339,6 +339,21 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 
 - 内容：课堂入口深链 scheme 对齐（`zcode` + `lingdong` 双注册 + 未命中时聚焦主窗口）、截断提示只消费 `x-platform-history-dropped`。
 - 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
-- 大小：`151,131,513` 字节
+- 大小：`151,142,800` 字节
 - SHA256：`111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`
 - 本轮验证：打包态启动日志实测注册 `zcode` 与 `lingdong` 两条协议；同 userData 下用 `lingdong://open` 再拉起第二实例 → 第二实例 `exit 0`、主窗口数不变、主窗口获得焦点；打包态课堂 E2E 通过（含截断提示断言）。
+
+## 作品提交带上入口引用的本地素材（2026-09-30 续四）
+
+- 平台此前拒收带 `/` 的文件名，客户端只能拍平文件名，导致作品图裂、视频空；平台已放开相对路径名，客户端改为把入口 HTML 引用的本地素材一起提交。
+- 客户端行为：从入口扫 `src=`/`href=`/`poster=` 与 CSS `url()`；丢掉 `http(s)://`、`//`、`data:`、`#`、`/` 开头；`name` 用相对入口目录的路径且与 HTML 里写的逐字一致；css/js 按文本、图片/视频/音频按二进制。
+- 顺带修掉一处既有遗漏：`WORK_ALLOWED_EXTENSIONS` 缺 `.css`，入口引用的样式表一直没被带上——现已补上。
+- 名字按平台白名单校验（≤6 段、单段 ≤64、整名 ≤120，段首中英文/数字，段内 `._-`；禁 `..`/隐藏文件/绝对路径/盘符/反斜杠）。
+- 验证：打包态课堂 E2E 只勾选 `index.html`，提交清单实测为 `index.html`(text)、`style.css`(text)、`assets/hero.png`(binary)、`assets/clip.mp4`(binary)、`assets/bg.png`(binary)；`https://…`、`data:…`、`#anchor` 均未出现。
+- 契约与不变量见 `docs/specs/lingdong-work-asset-bundle.md`。
+
+### 作品素材修复后的 Windows 候选包（未发布）
+
+- 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
+- 大小：`151,142,800` 字节
+- SHA256：`61eff2157f5aac4e03a06293149e87091d637e8ed5c6bfe8f67562db675230c1`

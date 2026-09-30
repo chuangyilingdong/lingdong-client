@@ -18,12 +18,34 @@ const CLASSROOMS = [
     workspace: join(root, "classroom-b"),
   },
 ];
+// 1x1 PNG：用来验证「入口 HTML 引用的本地素材要一起提交」。
+const TINY_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
 for (const item of CLASSROOMS) {
-  await mkdir(item.workspace, { recursive: true });
+  await mkdir(join(item.workspace, "assets"), { recursive: true });
+  await writeFile(join(item.workspace, "assets", "hero.png"), TINY_PNG);
+  await writeFile(join(item.workspace, "assets", "bg.png"), TINY_PNG);
+  await writeFile(join(item.workspace, "assets", "clip.mp4"), Buffer.from("MOCK_MP4_BYTES"));
   await writeFile(
-    join(item.workspace, "index.html"),
-    `<!doctype html><html><body><h1>Mock ${item.id}</h1></body></html>`,
+    join(item.workspace, "style.css"),
+    `body{background:url("assets/bg.png") no-repeat}\n`,
   );
+  // 入口 HTML：三条本地引用（css / img / video）+ 三条必须被忽略的外部引用。
+  const html = [
+    "<!doctype html><html><head>",
+    "<link rel='stylesheet' href='style.css'>",
+    "</head><body>",
+    `<h1>Mock ${item.id}</h1>`,
+    "<img src='assets/hero.png' alt='hero'>",
+    "<video src='assets/clip.mp4'></video>",
+    "<img src='https://example.com/remote.png'>",
+    "<img src='data:image/png;base64,AAAA'>",
+    "<a href='#top'>top</a>",
+    "</body></html>",
+  ].join("");
+  await writeFile(join(item.workspace, "index.html"), html);
   await writeFile(join(item.workspace, "notes.txt"), `MOCK_CLASSROOM_FILE ${item.id}\n`);
 }
 // 课堂可用性形态（对齐平台契约）：
@@ -72,6 +94,23 @@ const json = (res, status, value) => {
 const ok = (res, data) => json(res, 200, { success: true, ok: true, data });
 const fail = (res, status, code, message) =>
   json(res, status, { error: { code, message } });
+// 平台资源名白名单：≤6 段、单段 ≤64、整名 ≤120；段首中英文/数字，段内可含 . _ -；
+// 禁 .. 与隐藏文件、绝对路径、盘符、反斜杠。
+const WORK_ASSET_SEGMENT_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u;
+function isValidWorkAssetName(raw) {
+  const name = String(raw ?? "").trim().replaceAll("\\", "/");
+  if (!name || name.length > 120) return false;
+  if (name.startsWith("/") || /^[A-Za-z]:/.test(name)) return false;
+  const segments = name.split("/");
+  if (segments.length === 0 || segments.length > 6) return false;
+  for (const segment of segments) {
+    if (!segment || segment === "." || segment === ".." || segment.startsWith(".")) return false;
+    if (segment.length > 64) return false;
+    if (!WORK_ASSET_SEGMENT_PATTERN.test(segment)) return false;
+  }
+  return true;
+}
+
 async function body(req) {
   let raw = "";
   for await (const c of req) raw += c;
@@ -228,10 +267,17 @@ const server = http.createServer(async (req, res) => {
       const data = await body(req);
       if (!data.copyrightConfirmed)
         return fail(res, 400, "WORK_COPYRIGHT_CONFIRMATION_REQUIRED", "请先确认作品为本人原创");
+      // 平台侧逐段校验资源名，不合规整单 400、不静默改名；mock 复刻这条规则，
+      // 客户端一旦回退成「扁平文件名」或被素材引用带出非法名，E2E 会直接红。
+      for (const file of data.files ?? []) {
+        if (!isValidWorkAssetName(String(file?.name ?? ""))) {
+          return fail(res, 400, "INVALID_WORK_ASSET_NAME", `作品文件名不合法：${file?.name}`);
+        }
+      }
       works.push({
         id: "work-" + (works.length + 1),
         name: data.name,
-        files: data.files?.map((f) => f.name),
+        files: data.files?.map((f) => ({ name: f.name, binary: !!f.binary })),
         cover: !!data.cover,
       });
       return ok(res, {

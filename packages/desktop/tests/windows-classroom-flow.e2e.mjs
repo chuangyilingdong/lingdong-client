@@ -98,13 +98,38 @@ try {
 
   await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: "确认并提交 1 个文件", exact: true }).click();
+  // 先全选再清空，确保只勾选入口 HTML：素材不是学生勾的，必须由客户端顺着
+  // 入口里的相对引用自动带上，这条断言才有意义。
+  await dialog.getByRole("button", { name: /全选可提交文件/ }).click();
+  await dialog.getByRole("button", { name: /取消全选/ }).click();
+  await dialog.locator("button").filter({ hasText: "index.html" }).first().click();
+  await dialog.getByRole("button", { name: "确认并提交 1 个文件", exact: true }).waitFor({
+    timeout: 10_000,
+  });
+  await dialog.getByRole("button", { name: /确认并提交 \d+ 个文件/ }).click();
   await dialog.getByText("作品已提交", { exact: false }).waitFor({ timeout: 20_000 });
   const result = await (await fetch(`${mock}/__test/state`)).json();
   assert.ok(result.requests.length > 0 && result.requests.every((r) => r.keyMatches));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 1));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 2));
-  assert.ok(result.works.some((w) => w.name === "index.html" && w.cover === true));
+  const submitted = result.works.at(-1);
+  assert.ok(submitted, "必须有一条提交记录");
+  assert.equal(submitted.name, "index.html");
+  assert.equal(submitted.cover, true);
+  // 入口 HTML 引用的本地素材必须一起提交，name 与 HTML 里写的相对路径逐字一致；
+  // css 走文本（平台内联），图片/视频走二进制；外链、data:、页内锚点一条都不能带。
+  const submittedFiles = submitted.files ?? [];
+  const fileByName = new Map(submittedFiles.map((file) => [file.name, file]));
+  assert.ok(fileByName.has("index.html"), `缺少入口文件：${submittedFiles.map((f) => f.name).join(",")}`);
+  assert.equal(fileByName.get("style.css")?.binary, false, "css 必须按文本提交");
+  assert.equal(fileByName.get("assets/hero.png")?.binary, true, "HTML <img> 引用的图片必须按二进制提交");
+  assert.equal(fileByName.get("assets/clip.mp4")?.binary, true, "HTML <video> 引用的视频必须按二进制提交");
+  assert.equal(fileByName.get("assets/bg.png")?.binary, true, "CSS url() 引用的图片也要带上");
+  assert.ok(
+    !submittedFiles.some((file) => /^(?:https?:|data:|\/|#)/u.test(file.name)),
+    `外部/绝对引用不得出现在提交清单：${submittedFiles.map((f) => f.name).join(",")}`,
+  );
+  assert.ok(!submittedFiles.some((file) => file.name.includes("remote")), "外链素材不得被提交");
   const directory = resolve(".tmp/windows-platform-e2e");
   await mkdir(directory, { recursive: true });
   await page.screenshot({ path: resolve(directory, "e2e-pass.png") });
