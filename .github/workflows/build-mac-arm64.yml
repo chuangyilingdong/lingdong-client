@@ -69,6 +69,8 @@ jobs:
           ls -lh dist-mac
 
       - name: Report build status to branch
+        # 上报只是为了在没有 API 权限时也能看到失败原因；它绝不该有权力把构建判红。
+        continue-on-error: true
         if: always()
         env:
           GITHUB_TOKEN: ${{ github.token }}
