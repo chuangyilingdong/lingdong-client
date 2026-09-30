@@ -53,3 +53,9 @@ Windows 客户端迁移到 ZCode 底座后，生产运行时仍使用 `ZCode` �
 - Windows 未签名构建通过 `rcedit` 在 afterPack 写入白底灵动ai exe 图标/版本资源。
 - 课堂模式隐藏普通账户菜单、手机远控和设置按钮；课堂 Footer 直接展示学生账号、课堂预设和退出登录。
 - 课堂预设弹窗不再出现 ZCode 文案。
+
+## 2026-09-30 任务栏图标与 updater 目录补充
+
+- Windows 运行时窗口/任务栏图标必须与安装器一致（白底灵动ai方形）：`packages/desktop/src/main/index.ts` 打包态读 `icon_lingdong.png`、开发态读 `build/icon_installer.png`；`iconPath` 不得再回退到透明字标 `icon_windows.png`。
+- electron-updater 的更新缓存目录名由 package.json `name` 推导；`extraMetadata.name` 固定为 `灵动ai创作客户端`，对应目录 `%LOCALAPPDATA%\灵动ai创作客户端-updater`，不得再出现 `@zcodedesktop-updater`。
+- Windows 打包态启动时调用 `migrateLegacyUpdaterCacheDir()` 迁移旧目录；目标已存在或迁移失败时不得阻断启动。

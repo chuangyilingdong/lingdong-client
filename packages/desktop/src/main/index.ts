@@ -293,8 +293,8 @@ process.on("unhandledRejection", (reason) => {
 const iconPath =
   process.platform === "win32"
     ? app.isPackaged
-      ? join(process.resourcesPath, "icon_windows.png")
-      : join(import.meta.dirname, "../../build/icon_windows.png")
+      ? join(process.resourcesPath, "icon_lingdong.png")
+      : join(import.meta.dirname, "../../build/icon_installer.png")
     : app.isPackaged
       ? join(process.resourcesPath, "icon.png")
       : join(import.meta.dirname, "../../build/icon.png");

@@ -16,6 +16,8 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { access, rename } from "node:fs/promises";
+import { join } from "node:path";
 import pkg, { CancellationToken } from "electron-updater";
 import semver from "semver";
 import { logger } from "./logger.js";
@@ -754,7 +756,9 @@ async function syncAutoUpdateCheckChannelFromSettings(
 function applyManifestUpdateProvider(options: InitAutoUpdaterOptions): void {
   const manifestUrl =
     options.updateFeedSource?.url.trim() ||
-    (process.env.LINGDONG_API_BASE?.trim() ? `${process.env.LINGDONG_API_BASE.trim().replace(/\/+$/u, "")}/downloads/manifest.json` : "https://aicyld.com/downloads/manifest.json");
+    (process.env.LINGDONG_API_BASE?.trim()
+      ? `${process.env.LINGDONG_API_BASE.trim().replace(/\/+$/u, "")}/downloads/manifest.json`
+      : "https://aicyld.com/downloads/manifest.json");
   autoUpdater.setFeedURL({
     provider: "custom",
     updateProvider: ManifestUpdateProvider,
@@ -1461,6 +1465,34 @@ export async function acknowledgePostUpdateReleaseNotes(
   await clearPendingPostUpdateReleaseNotes(settingService, "renderer-acknowledged");
 }
 
+const LEGACY_UPDATER_CACHE_DIR_NAME = "@zcodedesktop-updater";
+const LINGDONG_UPDATER_CACHE_DIR_NAME = "灵动ai创作客户端-updater";
+
+async function migrateLegacyUpdaterCacheDir(): Promise<void> {
+  if (process.platform !== "win32" || !app.isPackaged) return;
+  const localAppData = process.env.LOCALAPPDATA?.trim();
+  if (!localAppData) return;
+  const legacyDir = join(localAppData, LEGACY_UPDATER_CACHE_DIR_NAME);
+  const nextDir = join(localAppData, LINGDONG_UPDATER_CACHE_DIR_NAME);
+  try {
+    await access(legacyDir);
+  } catch {
+    return;
+  }
+  try {
+    await access(nextDir);
+    return;
+  } catch {
+    // next dir does not exist; migrate below
+  }
+  try {
+    await rename(legacyDir, nextDir);
+    logger.info(`[auto-update] migrated legacy updater cache: ${legacyDir} -> ${nextDir}`);
+  } catch (error) {
+    logger.warn("[auto-update] failed to migrate legacy updater cache", { error });
+  }
+}
+
 export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Promise<void> {
   if (options.enabled === false) {
     autoUpdaterDisabledForProductFlavor = true;
@@ -1472,6 +1504,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     return;
   }
   autoUpdaterDisabledForProductFlavor = false;
+  await migrateLegacyUpdaterCacheDir();
   if (!canUseAutoUpdaterInCurrentRuntime()) return;
 
   onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;

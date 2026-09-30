@@ -289,8 +289,8 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 ### 最终 UI/隔离候选包（未发布）
 
 - 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
-- 大小：`151,140,238` 字节
-- SHA256：`3f480900dcc6563652e5d4b664f074e628c63a688c596157600d099a73af191f`
+- 大小：`151,141,537` 字节
+- SHA256：`7f5b20c4d1acfb19f8e40636319b536b544086c2c4a134db8542a008228dacee`
 - 打包态课堂全链路、最终安装器静默安装/启动/卸载均通过。
 
 ## 品牌与首屏清理（2026-09-30）
@@ -303,3 +303,13 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 - Windows 未签名构建通过 `rcedit` 写入白底灵动ai任务栏图标。
 - 课堂 Footer 隐藏普通“连接使用/手机/设置”入口，显示学生账号、课堂预设和退出登录完整按钮。
 - 课堂预设弹窗中的 ZCode 文案改为小灵。
+
+## 任务栏图标与 updater 缓存目录收尾（2026-09-30 续）
+
+- 登录后任务栏/窗口图标回退为透明蓝橙字标的根因：`packages/desktop/src/main/index.ts` 的 `iconPath` 在 Windows 指向 `icon_windows.png`，登录后 `applyAppIcon` 覆盖了安装图标；已改为打包态 `icon_lingdong.png`、开发态 `build/icon_installer.png`。
+- 未签名构建此前 `signAndEditExecutable: false`，exe 保留 Electron 原子图标；改为未签名时在 `afterPack` 用 `rcedit` 写入白底灵动ai图标与版本资源（新增 devDependency `rcedit@4.0.1`）。
+- `build/icon_installer.png/ico` 重做为纯白底灵动ai方形图标；打包资源新增 `icon_lingdong.png`。
+- 安装目录/更新缓存目录名来自 electron-updater 的 `updaterCacheDirName`（由 package.json `name` 推导，旧值为 `@zcodedesktop-updater`）；`extraMetadata.name` 改为 `灵动ai创作客户端`，打包后 `resources/app-update.yml` 为 `updaterCacheDirName: 灵动ai创作客户端-updater`。
+- 新增 `migrateLegacyUpdaterCacheDir()`：Windows 打包态启动时把 `%LOCALAPPDATA%\@zcodedesktop-updater` 重命名为 `%LOCALAPPDATA%\灵动ai创作客户端-updater`（目标已存在则跳过，失败只 warn）。
+- 更新后的候选包（未发布）：`lingdong-client-0.2.0-zcode.3-win-x64.exe`，`151,141,537` 字节，SHA256 `7f5b20c4d1acfb19f8e40636319b536b544086c2c4a134db8542a008228dacee`。
+- 本轮验证：打包态课堂全链路 E2E 通过、NSIS 静默安装/启动登录门冒烟通过、exe 图标与安装态 `app-update.yml` 人工核对通过。

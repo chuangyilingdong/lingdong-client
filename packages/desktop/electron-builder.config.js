@@ -478,6 +478,7 @@ export default {
   // Linux deb 打包（fpm）会校验 package metadata 中的 homepage、author.email、maintainer。
   // CI 环境下若这些字段缺失会在产物阶段直接失败。这里统一在构建配置补齐，避免依赖外部注入。
   extraMetadata: {
+    name: "灵动ai创作客户端",
     version: buildMetadata.appVersion,
     zcodeProductFlavor: desktopProductIdentity.flavor,
     homepage: "https://aicyld.com",
