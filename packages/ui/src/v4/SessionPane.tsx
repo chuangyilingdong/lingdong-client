@@ -3712,6 +3712,29 @@ export function SessionPane({
     !isDraft && (lease === null || sessionLeaseReady) && snapshot?.sessionId === sessionId
       ? snapshot
       : null;
+  // 平台网关历史截断提示：平台在每轮模型响应头里下发事实，客户端只做一次性提示，
+  // 不阻断发送、不写入会话内容。同一会话内同一事实只提示一次；事实被平台清除后允许再次提示。
+  const historyTruncation = timelineSnapshot?.control.historyTruncation ?? null;
+  const announcedHistoryTruncationRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!historyTruncation) {
+      announcedHistoryTruncationRef.current = null;
+      return;
+    }
+    const announcedKey = `${sessionId ?? "draft"}:${historyTruncation.limit}:${historyTruncation.dropped}`;
+    if (announcedHistoryTruncationRef.current === announcedKey) {
+      return;
+    }
+    announcedHistoryTruncationRef.current = announcedKey;
+    toast(
+      intl.formatMessage(
+        { id: "chat.historyTruncated" },
+        { limit: historyTruncation.limit, dropped: historyTruncation.dropped },
+      ),
+      // 比默认 3s 长：截断提示包含数字，学生需要时间读完。
+      { durationMs: 12_000 },
+    );
+  }, [historyTruncation, intl, sessionId]);
   const shareHandoverContext =
     snapshot?.sharedContextImport && "contextId" in snapshot.sharedContextImport
       ? snapshot.sharedContextImport

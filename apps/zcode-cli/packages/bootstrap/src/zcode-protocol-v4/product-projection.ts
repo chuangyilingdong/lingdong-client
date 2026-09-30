@@ -83,6 +83,7 @@ import type {
   ConversationRowTarget,
   ConversationSnapshot,
   GoalState,
+  HistoryTruncationState,
   HookExecutionProjection,
   HookInvocationRow,
   PendingInteraction,
@@ -2365,8 +2366,16 @@ export class ProductProjection {
         // adapter attempt=2+ 只说明重试请求已发出，不代表连接恢复；
         // 保持当前状态，等首个有效 text/reasoning/tool 进展再清理，避免标签闪退。
         return positiveInteger(payload.attempt, 1) <= 1 ? this.setApiRetry(null) : [];
-      case "model_request_completed":
-        return this.setApiRetry(null);
+      case "model_request_completed": {
+        const deltas = this.setApiRetry(null);
+        // 平台网关的历史截断标记只挂在成功轮次的响应头上；它与 apiRetry 相互独立，
+        // 所以这里在清理重试态的同时单独更新截断事实。
+        const truncation = readPlatformHistoryTruncation(payload.responseHeaders);
+        if (truncation === undefined) {
+          return deltas;
+        }
+        return [...deltas, ...this.setHistoryTruncation(truncation)];
+      }
       case "model_request_failed":
         return payload.retryable ? [] : this.setApiRetry(null);
       case "model_stream_stalled":
@@ -2455,6 +2464,31 @@ export class ProductProjection {
       {
         op: "state.updated",
         patch: this.controlPatch({ apiRetry }),
+      },
+    ];
+  }
+
+  /**
+   * 平台网关历史截断事实（来自响应头）。只在值变化时下发 delta；
+   * 运行态事实，不写入消息、不进入模型上下文、不持久化。
+   */
+  private setHistoryTruncation(
+    historyTruncation: HistoryTruncationState | null,
+  ): ConversationDelta[] {
+    const current = this.snapshot.control.historyTruncation;
+    if (
+      current === historyTruncation ||
+      (current !== null &&
+        historyTruncation !== null &&
+        current.limit === historyTruncation.limit &&
+        current.dropped === historyTruncation.dropped)
+    ) {
+      return [];
+    }
+    return [
+      {
+        op: "state.updated",
+        patch: this.controlPatch({ historyTruncation }),
       },
     ];
   }
@@ -5474,4 +5508,39 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+const PLATFORM_HISTORY_LIMIT_HEADER = "x-platform-history-limit";
+const PLATFORM_HISTORY_DROPPED_HEADER = "x-platform-history-dropped";
+
+/**
+ * 读取平台网关的历史截断标记。
+ *
+ * - `undefined`：这一轮没拿到响应头（无从判断），保持现值。
+ * - `null`：拿到了响应头但本轮未截断，清掉旧事实，避免留下过期提示。
+ * - 对象：本轮确实截断。头名大小写不敏感（adapters 已把小写化）。
+ */
+function readPlatformHistoryTruncation(
+  responseHeaders: Record<string, string> | undefined,
+): HistoryTruncationState | null | undefined {
+  if (!responseHeaders) return undefined;
+  const dropped = readHeaderInteger(responseHeaders, PLATFORM_HISTORY_DROPPED_HEADER);
+  if (dropped === undefined || dropped <= 0) return null;
+  const limit = readHeaderInteger(responseHeaders, PLATFORM_HISTORY_LIMIT_HEADER);
+  if (limit === undefined || limit <= 0) return null;
+  return { limit, dropped };
+}
+
+function readHeaderInteger(
+  headers: Record<string, string>,
+  name: string,
+): number | undefined {
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() !== name) continue;
+    const trimmed = value.trim();
+    if (!/^[0-9]+$/u.test(trimmed)) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isSafeInteger(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }

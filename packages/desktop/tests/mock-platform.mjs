@@ -58,6 +58,9 @@ let sessionSuperseded = false;
 let submitIncludesWorks = false;
 let mode = "text";
 let toolRound = 0;
+// 平台网关历史截断标记（默认关闭 = 不截断）；开启后每个 /chat/completions 响应都带
+// x-platform-history-limit / x-platform-history-dropped，供客户端截断提示链路验证。
+let historyTruncation = { limit: 0, dropped: 0 };
 const origin = "http://127.0.0.1:19090";
 const fakeKey = "mock-runtime-key";
 const classroom = { id: "classroom-e2e", lessonId: "lesson-e2e", title: "联调测试课堂" };
@@ -169,6 +172,14 @@ const server = http.createServer(async (req, res) => {
       mode = data.mode;
       toolRound = 0;
       return json(res, 200, { mode });
+    }
+    if (pathname === "/__test/history" && req.method === "POST") {
+      const data = await body(req);
+      historyTruncation = {
+        limit: Number(data.limit ?? 0),
+        dropped: Number(data.dropped ?? 0),
+      };
+      return json(res, 200, historyTruncation);
     }
     if (pathname === "/__test/quota" && req.method === "POST") {
       const data = await body(req);
@@ -284,6 +295,13 @@ const server = http.createServer(async (req, res) => {
         return json(res, 401, {
           error: { message: "mock runtime key mismatch", code: "UNAUTHORIZED" },
         });
+      const historyHeaders =
+        historyTruncation.dropped > 0 && historyTruncation.limit > 0
+          ? {
+              "x-platform-history-limit": String(historyTruncation.limit),
+              "x-platform-history-dropped": String(historyTruncation.dropped),
+            }
+          : {};
       const completion = {
         id: "mock-completion",
         object: "chat.completion",
@@ -319,7 +337,7 @@ const server = http.createServer(async (req, res) => {
             }),
           },
         };
-        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.writeHead(200, { "content-type": "text/event-stream", ...historyHeaders });
         res.write(
           `data: ${JSON.stringify({ ...completion, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [call] }, finish_reason: null }], usage: undefined })}\n\n`,
         );
@@ -332,7 +350,7 @@ const server = http.createServer(async (req, res) => {
       if (mode === "tools" && data.stream)
         completion.choices[0].message.content = "MOCK_TWO_TOOL_ROUNDS_OK：两个文件已读取。";
       if (data.stream) {
-        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache" });
+        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", ...historyHeaders });
         for (const delta of [
           { role: "assistant" },
           { content: completion.choices[0].message.content },
@@ -344,7 +362,10 @@ const server = http.createServer(async (req, res) => {
           `data: ${JSON.stringify({ ...completion, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] })}\n\n`,
         );
         res.end("data: [DONE]\n\n");
-      } else return json(res, 200, completion);
+      } else {
+        res.writeHead(200, { "content-type": "application/json", ...historyHeaders });
+        res.end(JSON.stringify(completion));
+      }
       return;
     }
     json(res, 404, { message: "mock route not found", path: pathname });

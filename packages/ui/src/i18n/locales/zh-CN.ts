@@ -4437,6 +4437,8 @@ const zhCN: Record<string, string> = {
   "chat.goalVerification.openSummary": "展开摘要",
   "chat.goalBanner.label": "目标",
   "chat.apiRetryStatus": "重新连接中... {attempt}/{maxRetries}",
+  "chat.historyTruncated":
+    "小灵只保留了最近 {limit} 条消息，较早的 {dropped} 条已不在本轮上下文里；如果小灵忘了前面的要求，请再提醒它一次。",
   "chat.target.title": "目标",
   "chat.target.status.active": "进行中",
   "chat.target.status.paused": "已暂停",

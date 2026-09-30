@@ -445,8 +445,8 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 2. **网关历史截断 `MAX_HISTORY=40`（约 13 轮）**：超出后早期上下文被丢弃。
    平台已定口径：截断时在 `/chat/completions` 响应头返回 `x-platform-history-limit`
    （本轮保留的最大消息条数，当前 40）与 `x-platform-history-dropped`（本轮被丢弃的消息条数，仅 >0 时返回）。
-   客户端已确认**可消费**（Electron/Node 侧 fetch 拿得到完整响应头，流式 SSE 同样可读），
-   但**接入尚未开始** —— 见 `docs/客户端待办.md`。
+   **客户端已接入**：适配层取响应头 → v4 投影 `control.historyTruncation` → Renderer 一次性提示（见
+   `docs/specs/zcode-platform-history-truncation-notice.md`）。
    备注：请求不经浏览器 CORS，无需 `expose-headers`；只需中间层透传这两个头。
 3. **`submit-upload` 的 `works` 待发版**：发版前客户端走 `GET /student/works` 回落，功能不受影响。
 
@@ -458,10 +458,10 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 - 但客户端统一采用**规范名**发布：`deploy/publish-client.sh` 接受带 `-unsigned` 的构建产物，上传前归一化为 `lingdong-client-<版本>-win-x64.exe` / `lingdong-client-<版本>-mac-arm64.dmg`。
 - 因此平台上传口的严格正则**不需要放宽**（与平台「我们放宽正则 / 你们去后缀」中的「去后缀」一致）。
 
-### 历史截断标记（平台已定，客户端待接入）
+### 历史截断标记（平台已定，客户端已接入）
 
 - 头名：`x-platform-history-limit`（本轮保留的最大消息条数，当前 40）、`x-platform-history-dropped`（本轮被丢弃的消息条数，仅 >0 时返回）。
-- 客户端确认**可消费**响应头（Electron/Node 侧 fetch，流式 SSE 同样可读）；接入项见 `docs/客户端待办.md`。
+- 客户端已接入：适配层状态事件携带响应头 → v4 投影 `control.historyTruncation` → Renderer 在校会话内一次性提示（不阻断发送）。
 - 更正一处平台注释：平台原写「客户端读 `files[target].version ?? manifest.version`」，当前客户端**只读顶层 `version`**，忽略 `files[target].version`；要做每平台独立版本须先改客户端。
 
 ## 2026-09-29 UI 联动补充
@@ -485,6 +485,6 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 平台仍需完成的前置事项：
 
 - 发版 `submit-upload` 的 `works` 字段；客户端当前已有 `GET /student/works` 回落，不阻塞使用。
-- ~~决定 `MAX_HISTORY=40` 是否可配并在截断时返回标记~~ → **已定**：用响应头 `x-platform-history-dropped` / `x-platform-history-limit`；客户端待接入（见 `docs/客户端待办.md`）。
+- ~~决定 `MAX_HISTORY=40` 是否可配并在截断时返回标记~~ → **已定并已接入**：响应头 `x-platform-history-dropped` / `x-platform-history-limit`，客户端在会话内一次性提示。
 - 明确“本节课一次都不许发”的产品语义；当前平台口径 `0 = 不限`，无法表达零发送课堂。
 - 用真实学生账号联调 `SESSION_SUPERSEDED`、`SEND_QUOTA_EXCEEDED`，并核对缓存 usage 与 `usage_records` / `compute_attempts`。

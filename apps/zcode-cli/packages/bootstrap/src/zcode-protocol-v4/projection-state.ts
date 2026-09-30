@@ -39,6 +39,7 @@ export function createInitialConversationSnapshot(
       activeWorks: [],
       lastError: null,
       apiRetry: null,
+      historyTruncation: null,
     },
     availability: computeAvailability({
       phase: "draft",

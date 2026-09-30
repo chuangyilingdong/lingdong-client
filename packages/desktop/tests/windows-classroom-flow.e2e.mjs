@@ -18,6 +18,13 @@ const classroomSetup = await fetch(`${mock}/__test/classrooms`, {
   body: JSON.stringify({ mode: "active", count: 1 }),
 });
 assert.equal(classroomSetup.status, 200, "重置课堂形态失败");
+// 平台网关历史截断标记：开启后每个 /chat/completions 响应都带
+// x-platform-history-limit / x-platform-history-dropped，用于验证客户端消费与一次性提示。
+const historySetup = await fetch(`${mock}/__test/history`, {
+  method: "POST",
+  body: JSON.stringify({ limit: 40, dropped: 12 }),
+});
+assert.equal(historySetup.status, 200, "开启历史截断标记失败");
 
 const browser = await chromium.connectOverCDP(cdp);
 try {
@@ -66,6 +73,10 @@ try {
     .getByText("MOCK_GATEWAY_RESPONSE", { exact: false })
     .last()
     .waitFor({ timeout: 30_000 });
+  // 截断提示来自 control.historyTruncation（平台响应头 → v4 投影 → UI），
+  // 学生侧表现为一条一次性提示；至少验证它确实出现且带有平台下发的数字。
+  await page.getByText("只保留了最近", { exact: false }).waitFor({ timeout: 15_000 });
+  assert.ok((await page.getByText("12", { exact: false }).count()) > 0);
   await fetch(`${mock}/__test/mode`, { method: "POST", body: JSON.stringify({ mode: "tools" }) });
   await page
     .locator('[data-testid="v4-composer-input"]')

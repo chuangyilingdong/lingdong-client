@@ -125,6 +125,21 @@ export const apiRetryStateSchema = z.object({
 });
 export type ApiRetryState = z.infer<typeof apiRetryStateSchema>;
 
+/**
+ * 平台网关历史截断事实：来自 `/chat/completions` 响应头
+ * `x-platform-history-limit` / `x-platform-history-dropped`。
+ *
+ * 运行态证据，不写入消息、不进入模型上下文、不持久化。平台是唯一权威，
+ * 客户端只读，不重算历史长度。
+ */
+export const historyTruncationStateSchema = z.object({
+  /** 本轮网关保留的最大消息条数（x-platform-history-limit）。 */
+  limit: z.number().int().positive(),
+  /** 本轮被丢弃的消息条数（x-platform-history-dropped），恒 > 0。 */
+  dropped: z.number().int().positive(),
+});
+export type HistoryTruncationState = z.infer<typeof historyTruncationStateSchema>;
+
 export const sessionControlSchema = z.object({
   phase: sessionPhaseSchema,
   // 派生值（= phase ∈ completed*），为 UI 便利保留。
@@ -137,6 +152,7 @@ export const sessionControlSchema = z.object({
   activeWorks: z.array(activeWorkSummarySchema),
   lastError: sessionErrorInfoSchema.nullable(),
   apiRetry: apiRetryStateSchema.nullable(),
+  historyTruncation: historyTruncationStateSchema.nullable(),
 });
 export type SessionControl = z.infer<typeof sessionControlSchema>;
 
