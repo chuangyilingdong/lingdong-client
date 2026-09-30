@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckSquare, FileUp, RefreshCw } from "lucide-react";
+import { CheckSquare, FileUp, MinusSquare, RefreshCw, Square } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import {
   Dialog,
@@ -55,6 +55,7 @@ export function LingdongWorksDialog({
 
   const files = scan?.files ?? [];
   const allSelected = files.length > 0 && selected.size === files.length;
+  const someSelected = selected.size > 0 && !allSelected;
   const selectedFiles = useMemo(
     () => files.filter((file) => selected.has(file.path)),
     [files, selected],
@@ -96,7 +97,9 @@ export function LingdongWorksDialog({
       }
       setMessage(nextCount === null ? "作品已提交，平台正在处理。" : `作品已提交，平台当前返回 ${nextCount} 条作品记录。`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      // Electron 的 IPC 拒绝会把方法名拼进 message，学生不该看到那串内部前缀。
+      const raw = error instanceof Error ? error.message : String(error);
+      setMessage(raw.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/u, ""));
     } finally {
       setBusy(false);
     }
@@ -131,7 +134,14 @@ export function LingdongWorksDialog({
                 className="flex w-full items-center gap-3 px-3 py-2 text-left text-ui-sm hover:bg-surface-hover"
                 onClick={() => setSelected(allSelected ? new Set() : new Set(files.map((file) => file.path)))}
               >
-                <CheckSquare className={cn("size-4", allSelected ? "text-brand" : "text-foreground-subtle")} />
+                {/* 以前未选中也画一个勾、只是变暗，学生根本分不清「全选了没」。 */}
+                {allSelected ? (
+                  <CheckSquare className="size-4 text-brand" />
+                ) : someSelected ? (
+                  <MinusSquare className="size-4 text-foreground-subtle" />
+                ) : (
+                  <Square className="size-4 text-foreground-subtle" />
+                )}
                 <span className="font-medium">{allSelected ? "取消全选" : "全选可提交文件"}</span>
                 <span className="ml-auto text-foreground-subtle">{files.length} 个</span>
               </button>
@@ -142,7 +152,12 @@ export function LingdongWorksDialog({
                   className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-surface-hover"
                   onClick={() => toggle(file.path)}
                 >
-                  <CheckSquare className={cn("size-4", selected.has(file.path) ? "text-brand" : "text-foreground-subtle")} />
+                  {/* 未勾选必须是空框，不能是「暗勾」。 */}
+                  {selected.has(file.path) ? (
+                    <CheckSquare className="size-4 text-brand" />
+                  ) : (
+                    <Square className="size-4 text-foreground-subtle" />
+                  )}
                   <span className="min-w-0 flex-1 truncate text-ui-sm">{file.relativePath}</span>
                   <span className="shrink-0 text-ui-xs text-foreground-subtle">{formatBytes(file.size)}</span>
                 </button>

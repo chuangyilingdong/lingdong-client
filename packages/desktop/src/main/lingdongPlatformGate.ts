@@ -362,6 +362,16 @@ const WORK_ASSET_NAME_MAX_SEGMENT_CHARS = 64;
 const WORK_ASSET_NAME_MAX_CHARS = 120;
 const WORK_ASSET_SEGMENT_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u;
 
+/**
+ * 入口文件名的兜底：学生起名很随意（`My Pokedex.html` 这种带空格的极常见），
+ * 而平台白名单不接受空格。入口是主产物，它**自己的文件名不参与相对引用解析**，
+ * 所以这里把非法字符换成 `-` 后照常提交，而不是把学生拦在门外。
+ */
+function sanitizeWorkEntryName(name: string): string | null {
+  const replaced = name.replace(/[^\p{L}\p{N}._-]+/gu, "-").replace(/^[-._]+/u, "");
+  return normalizeWorkAssetName(replaced);
+}
+
 /** 规整成一个通过平台白名单的相对路径名；不合法返回 null。 */
 function normalizeWorkAssetName(raw: string): string | null {
   const unified = raw.trim().replaceAll("\\", "/");
@@ -466,10 +476,10 @@ async function prepareSubmitFiles(
   );
   if (!entryCandidate) throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
   const entryDir = dirname(entryCandidate.absolute);
-  const entryName = normalizeWorkAssetName(basename(entryCandidate.absolute));
+  const entryName = sanitizeWorkEntryName(basename(entryCandidate.absolute));
   if (!entryName) {
     throw new Error(
-      `作品入口文件名不符合平台规则：${basename(entryCandidate.absolute)}（段首须为中英文或数字，段内可含 . _ -）`,
+      `作品入口文件名无法提交：${basename(entryCandidate.absolute)}（请改成中英文或数字开头、不含空格的名字）`,
     );
   }
 
