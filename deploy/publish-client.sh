@@ -14,6 +14,8 @@
 # 支持：
 #   lingdong-client-<版本>-win-x64.exe
 #   lingdong-client-<版本>-mac-arm64.dmg
+# 也接受构建产物名（带 -unsigned 后缀），脚本会在上传前归一化成上面的规范名，
+# 因此平台上传口的严格正则不需要放宽。
 #
 # 为什么单平台发布要拦一道：平台清单目前只有一个顶层 manifest.version。若
 # Win/Mac 条目版本不一致，旧客户端会拿顶层新版本去下载本平台旧包，直接更新失败。
@@ -38,17 +40,27 @@ file_sha256() {
     shasum -a 256 "$1" | cut -d' ' -f1
   fi
 }
-artifact_version() {
+# 安装包文件名 → 目标平台。构建产物可能带 `-unsigned` 后缀（未签名包），这里一并接受，
+# 发布时再由 canonical_artifact_name 归一化成平台上传口只认的规范名。
+artifact_target() {
   case "$1" in
-    lingdong-client-*-win-x64.exe) sed -E 's/^lingdong-client-(.*)-win-x64(-unsigned)?\.exe$/\1/' <<<"$1" ;;
-    lingdong-client-*-mac-arm64.dmg) sed -E 's/^lingdong-client-(.*)-mac-arm64\.dmg$/\1/' <<<"$1" ;;
+    lingdong-client-*-win-x64.exe | lingdong-client-*-win-x64-unsigned.exe) echo win-x64 ;;
+    lingdong-client-*-mac-arm64.dmg | lingdong-client-*-mac-arm64-unsigned.dmg) echo mac-arm64 ;;
     *) return 1 ;;
   esac
 }
-artifact_target() {
+artifact_version() {
   case "$1" in
-    lingdong-client-*-win-x64.exe) echo win-x64 ;;
-    lingdong-client-*-mac-arm64.dmg) echo mac-arm64 ;;
+    lingdong-client-*-win-x64.exe | lingdong-client-*-win-x64-unsigned.exe) sed -E 's/^lingdong-client-(.*)-win-x64(-unsigned)?\.exe$/\1/' <<<"$1" ;;
+    lingdong-client-*-mac-arm64.dmg | lingdong-client-*-mac-arm64-unsigned.dmg) sed -E 's/^lingdong-client-(.*)-mac-arm64(-unsigned)?\.dmg$/\1/' <<<"$1" ;;
+    *) return 1 ;;
+  esac
+}
+# 规范名：写进 manifest、上传到平台的文件名（去掉 -unsigned 等构建后缀）。
+canonical_artifact_name() {
+  case "$1" in
+    win-x64) echo "lingdong-client-${2}-win-x64.exe" ;;
+    mac-arm64) echo "lingdong-client-${2}-mac-arm64.dmg" ;;
     *) return 1 ;;
   esac
 }
@@ -83,6 +95,11 @@ for artifact in "${ARTIFACTS[@]}"; do
     [0-9]*.[0-9]*.[0-9]*) ;;
     *) echo "!! 从文件名解析出的版本号不合法：${version}（文件名 ${name}）"; exit 2 ;;
   esac
+  canonical="$(canonical_artifact_name "$target" "$version")"
+  if [ "$name" != "$canonical" ]; then
+    echo "[规范名] ${name} → ${canonical}（上传/写 manifest 用规范名）"
+    name="$canonical"
+  fi
   NAMES+=("$name"); TARGETS+=("$target"); VERSIONS+=("$version")
   SIZES+=("$(file_size "$artifact")"); SHAS+=("$(file_sha256 "$artifact")")
 done
