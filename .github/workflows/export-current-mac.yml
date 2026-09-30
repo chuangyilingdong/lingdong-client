@@ -15,7 +15,7 @@ jobs:
     timeout-minutes: 240
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      SOURCE_SHA: 5bfc484d6325802a14b573c3d90e674ca988f36e
+      SOURCE_SHA: aa8c3a95d0d09345df5b8afef3885281e35e3d5e
       SOURCE_ARTIFACT: lingdong-client-0.2.0-zcode.3-mac-arm64
       TARGET_VERSION: 0.2.0-zcode.3
       TARGET_BRANCH: ci/zcode-current-mac
