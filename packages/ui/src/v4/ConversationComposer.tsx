@@ -63,6 +63,7 @@ import {
   ChatErrorBanner,
   resolveChatErrorBannerDisplayMessage,
   shouldSuppressChatErrorBanner,
+  isModelConfigMissingError,
 } from "@/ChatErrorBanner.js";
 import {
   Attachment,
@@ -1628,7 +1629,14 @@ function ConversationComposerImpl({
     : sendTooltipTitle;
   const resolvedSendTooltipShortcut = modifierTooltip?.shortcut ?? sendShortcut;
   const stopTooltipTitle = intl.formatMessage({ id: "chat.stop" });
-  const visibleError = error && !shouldSuppressChatErrorBanner(error) ? error : null;
+  // 备课模式没有 gateway，模型注册表必然是空的：这是预期形态，不是老师要修的错，
+  // 所以「当前没有可用模型 / 开通套餐 / 配置自定义模型」这条在备课时整条不显示。
+  const prepSuppressedModelError =
+    prepMode && error ? isModelConfigMissingError(error) : false;
+  const visibleError =
+    error && !prepSuppressedModelError && !shouldSuppressChatErrorBanner(error)
+      ? error
+      : null;
 
   useEffect(() => {
     if (!visibleError || !conversationTelemetry || !telemetryVisible) return;

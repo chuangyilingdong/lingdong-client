@@ -42,6 +42,14 @@ try {
     .getByText("备课模式 · 不生成", { exact: false })
     .waitFor({ timeout: 20_000 });
 
+  // 2) 备课模式没有 gateway，模型必然不可用——但绝不能让老师看到
+  //    「当前没有可用模型 / 开通套餐 / 配置自定义模型」，那是学生路径的文案。
+  assert.equal(
+    await main.getByText("当前没有可用模型", { exact: false }).count(),
+    0,
+    "备课模式不得显示「无可用模型 / 开通套餐」提示",
+  );
+
   // 2) 发送按钮不存在：备课模式整个不渲染它。
   assert.equal(
     await main.getByRole("button", { name: "发送", exact: true }).count(),

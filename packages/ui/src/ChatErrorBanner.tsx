@@ -60,7 +60,7 @@ const MODEL_CONFIG_MISSING_CODES = new Set([
   "ModelConfigMissing",
 ]);
 
-function isModelConfigMissingError(error: Pick<ZCodeUiError, "code" | "message">): boolean {
+export function isModelConfigMissingError(error: Pick<ZCodeUiError, "code" | "message">): boolean {
   // 桌面端发送前 registry 为空时，agent 会退回 CLI config 并抛 Model config is missing。
   // 真实原因是“当前没有可用模型”，不能把 CLI 配置路径直接暴露给桌面用户。
   // 这里只按结构化 code 识别，避免 UNKNOWN/SEND_FAILED 等包装错误的可读 message

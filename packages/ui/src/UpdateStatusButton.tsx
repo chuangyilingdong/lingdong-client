@@ -28,6 +28,8 @@ export function UpdateStatusButton({
 }) {
   const { intl, locale } = useZCodeIntl();
   const [dialogOpen, setDialogOpen] = useState(false);
+  // 每个版本只自动弹一次，避免用户关掉后又被状态刷新反复弹出来。
+  const autoOpenedUpdateVersionRef = useRef<string | null>(null);
   const releaseNotesCacheRef = useRef(
     new Map<
       string,
@@ -99,6 +101,15 @@ export function UpdateStatusButton({
 
     setDialogOpen(true);
   }, [platform]);
+
+  // 启动即提示：只要检查到新版本（或已在下载），就自动把更新弹窗打开一次，
+  // 不要求用户先注意到右上角那个绿色按钮才发现要更新。
+  useEffect(() => {
+    if (!displayVersion) return;
+    if (autoOpenedUpdateVersionRef.current === displayVersion) return;
+    autoOpenedUpdateVersionRef.current = displayVersion;
+    handleUpdateEntryClick();
+  }, [displayVersion, handleUpdateEntryClick]);
 
   if (!displayVersion) return null;
 

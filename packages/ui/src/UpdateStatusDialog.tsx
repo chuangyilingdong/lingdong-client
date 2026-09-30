@@ -1,4 +1,5 @@
 import { CalendarDays } from "lucide-react";
+import lingdongAppIconUrl from "@/assets/lingdong-app-icon.png";
 import { cn } from "@/components/lib/utils.js";
 import { Button } from "@/components/ui/button.js";
 import {
@@ -13,7 +14,9 @@ import { Progress } from "@/components/ui/progress.js";
 import type { IntlInstance } from "@/i18n/IntlProvider.js";
 import type { UpdateStatusDialogPhase } from "@/updateStatusModel.js";
 
-const macosDockIconUrl = new URL("../../../public/icon_512@2x.png", import.meta.url).href;
+// ⚠️ 别再用 ../../../public/icon_512@2x.png：那是 ZCode 的黑底 Z 字标。
+// 更新弹窗是学生/老师都会看到的门面，必须用灵动ai自己的方形图标。
+const updateDialogIconUrl = lingdongAppIconUrl;
 
 type LocalizedUpdateReleaseNotes = {
   markdown: string;
@@ -105,7 +108,7 @@ export function UpdateStatusDialog({
       <DialogHeader className="gap-0">
         <div className="flex min-w-0 items-center gap-3 [app-region:no-drag]">
           <img
-            src={macosDockIconUrl}
+            src={updateDialogIconUrl}
             alt=""
             aria-hidden="true"
             className="pointer-events-none -ml-[5px] size-12 shrink-0 select-none shadow-none drop-shadow-none"
