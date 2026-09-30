@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import { usePlatform } from "@/hooks/usePlatform.js";
+import { useComposerTextInsertApplied } from "@/v4/useComposerTextInsertApplied.js";
 
 type Preset = Readonly<{ title?: unknown; text?: unknown }>;
 function asPresets(value: unknown): Preset[] {
@@ -43,10 +44,16 @@ export function LingdongPresetsDialog({
     if (open) void refresh();
   }, [open, refresh]);
 
-  const insert = (preset: Preset) => {
+  // 插入是异步落进编辑器状态的：必须等输入框确认应用，否则会出现
+  // 「提示已插入、实际没插入」——这条以前就踩过。
+  const waitForComposerTextInsertApplied = useComposerTextInsertApplied(
+    workspacePath ?? "",
+    workspaceIdentity,
+  );
+  const insert = async (preset: Preset) => {
     const text = typeof preset.text === "string" ? preset.text.trim() : "";
     if (!text || !workspacePath) return;
-    useZCodeSessionStore
+    const requestId = useZCodeSessionStore
       .getState()
       .requestComposerTextInsert(
         workspacePath,
@@ -56,7 +63,18 @@ export function LingdongPresetsDialog({
         "prepend-if-missing",
       );
     setSelected(preset);
-    setMessage("已插入当前任务输入框。");
+    setMessage("正在插入…");
+    const controller = new AbortController();
+    const timeout = setTimeout(() => {
+      controller.abort();
+    }, 3000);
+    const applied = await waitForComposerTextInsertApplied(requestId, controller.signal);
+    clearTimeout(timeout);
+    setMessage(
+      applied
+        ? "已插入当前任务输入框。"
+        : "没能插入到输入框：请先切到该任务页面，再点一次。",
+    );
   };
 
   return (
@@ -88,7 +106,7 @@ export function LingdongPresetsDialog({
               <button
                 key={`${title}-${index}`}
                 type="button"
-                onClick={() => insert(preset)}
+                onClick={() => void insert(preset)}
                 className="flex w-full items-start gap-3 rounded-lg border border-border p-3 text-left hover:bg-surface-hover"
               >
                 <Sparkles className="mt-0.5 size-4 shrink-0 text-brand" />

@@ -89,6 +89,19 @@ try {
   const presetsDialog = page.getByRole("dialog");
   await presetsDialog.getByText("读取课堂文件", { exact: true }).waitFor({ timeout: 15_000 });
   assert.equal(await presetsDialog.getByText("ZCode", { exact: false }).count(), 0);
+  // 回归：这是「已有会话」里点预设（不是新建草稿）。以前 SessionPane 只在新草稿时
+  // 转发插入请求，于是对话框报「已插入」但输入框其实什么都没拿到。
+  await presetsDialog.getByRole("button", { name: /读取课堂文件/ }).click();
+  await presetsDialog
+    .getByText("已插入当前任务输入框。", { exact: false })
+    .waitFor({ timeout: 10_000 });
+  const composerAfterPreset = await page
+    .locator('[data-testid="v4-composer-input"]')
+    .innerText();
+  assert.ok(
+    composerAfterPreset.includes("读取 notes.txt 并总结内容"),
+    `预设必须真的插入输入框，实际内容：${JSON.stringify(composerAfterPreset)}`,
+  );
   await page.keyboard.press("Escape");
   await presetsDialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
 

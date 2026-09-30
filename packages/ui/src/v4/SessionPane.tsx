@@ -4397,7 +4397,9 @@ export function SessionPane({
       centered={isDraft}
       blockingRequestId={blockingInteractionId}
       listenAddToChatEvents={focused}
-      externalTextInsertRequest={focused && sessionId === null ? composerTextInsertRequest : null}
+      // 预设提示词插入对「已有会话」同样有效：以前这里带 sessionId === null，
+      // 只有新建草稿才转发，已有任务里点预设就变成「提示已插入、实际没插入」。
+      externalTextInsertRequest={focused ? composerTextInsertRequest : null}
       onExternalTextInsertApplied={handleExternalTextInsertApplied}
       autoFocusEnabled={focused}
       disabled={
