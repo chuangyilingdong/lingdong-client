@@ -13,6 +13,10 @@ import { cn } from "@/components/lib/utils.js";
 import type { ClassroomWorkspaceScan } from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 
+// 平台单次提交的整单上限（base64 解码后合计，封面另算）：现在是 100MB。
+// 平台侧可调（RUNTIME_UPLOAD_MAX_BYTES），这里必须跟它保持一致。
+const MAX_SUBMIT_TOTAL_BYTES = 100 * 1024 * 1024;
+
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -60,6 +64,17 @@ export function LingdongWorksDialog({
     () => files.filter((file) => selected.has(file.path)),
     [files, selected],
   );
+
+  const selectedBytes = useMemo(
+    () => selectedFiles.reduce((sum, file) => sum + file.size, 0),
+    [selectedFiles],
+  );
+  const oversizedFiles = useMemo(
+    () => selectedFiles.filter((file) => file.size > MAX_SUBMIT_TOTAL_BYTES),
+    [selectedFiles],
+  );
+  const overSubmitBudget =
+    oversizedFiles.length > 0 || selectedBytes > MAX_SUBMIT_TOTAL_BYTES;
 
   const toggle = (path: string) => {
     setSelected((current) => {
@@ -159,12 +174,32 @@ export function LingdongWorksDialog({
                     <Square className="size-4 text-foreground-subtle" />
                   )}
                   <span className="min-w-0 flex-1 truncate text-ui-sm">{file.relativePath}</span>
-                  <span className="shrink-0 text-ui-xs text-foreground-subtle">{formatBytes(file.size)}</span>
+                  <span
+                    className={cn(
+                      "shrink-0 text-ui-xs",
+                      file.size > MAX_SUBMIT_TOTAL_BYTES
+                        ? "text-warning"
+                        : "text-foreground-subtle",
+                    )}
+                  >
+                    {formatBytes(file.size)}
+                    {file.size > MAX_SUBMIT_TOTAL_BYTES ? " · 超上限" : ""}
+                  </span>
                 </button>
               ))}
             </div>
           )}
         </div>
+        {/* 以前超限素材是被静默跳过的：学生以为交了，平台那边图/视频却是空的。 */}
+        {overSubmitBudget ? (
+          <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-ui-sm text-warning">
+            平台单次提交上限 {formatBytes(MAX_SUBMIT_TOTAL_BYTES)}，当前已选
+            {formatBytes(selectedBytes)}。
+            {oversizedFiles.length > 0
+              ? ` ${oversizedFiles.map((file) => file.relativePath).join("、")} 超过上限，不会随作品提交，请压缩或换成更小的文件。`
+              : " 超出部分不会随作品提交，请减少勾选。"}
+          </div>
+        ) : null}
         {message ? <div className="rounded-lg bg-accent px-3 py-2 text-ui-sm text-foreground">{message}</div> : null}
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>

@@ -346,8 +346,11 @@ const WORK_ALLOWED_EXTENSIONS = new Set([
   ".zip",
 ]);
 const MAX_WORK_FILES = 60;
-const MAX_WORK_TOTAL_BYTES = 16 * 1024 * 1024;
-const MAX_WORK_REQUEST_BYTES = 24 * 1024 * 1024;
+// 整单上限跟平台对齐：平台侧是 RUNTIME_UPLOAD_MAX_BYTES（生产 100MB）。
+// 16MB 是旧值——那时一节带视频的作品根本交不上去（视频被静默跳过）。
+const MAX_WORK_TOTAL_BYTES = 100 * 1024 * 1024;
+// base64 会把 100MB 撑到约 133MB；留出余量，但仍远低于平台 201MB 的 body 上限。
+const MAX_WORK_REQUEST_BYTES = 140 * 1024 * 1024;
 const COVER_MAX_BYTES = Math.floor(1.5 * 1024 * 1024);
 const COVER_TIMEOUT_MS = 12_000;
 const SUBMITTABLE_ENTRY_EXTENSIONS = new Set([".htm", ".html", ".docx", ".xlsx", ".pptx"]);
