@@ -32,7 +32,9 @@ for (const item of CLASSROOMS) {
     join(item.workspace, "style.css"),
     `body{background:url("assets/bg.png") no-repeat}\n`,
   );
-  // 入口 HTML：三条本地引用（css / img / video）+ 三条必须被忽略的外部引用。
+  // 入口 HTML：三条本地引用（css / img / video）必须在清单里；三条外部/无效引用必须在清单外。
+  // ⚠️ 过滤样本放进 HTML 注释：客户端扫的是原始文本（照样能覆盖过滤规则），
+  //    但浏览器不会去加载它们——否则封面截图窗口会卡在外网请求上直到超时。
   const html = [
     "<!doctype html><html><head>",
     "<link rel='stylesheet' href='style.css'>",
@@ -40,9 +42,11 @@ for (const item of CLASSROOMS) {
     `<h1>Mock ${item.id}</h1>`,
     "<img src='assets/hero.png' alt='hero'>",
     "<video src='assets/clip.mp4'></video>",
+    "<!--",
     "<img src='https://example.com/remote.png'>",
     "<img src='data:image/png;base64,AAAA'>",
     "<a href='#top'>top</a>",
+    "-->",
     "</body></html>",
   ].join("");
   await writeFile(join(item.workspace, "index.html"), html);
