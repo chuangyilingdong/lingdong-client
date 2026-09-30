@@ -73,10 +73,6 @@ try {
     .getByText("MOCK_GATEWAY_RESPONSE", { exact: false })
     .last()
     .waitFor({ timeout: 30_000 });
-  // 截断提示来自 control.historyTruncation（平台响应头 → v4 投影 → UI），
-  // 学生侧表现为一条一次性提示；至少验证它确实出现且带有平台下发的数字。
-  await page.getByText("已不在本轮上下文里", { exact: false }).waitFor({ timeout: 15_000 });
-  assert.ok((await page.getByText("12", { exact: false }).count()) > 0);
   await fetch(`${mock}/__test/mode`, { method: "POST", body: JSON.stringify({ mode: "tools" }) });
   await page
     .locator('[data-testid="v4-composer-input"]')

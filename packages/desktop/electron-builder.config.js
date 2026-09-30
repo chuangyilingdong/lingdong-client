@@ -684,8 +684,9 @@ export default {
       ? [
           {
             // Windows 托盘图标：Tray 在打包态只能稳定读取 resources 下的独立资源。
-            // 这里不复用窗口 PNG，避免通知区域在高 DPI 下退化成模糊缩放图。
-            from: "build/icon.ico",
+            // ⚠️ 必须用灵动ai方形图标：build/icon.ico 是 ZCode 的黑底 Z 字标，
+            //    用它做托盘图标会让通知区域一直显示 ZCode 的图标。
+            from: "build/icon_installer.ico",
             to: "tray_icon.ico",
           },
         ]

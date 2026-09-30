@@ -118,6 +118,7 @@ import {
   isLingdongGateWindow,
   isLingdongPlatformGatePending,
   runLingdongPlatformGate,
+  setLingdongPrepLessonId,
 } from "./lingdongPlatformGate.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
 import { flushMainE2ECoverage } from "./e2eCoverage.js";
@@ -859,6 +860,8 @@ function extractOpenWorkspacePathFromDeepLinkUrl(url: string): string | null {
 
 const startupOpenWorkspaceArgPath = extractOpenWorkspacePathFromArgs(process.argv);
 const startupProtocolUrl = extractDeepLinkUrlFromArgs(process.argv);
+// 老师在机构后台点「VibeCoding 备课」时，客户端是被这个深链冷启动的。
+captureLingdongPrepDeepLink(startupProtocolUrl);
 const startupDeepLinkWorkspacePath = startupOpenWorkspaceArgPath
   ? null
   : extractOpenWorkspacePathFromDeepLinkUrl(startupProtocolUrl ?? "");
@@ -1908,9 +1911,28 @@ function focusPrimaryApplicationWindow(): void {
   win.focus();
 }
 
+/**
+ * 老师端「VibeCoding 备课」的入口链接：`lingdong://open?prep=1&lesson=<id>`。
+ * 它不走任何已有深链动作（workspace/OAuth/支付/分享），只记下课时代号，
+ * 让接下来的登录/取上下文走备课分支；其余 URL 原样返回，学生路径一个字节不变。
+ */
+function captureLingdongPrepDeepLink(url: string | null): void {
+  if (!url) return;
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return;
+  }
+  if (parsed.protocol !== "lingdong:" || parsed.hostname !== "open") return;
+  if (parsed.searchParams.get("prep") !== "1") return;
+  setLingdongPrepLessonId(parsed.searchParams.get("lesson"));
+}
+
 registerDeepLinkProtocol(logger, { iconPath: linuxDesktopIntegrationIconPath });
 app.on("open-url", (event, url) => {
   event.preventDefault();
+  captureLingdongPrepDeepLink(url);
   const workspacePath = extractOpenWorkspacePathFromDeepLinkUrl(url);
   if (workspacePath && forceUpdateMainWindowCreationBlocked) {
     logger.warn("[force-update] 已忽略强制升级期间的 open-url workspace 请求");
@@ -1948,7 +1970,10 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
       argv,
       focusForceUpdateGateWindow,
       forceUpdateBlocked: forceUpdateMainWindowCreationBlocked,
-      handleDeepLink: (url, options) => handleDeepLink(url, logger, options),
+      handleDeepLink: (url, options) => {
+        captureLingdongPrepDeepLink(url);
+        return handleDeepLink(url, logger, options);
+      },
       handleOpenWorkspacePath: (path, options) =>
         handleOpenWorkspacePath(path, logger, {
           allowWithoutReadyWindow: true,
@@ -2364,6 +2389,7 @@ app.whenReady().then(async () => {
   });
 
   const protocolUrl = extractDeepLinkUrlFromArgs(process.argv);
+  captureLingdongPrepDeepLink(protocolUrl);
   if (startupDeepLinkConsumptionGate.shouldHandleReadyProtocolUrl(protocolUrl)) {
     handleDeepLink(protocolUrl, logger, {
       confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),

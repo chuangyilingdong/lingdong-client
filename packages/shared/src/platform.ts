@@ -556,6 +556,13 @@ export interface ClassroomPlatformSnapshot {
   readonly workspaceIdentity?: string;
   readonly classroomId?: string | null;
   readonly quota?: ClassroomQuota;
+  /**
+   * 备课模式：老师端「VibeCoding 备课」拉起时的只读创作环境。
+   * 平台在备课上下文里**不下发 gateway**，所以客户端不可能发出生成请求。
+   * 判据必须是 `prep === true`——没开课的学生也是 classroom=null，不能用 !classroom 推断。
+   */
+  readonly prep?: boolean;
+  readonly lesson?: { readonly id?: string; readonly title?: string } | null;
 }
 
 /** 课堂工作区候选文件；path 用于提交，relativePath 用于展示。 */

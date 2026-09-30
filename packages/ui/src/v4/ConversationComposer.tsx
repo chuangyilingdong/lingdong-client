@@ -57,6 +57,7 @@ import {
   SquareIcon,
   XIcon,
 } from "lucide-react";
+import { useClassroomPlatformSnapshot } from "@/hooks/useClassroomPlatformSnapshot.js";
 import { ControlHintTooltip } from "@/ControlHintTooltip.js";
 import {
   ChatErrorBanner,
@@ -537,6 +538,12 @@ function ConversationComposerImpl({
   appSlashCommands,
   onDropTargetControllerChange,
 }: ConversationComposerProps) {
+  // 老师端备课模式：平台在备课上下文里不下发 gateway，客户端也把发送入口整个收起来。
+  // 判据必须是 prep === true——没开课的学生也是 classroom=null，不能用 !classroom 推断。
+  const { snapshot: classroomSnapshot } = useClassroomPlatformSnapshot();
+  const prepMode = classroomSnapshot?.prep === true;
+  const prepModeRef = useRef(prepMode);
+  prepModeRef.current = prepMode;
   const { intl, locale } = useZCodeIntl();
   const services = useOptionalServices();
   const conversationTelemetry = useScopedConversationTelemetrySupervisor({
@@ -1146,6 +1153,8 @@ function ConversationComposerImpl({
       existingTelemetrySeed?: ConversationPromptTelemetrySeed,
       requestedDelivery?: "startNow" | "queue" | "guide",
     ) => {
+      // 备课模式不发任何东西（包括回车）；平台侧也没有密钥，这里只是不让老师白点。
+      if (prepModeRef.current) return;
       const trimmed = textRef.current.trim();
       const submittedQueueItemIds =
         snapshotRef.current?.queue.items.map((item) => item.queueItemId) ?? [];
@@ -2075,7 +2084,7 @@ function ConversationComposerImpl({
               <span className="sr-only">{stopTooltipTitle}</span>
             </Button>
           </ControlHintTooltip>
-        ) : (
+        ) : prepMode ? null : (
           <ControlHintTooltip
             title={resolvedSendTooltipTitle}
             shortcut={resolvedSendTooltipShortcut}
@@ -2290,6 +2299,12 @@ function ConversationComposerImpl({
           onWhiteboardMentionSelected={attachmentsApi.handleWhiteboardMentionSelected}
           onPaste={attachmentsApi.handlePaste}
         />
+        {prepMode ? (
+          <p className="flex items-start gap-2 p-3 text-ui-base text-foreground-subtle">
+            <InfoIcon className="mt-0.5 size-4 shrink-0" />
+            <span>备课模式 · 不生成：可以走一遍学生流程，但不会生成内容。</span>
+          </p>
+        ) : null}
         {attachmentsApi.attachmentError ? (
           <p className="flex items-start gap-2 p-3 text-ui-base text-warning">
             <InfoIcon className="mt-0.5 size-4 shrink-0" />

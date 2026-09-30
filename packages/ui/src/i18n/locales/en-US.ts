@@ -4738,8 +4738,6 @@ const enUS: Record<string, string> = {
   "chat.goalVerification.openSummary": "Expand summary",
   "chat.goalBanner.label": "Goal",
   "chat.apiRetryStatus": "Reconnecting... {attempt}/{maxRetries}",
-  "chat.historyTruncated":
-    "{dropped} earlier message(s) are no longer in this turn's context. Remind me if I forget something.",
   "chat.target.title": "Goal",
   "chat.target.status.active": "Active",
   "chat.target.status.paused": "Paused",

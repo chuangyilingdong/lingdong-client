@@ -15,7 +15,7 @@ let rebuildDesktopTrayContextMenu: (() => void) | null = null;
 function resolveDesktopTrayIconPath() {
   return app.isPackaged
     ? join(process.resourcesPath, "tray_icon.ico")
-    : join(import.meta.dirname, "../../build/icon.ico");
+    : join(import.meta.dirname, "../../build/icon_installer.ico");
 }
 
 export function createWindowsDesktopTray(options: {

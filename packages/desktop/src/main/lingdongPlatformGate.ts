@@ -36,6 +36,14 @@ type LingdongContext = {
   } | null;
   readonly workspacePath?: string;
   readonly message?: string;
+  readonly prep?: unknown;
+  readonly reason?: unknown;
+  readonly lesson?: {
+    readonly id?: unknown;
+    readonly title?: unknown;
+    readonly seriesTitle?: unknown;
+    readonly deliveryMode?: unknown;
+  } | null;
 };
 type LingdongSession = { readonly token: string; readonly user?: LingdongUser };
 export type LingdongPlatformState = Readonly<{
@@ -53,6 +61,22 @@ let providerBinding: ReturnType<typeof createLingdongProviderBinding> | null = n
 let gateWindow: BrowserWindow | null = null;
 let handlersRegistered = false;
 let platformGatePending = false;
+// 老师端「VibeCoding 备课」深链带来的课时 id：登录/重新取上下文时用它走备课分支。
+let pendingPrepLessonId: string | null = null;
+
+/** 深链 `lingdong://open?prep=1&lesson=<id>` 的落点；null 表示回到学生路径。 */
+export function setLingdongPrepLessonId(lessonId: string | null): void {
+  pendingPrepLessonId =
+    typeof lessonId === "string" && lessonId.trim() ? lessonId.trim() : null;
+}
+
+export function getLingdongPrepLessonId(): string | null {
+  return pendingPrepLessonId;
+}
+
+function isPrepContext(context: LingdongContext): boolean {
+  return context.prep === true;
+}
 
 function record<T>(value: unknown): value is Record<string, T> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -105,6 +129,17 @@ function resolveWorkspace(context: LingdongContext, user: LingdongUser | undefin
   return join(app.getPath("documents"), "灵动ai创作", `${display}-${lesson}`);
 }
 
+/** 备课工作区与任何一个学生课堂分开，避免老师的试做落到学生目录里。 */
+function resolvePrepWorkspace(context: LingdongContext, user: LingdongUser | undefined): string {
+  const display = String(user?.displayName || user?.login || "老师").trim() || "老师";
+  const lesson =
+    String(context.lesson?.title ?? "备课")
+      .trim()
+      .replace(/[<>:"/\\|?*]+/gu, "-") ||
+    "备课";
+  return join(app.getPath("documents"), "灵动ai创作", `${display}-备课-${lesson}`);
+}
+
 async function buildProviderConfig(context: LingdongContext, targetPath?: string): Promise<string> {
   const path = targetPath || join(getAppConfigDir(), PERSONAL_PROVIDER_CONFIG_FILE_NAME);
   providerBinding ??= createLingdongProviderBinding(path);
@@ -123,7 +158,7 @@ function quotaFilePathForIdentity(identity: string): string {
 async function handleLogin(
   payload: unknown,
 ): Promise<
-  | { ok: true; user?: LingdongUser; classroom: LingdongClassroom; workspacePath: string }
+  | { ok: true; user?: LingdongUser; classroom: LingdongClassroom | null; workspacePath: string }
   | { ok: false; message: string }
 > {
   try {
@@ -143,19 +178,31 @@ async function handleLogin(
       token,
       user: record<unknown>(rawSession.user) ? (rawSession.user as LingdongUser) : undefined,
     };
-    // 产品规则：一个学生全局最多一个进行中的课堂，不存在"选课堂"。
-    // 直接取 client-context 给出的那一节（platform 也支持 ?sessionId=，客户端不需要用）。
-    const context = unwrap<LingdongContext>(
-      await apiRequest("/api/student/runtime/client-context", {}, session.token),
-    );
-    if (!context.classroom) throw new Error(context.message || "当前没有正在进行的课堂。");
-    const workspacePath = resolveWorkspace(context, session.user);
+    // 老师端「VibeCoding 备课」用同一把 token 拿备课上下文：带 ?prep=1&lessonId=…
+    // 平台按角色判，不带参数也会走备课分支；这里带参数只是让日志/缓存可对齐。
+    const prepLessonId = pendingPrepLessonId;
+    const contextPath = prepLessonId
+      ? `/api/student/runtime/client-context?prep=1&lessonId=${encodeURIComponent(prepLessonId)}`
+      : "/api/student/runtime/client-context";
+    const context = unwrap<LingdongContext>(await apiRequest(contextPath, {}, session.token));
+    // 备课上下文 classroom 恒为 null —— 那是正常形态，不能按「还没开课」拦下来。
+    const prep = isPrepContext(context);
+    if (!context.classroom && !prep)
+      throw new Error(context.message || "当前没有正在进行的课堂。");
+    const workspacePath = prep
+      ? resolvePrepWorkspace(context, session.user)
+      : resolveWorkspace(context, session.user);
     await mkdir(workspacePath, { recursive: true });
-    const workspaceIdentity = `${session.user?.id || session.user?.login || login}:${context.classroom.id}`;
+    const workspaceIdentity = prep
+      ? `${session.user?.id || session.user?.login || login}:prep:${prepLessonId ?? String(context.lesson?.id ?? "")}`
+      : `${session.user?.id || session.user?.login || login}:${context.classroom?.id}`;
     const quotaFilePath = quotaFilePathForIdentity(workspaceIdentity);
-    // 登录基线以平台 used 为准：换课堂换桶，同一课堂重新登录时对齐平台账目。
-    await createLingdongQuotaLedger(quotaFilePath).sync(context.sends ?? {}, true);
-    const providerPath = await buildProviderConfig(context);
+    if (!prep) {
+      // 登录基线以平台 used 为准：换课堂换桶，同一课堂重新登录时对齐平台账目。
+      await createLingdongQuotaLedger(quotaFilePath).sync(context.sends ?? {}, true);
+    }
+    // 备课上下文没有 gateway：不写 Provider 配置、不注入任何密钥（平台兜底，客户端不造）。
+    const providerPath = prep ? "" : await buildProviderConfig(context);
     activeState = {
       session,
       context,
@@ -165,12 +212,12 @@ async function handleLogin(
       quotaFilePath,
     };
     process.env.LINGDONG_API_BASE = API_BASE;
-    process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
-    process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
+    process.env.PLATFORM_GATEWAY_KEY = prep ? "" : String(context.gateway?.key || "");
+    process.env.PLATFORM_GATEWAY_BASE_URL = prep ? "" : String(context.gateway?.baseUrl || "");
     process.env.ZCODE_LINGDONG_WORKSPACE_PATH = workspacePath;
     process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY = activeState.workspaceIdentity;
-    process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom.id;
-    process.env.ZCODE_LINGDONG_QUOTA_FILE = quotaFilePath;
+    process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom?.id ?? "";
+    process.env.ZCODE_LINGDONG_QUOTA_FILE = prep ? "" : quotaFilePath;
     // 登录成功后关闭登录窗，但 platformGatePending 会一直保持到主窗口就绪：
     // 应用进入"零窗口"瞬间时 window-all-closed 会被 pending 拦住，不会误退出。
     gateWindow?.close();
@@ -183,17 +230,9 @@ async function handleLogin(
 async function scanLingdongWorkspaceFiles(): Promise<unknown> {
   if (!activeState) return { ok: false, message: "平台登录尚未完成。", files: [] };
   const root = activeState.workspacePath;
-  const allowed = new Set([
-    ".html",
-    ".htm",
-    ".docx",
-    ".xlsx",
-    ".pptx",
-    ".md",
-    ".png",
-    ".jpg",
-    ".jpeg",
-  ]);
+  // 与作品提交白名单共用一份：以前这里只列图片和文档，
+  // 视频/音频/CSS/JS 在提交对话框里根本看不到（学生以为客户端「识别不到视频」）。
+  const allowed = WORK_ALLOWED_EXTENSIONS;
   const files: Array<{ path: string; relativePath: string; size: number; updatedAt: number }> = [];
   const queue: Array<{ path: string; depth: number }> = [{ path: root, depth: 0 }];
   while (queue.length && files.length < 500) {
@@ -663,7 +702,11 @@ async function callPlatform(path: string, init: RequestInit = {}): Promise<unkno
 
 export async function getLingdongPlatformSnapshot(): Promise<unknown> {
   if (!activeState) return null;
-  const quota = await createLingdongQuotaLedger(activeState.quotaFilePath).read();
+  const prep = isPrepContext(activeState.context);
+  // 备课模式没有课堂额度桶，也不该显示「本节课发送次数」。
+  const quota = prep
+    ? undefined
+    : await createLingdongQuotaLedger(activeState.quotaFilePath).read();
   return {
     user: activeState.session.user ?? null,
     classroom: activeState.context.classroom,
@@ -673,6 +716,13 @@ export async function getLingdongPlatformSnapshot(): Promise<unknown> {
     workspacePath: activeState.workspacePath,
     workspaceIdentity: activeState.workspaceIdentity,
     classroomId: activeState.context.classroom?.id ?? null,
+    prep,
+    lesson: prep
+      ? {
+          id: String(activeState.context.lesson?.id ?? pendingPrepLessonId ?? ""),
+          title: String(activeState.context.lesson?.title ?? ""),
+        }
+      : null,
     quota,
   };
 }
