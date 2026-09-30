@@ -472,6 +472,29 @@ function assertPackagedNodePtyPrebuild(context) {
     throw new Error(`node-pty 预编译产物缺失: ${targetBinaryPath}`);
 }
 
+/**
+ * 给未签名构建补一次 ad-hoc 签名。
+ *
+ * 为什么必须做：Apple Silicon 上完全未签名的 arm64 应用会被系统判成
+ * 「已损坏，无法打开，应将移到废纸篓」——mac 用户装了包也进不去，根因就在这里。
+ * 我们暂时拿不到 Developer ID 做不了公证，但 ad-hoc 签名（codesign -s -）足以让系统
+ * 认可包结构完整；首次打开会拦一次 Gatekeeper，用户「右键 → 打开」即可（或 xattr -cr）。
+ *
+ * 调用点必须排在所有会改包内容的 afterPack 步骤（asar 注入、sourcemap 清理）之后，
+ * 否则后写入会破坏签名。
+ */
+function adHocSignUnsignedMacApp(context) {
+  const productFilename =
+    context.packager?.appInfo?.productFilename ?? desktopProductIdentity.productName;
+  const appPath = resolve(context.appOutDir, `${productFilename}.app`);
+  if (!existsSync(appPath)) {
+    throw new Error(`[mac-sign] 未找到待签名的 .app：${appPath}`);
+  }
+  runCommand("codesign", ["--force", "--deep", "--sign", "-", appPath]);
+  runCommand("codesign", ["--verify", "--deep", "--strict", appPath]);
+  console.log(`[mac-sign] 未签名构建已补 ad-hoc 签名：${productFilename}.app`);
+}
+
 /** @type {import("electron-builder").Configuration} */
 export default {
   appId: desktopProductIdentity.appId,
@@ -592,6 +615,13 @@ export default {
     if (actualWindowsTarget) {
       await runTimedAsync("afterPack:writeWindowsInstallManifest", () =>
         writeWindowsInstallManifest(context),
+      );
+    }
+    // 未签名的 mac 构建必须补 ad-hoc 签名，否则 Apple Silicon 直接判「已损坏」。
+    // 放在这里是因为上面的 asar 注入 / sourcemap 清理都会改包内容。
+    if (context.electronPlatformName === "darwin" && !shouldEnableMacSigning) {
+      await runTimedAsync("afterPack:adHocSignUnsignedMacApp", () =>
+        adHocSignUnsignedMacApp(context),
       );
     }
   },
