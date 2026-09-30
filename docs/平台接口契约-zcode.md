@@ -443,11 +443,11 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 1. **`limit=0` 与"一次都不许发"**：平台口径下 `0 = 不限`，无法表达"一次都不许发"。
    客户端目前也没有这个状态（老师要停发请用"结束课堂"）。若产品确实需要"零次课堂"，需先定口径。
 2. **网关历史截断 `MAX_HISTORY=40`（约 13 轮）**：超出后早期上下文被丢弃。
-   平台已定口径：截断时在 `/chat/completions` 响应头返回 `x-platform-history-limit`
-   （本轮保留的最大消息条数，当前 40）与 `x-platform-history-dropped`（本轮被丢弃的消息条数，仅 >0 时返回）。
-   **客户端已接入**：适配层取响应头 → v4 投影 `control.historyTruncation` → Renderer 一次性提示（见
+   平台在 `/chat/completions` 响应头返回 `x-platform-history-dropped`（本轮被丢弃的消息条数，仅 >0 时返回）。
+   **客户端只消费这一个字段**：`x-platform-history-limit`（保留上限）平台可以照旧发，但客户端不用它，也不必为它做兼容。
+   客户端已接入：适配层取响应头 → v4 投影 `control.historyTruncation` → Renderer 一次性提示（见
    `docs/specs/zcode-platform-history-truncation-notice.md`）。
-   备注：请求不经浏览器 CORS，无需 `expose-headers`；只需中间层透传这两个头。
+   备注：请求不经浏览器 CORS，无需 `expose-headers`；只需中间层透传这个头。
 3. **`submit-upload` 的 `works` 待发版**：发版前客户端走 `GET /student/works` 回落，功能不受影响。
 
 ## 2026-09-30 安装包命名与历史截断标记
@@ -460,7 +460,7 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 
 ### 历史截断标记（平台已定，客户端已接入）
 
-- 头名：`x-platform-history-limit`（本轮保留的最大消息条数，当前 40）、`x-platform-history-dropped`（本轮被丢弃的消息条数，仅 >0 时返回）。
+- 头名：`x-platform-history-dropped`（本轮被丢弃的消息条数，仅 >0 时返回）。`x-platform-history-limit` 平台可保留但客户端不消费。
 - 客户端已接入：适配层状态事件携带响应头 → v4 投影 `control.historyTruncation` → Renderer 在校会话内一次性提示（不阻断发送）。
 - 更正一处平台注释：平台原写「客户端读 `files[target].version ?? manifest.version`」，当前客户端**只读顶层 `version`**，忽略 `files[target].version`；要做每平台独立版本须先改客户端。
 
@@ -485,6 +485,6 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 平台仍需完成的前置事项：
 
 - 发版 `submit-upload` 的 `works` 字段；客户端当前已有 `GET /student/works` 回落，不阻塞使用。
-- ~~决定 `MAX_HISTORY=40` 是否可配并在截断时返回标记~~ → **已定并已接入**：响应头 `x-platform-history-dropped` / `x-platform-history-limit`，客户端在会话内一次性提示。
+- ~~决定 `MAX_HISTORY=40` 是否可配并在截断时返回标记~~ → **已定并已接入**：响应头 `x-platform-history-dropped`，客户端在会话内一次性提示。
 - 明确“本节课一次都不许发”的产品语义；当前平台口径 `0 = 不限`，无法表达零发送课堂。
 - 用真实学生账号联调 `SESSION_SUPERSEDED`、`SEND_QUOTA_EXCEEDED`，并核对缓存 usage 与 `usage_records` / `compute_attempts`。

@@ -1886,6 +1886,28 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
   return win;
 }
 
+/**
+ * 把主窗口带到前台。
+ *
+ * 两个入口共用同一实现，避免行为漂移：
+ *   - second-instance（Windows/Linux 第二次拉起）：未命中已支持动作时要让用户看到窗口；
+ *   - open-url（macOS）：深链投递给运行中的实例后系统不会自动把窗口带回前台。
+ * 平台网页「进入 VibeCoding 课堂」发的 lingdong://open 就是这种「不认识但要让人看到窗口」的链接。
+ */
+function focusPrimaryApplicationWindow(): void {
+  const win = getApplicationWindowsExcludingCuaIndicator()[0];
+  if (!win) {
+    return;
+  }
+  if (win.isMinimized()) {
+    win.restore();
+  }
+  if (!win.isVisible()) {
+    win.show();
+  }
+  win.focus();
+}
+
 registerDeepLinkProtocol(logger, { iconPath: linuxDesktopIntegrationIconPath });
 app.on("open-url", (event, url) => {
   event.preventDefault();
@@ -1904,10 +1926,15 @@ app.on("open-url", (event, url) => {
     }
     return;
   }
-  handleDeepLink(url, logger, {
+  const handled = handleDeepLink(url, logger, {
     confirmationCopy: resolveExternalWorkspaceConfirmationCopy(),
     resolveApplicationWindow: () => getApplicationWindowsExcludingCuaIndicator()[0] ?? null,
   });
+  if (!handled) {
+    // lingdong://open 这类入口链接不属于任何已支持动作；macOS 的 open-url 不会自动
+    // 把窗口带回前台，这里显式补上，否则学生看到的就是「点了没反应」。
+    focusPrimaryApplicationWindow();
+  }
 });
 const gotTheLock = app.requestSingleInstanceLock(createDeepLinkSingleInstanceData(process.argv));
 if (!gotTheLock) {
@@ -1938,16 +1965,9 @@ app.on("second-instance", (_event, argv, _workingDirectory, additionalData) => {
     return;
   }
 
-  const win = getApplicationWindowsExcludingCuaIndicator()[0];
-  if (win) {
-    if (win.isMinimized()) {
-      win.restore();
-    }
-    if (!win.isVisible()) {
-      win.show();
-    }
-    win.focus();
-  }
+  // 未命中任何已支持动作的 second-instance（例如平台网页的 lingdong://open）也要把主窗口
+  // 带到前台，否则学生看到的就是「点了没反应」。
+  focusPrimaryApplicationWindow();
 });
 
 app.whenReady().then(async () => {

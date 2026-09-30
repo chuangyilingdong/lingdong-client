@@ -2480,7 +2480,6 @@ export class ProductProjection {
       current === historyTruncation ||
       (current !== null &&
         historyTruncation !== null &&
-        current.limit === historyTruncation.limit &&
         current.dropped === historyTruncation.dropped)
     ) {
       return [];
@@ -5510,11 +5509,13 @@ function nonEmptyString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
-const PLATFORM_HISTORY_LIMIT_HEADER = "x-platform-history-limit";
 const PLATFORM_HISTORY_DROPPED_HEADER = "x-platform-history-dropped";
 
 /**
  * 读取平台网关的历史截断标记。
+ *
+ * 只认 `x-platform-history-dropped`：`> 0` 即发生截断。平台另发的保留上限不消费——
+ * 学生看不懂「保留多少条」的口径，客户端也不用它推导任何策略。
  *
  * - `undefined`：这一轮没拿到响应头（无从判断），保持现值。
  * - `null`：拿到了响应头但本轮未截断，清掉旧事实，避免留下过期提示。
@@ -5526,9 +5527,7 @@ function readPlatformHistoryTruncation(
   if (!responseHeaders) return undefined;
   const dropped = readHeaderInteger(responseHeaders, PLATFORM_HISTORY_DROPPED_HEADER);
   if (dropped === undefined || dropped <= 0) return null;
-  const limit = readHeaderInteger(responseHeaders, PLATFORM_HISTORY_LIMIT_HEADER);
-  if (limit === undefined || limit <= 0) return null;
-  return { limit, dropped };
+  return { dropped };
 }
 
 function readHeaderInteger(

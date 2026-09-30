@@ -3721,7 +3721,7 @@ export function SessionPane({
       announcedHistoryTruncationRef.current = null;
       return;
     }
-    const announcedKey = `${sessionId ?? "draft"}:${historyTruncation.limit}:${historyTruncation.dropped}`;
+    const announcedKey = `${sessionId ?? "draft"}:${historyTruncation.dropped}`;
     if (announcedHistoryTruncationRef.current === announcedKey) {
       return;
     }
@@ -3729,7 +3729,7 @@ export function SessionPane({
     toast(
       intl.formatMessage(
         { id: "chat.historyTruncated" },
-        { limit: historyTruncation.limit, dropped: historyTruncation.dropped },
+        { dropped: historyTruncation.dropped },
       ),
       // 比默认 3s 长：截断提示包含数字，学生需要时间读完。
       { durationMs: 12_000 },

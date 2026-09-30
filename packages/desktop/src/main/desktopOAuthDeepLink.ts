@@ -395,15 +395,23 @@ export function handleDeepLink(
   return false;
 }
 
-export function registerDeepLinkProtocol(
+/**
+ * 客户端要接管的 scheme 列表。
+ *
+ * ⚠️ 必须与 electron-builder.config.js 的 `protocols[].schemes` 完全一致：
+ *   zcode    —— 客户端自身的 OAuth / 支付 / 工作区 / 分享深链；
+ *   lingdong —— 平台网页「进入 VibeCoding 课堂」按钮发的 `lingdong://open`（DSH 时代定的 scheme）。
+ * 少注册一个就会出现「装了客户端但点按钮没反应」。
+ */
+export const DEEP_LINK_SCHEMES = ["zcode", "lingdong"] as const;
+
+function registerSingleDeepLinkScheme(
+  scheme: (typeof DEEP_LINK_SCHEMES)[number],
   logger: {
     info: (...args: unknown[]) => void;
     warn: (...args: unknown[]) => void;
   },
-  options: { iconPath?: string } = {},
-) {
-  const scheme = "zcode";
-
+): void {
   if (process.defaultApp && process.argv.length >= 2) {
     const entry = resolve(process.argv[1]!);
     const ok = app.setAsDefaultProtocolClient(scheme, process.execPath, [entry]);
@@ -428,6 +436,18 @@ export function registerDeepLinkProtocol(
     logger.warn("[deep-link] 注册协议失败", { scheme });
   } else {
     logger.info("[deep-link] 注册协议成功", { scheme });
+  }
+}
+
+export function registerDeepLinkProtocol(
+  logger: {
+    info: (...args: unknown[]) => void;
+    warn: (...args: unknown[]) => void;
+  },
+  options: { iconPath?: string } = {},
+) {
+  for (const scheme of DEEP_LINK_SCHEMES) {
+    registerSingleDeepLinkScheme(scheme, logger);
   }
 
   if (process.platform === "linux" && app.isPackaged) {

@@ -289,8 +289,8 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 ### 最终 UI/隔离候选包（未发布）
 
 - 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
-- 大小：`151,141,769` 字节
-- SHA256：`f7c327a5f83da1a292ca244297299eb3a444606fa887b21eb3c97705d91511b5`
+- 大小：`151,131,513` 字节
+- SHA256：`111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`
 - 打包态课堂全链路、最终安装器静默安装/启动/卸载均通过。
 
 ## 品牌与首屏清理（2026-09-30）
@@ -311,12 +311,12 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 - `build/icon_installer.png/ico` 重做为纯白底灵动ai方形图标；打包资源新增 `icon_lingdong.png`。
 - 安装目录/更新缓存目录名来自 electron-updater 的 `updaterCacheDirName`（由 package.json `name` 推导，旧值为 `@zcodedesktop-updater`）；`extraMetadata.name` 改为 `灵动ai创作客户端`，打包后 `resources/app-update.yml` 为 `updaterCacheDirName: 灵动ai创作客户端-updater`。
 - 新增 `migrateLegacyUpdaterCacheDir()`：Windows 打包态启动时把 `%LOCALAPPDATA%\@zcodedesktop-updater` 重命名为 `%LOCALAPPDATA%\灵动ai创作客户端-updater`（目标已存在则跳过，失败只 warn）。
-- 更新后的候选包（未发布）：`lingdong-client-0.2.0-zcode.3-win-x64.exe`，`151,141,537` 字节，SHA256 `7f5b20c4d1acfb19f8e40636319b536b544086c2c4a134db8542a008228dacee`。
+- 更新后的候选包（未发布）：`lingdong-client-0.2.0-zcode.3-win-x64.exe`，`151,131,513` 字节，SHA256 `111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`。
 - 本轮验证：打包态课堂全链路 E2E 通过、NSIS 静默安装/启动登录门冒烟通过、exe 图标与安装态 `app-update.yml` 人工核对通过。
 
 ## 平台网关历史截断提示接入（2026-09-30 续二）
 
-- 平台在 `/chat/completions` 响应头下发 `x-platform-history-limit` / `x-platform-history-dropped`；客户端读响应头并在会话内一次性提示「早期上下文已截断」。
+- 平台在 `/chat/completions` 响应头下发 `x-platform-history-dropped`（平台另发的 `x-platform-history-limit` 客户端不消费）；客户端读响应头并在会话内一次性提示「早期上下文已截断」。
 - 链路：adapters 状态事件（已带 sanitize 后的 `responseHeaders`）→ v4 `ProductProjection.onModelNetworkStatus` → `control.historyTruncation` → Renderer（`SessionPane`）toast。
 - 语义与不变量见 `docs/specs/zcode-platform-history-truncation-notice.md`：无头不改动、无 `dropped` 清回 `null`、值未变不下发 delta、不写入消息与模型上下文。
 - 验证：打包态课堂 E2E 增加「开启截断标记 → 断言一次性提示」并通过；提示文案实测为「小灵只保留了最近 40 条消息，较早的 12 条已不在本轮上下文里…」；新构建的 NSIS 静默安装/启动登录门冒烟通过。
@@ -324,5 +324,21 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 ### 更新后的候选包（未发布）
 
 - 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
-- 大小：`151,141,769` 字节
-- SHA256：`f7c327a5f83da1a292ca244297299eb3a444606fa887b21eb3c97705d91511b5`
+- 大小：`151,131,513` 字节
+- SHA256：`111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`
+
+## 课堂入口深链对齐（2026-09-30 续三）
+
+- 根因：平台网页「进入 VibeCoding 课堂」按钮发 `lingdong://open`（DSH 时代定的 scheme），换 ZCode 底座后客户端只注册了 `zcode`，所以点按钮毫无反应。
+- 客户端同时注册 `zcode` 与 `lingdong`：安装期 `electron-builder.config.js` 的 `protocols[].schemes`，运行时 `registerDeepLinkProtocol`（`DEEP_LINK_SCHEMES`）。
+- `lingdong://open` 是纯入口链接，不触发工作区/OAuth/支付/分享任何动作；已启动时把主窗口带到前台（`focusPrimaryApplicationWindow()`，`second-instance` 与 macOS `open-url` 共用）。
+- 新增常驻守卫 `packages/desktop/tests/deep-link-scheme-alignment.test.ts`：安装期与运行时的 scheme 列表必须一致，且 `lingdong://open` 不得命中任何已有深链动作（已接入 `pnpm test:platform`）。
+- 契约与不变量见 `docs/specs/lingdong-classroom-entry-deeplink.md`。
+
+### 深链修复后的候选包（未发布，覆盖上面所有候选包）
+
+- 内容：课堂入口深链 scheme 对齐（`zcode` + `lingdong` 双注册 + 未命中时聚焦主窗口）、截断提示只消费 `x-platform-history-dropped`。
+- 文件：`lingdong-client-0.2.0-zcode.3-win-x64.exe`
+- 大小：`151,131,513` 字节
+- SHA256：`111df3f421777b665e528acf074cc1f855ebeba303de5e00b99afe56ce7a5e09`
+- 本轮验证：打包态启动日志实测注册 `zcode` 与 `lingdong` 两条协议；同 userData 下用 `lingdong://open` 再拉起第二实例 → 第二实例 `exit 0`、主窗口数不变、主窗口获得焦点；打包态课堂 E2E 通过（含截断提示断言）。

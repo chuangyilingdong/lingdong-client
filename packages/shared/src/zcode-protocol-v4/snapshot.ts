@@ -126,15 +126,14 @@ export const apiRetryStateSchema = z.object({
 export type ApiRetryState = z.infer<typeof apiRetryStateSchema>;
 
 /**
- * 平台网关历史截断事实：来自 `/chat/completions` 响应头
- * `x-platform-history-limit` / `x-platform-history-dropped`。
+ * 平台网关历史截断事实：来自 `/chat/completions` 响应头 `x-platform-history-dropped`。
  *
- * 运行态证据，不写入消息、不进入模型上下文、不持久化。平台是唯一权威，
- * 客户端只读，不重算历史长度。
+ * 客户端只消费「被丢了多少条」这一个事实：它足以判断「发生了截断」和撑起提示文案；
+ * 平台同时下发的保留上限不进入产品状态（学生看不懂条数口径，客户端也不据此推导策略）。
+ *
+ * 运行态证据，不写入消息、不进入模型上下文、不持久化。平台是唯一权威。
  */
 export const historyTruncationStateSchema = z.object({
-  /** 本轮网关保留的最大消息条数（x-platform-history-limit）。 */
-  limit: z.number().int().positive(),
   /** 本轮被丢弃的消息条数（x-platform-history-dropped），恒 > 0。 */
   dropped: z.number().int().positive(),
 });

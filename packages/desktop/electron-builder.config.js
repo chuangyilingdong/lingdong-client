@@ -690,9 +690,14 @@ export default {
   protocols: [
     {
       // 协议处理器的展示名之前使用小写 scheme，打包产物里的协议描述无法体现产品名。
-      // 展示名跟随安装包身份；scheme 仍保持 zcode，因此两个应用中最后注册者会成为默认 handler。
+      // 展示名跟随安装包身份，因此两个应用中最后注册者会成为默认 handler。
+      //
+      // ⚠️ 两个 scheme 都必须注册，缺一个就会出现「按钮点了没反应」：
+      //   zcode    —— 客户端自身的 OAuth / 支付 / 工作区 / 分享深链；
+      //   lingdong —— 平台网页「进入 VibeCoding 课堂」按钮发的 lingdong://open（DSH 时代定的 scheme）。
+      // 运行时注册见 src/main/desktopOAuthDeepLink.ts 的 registerDeepLinkProtocol，两处必须一致。
       name: desktopProductIdentity.productName,
-      schemes: ["zcode"],
+      schemes: ["zcode", "lingdong"],
     },
   ],
   mac: {

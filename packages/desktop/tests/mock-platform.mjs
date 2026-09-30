@@ -58,9 +58,9 @@ let sessionSuperseded = false;
 let submitIncludesWorks = false;
 let mode = "text";
 let toolRound = 0;
-// 平台网关历史截断标记（默认关闭 = 不截断）；开启后每个 /chat/completions 响应都带
-// x-platform-history-limit / x-platform-history-dropped，供客户端截断提示链路验证。
-let historyTruncation = { limit: 0, dropped: 0 };
+// 平台网关历史截断标记（默认关闭 = 不截断）。
+// 只发 x-platform-history-dropped：客户端不消费保留上限，这里也不发，避免测试掩盖该依赖。
+let historyTruncation = { dropped: 0 };
 const origin = "http://127.0.0.1:19090";
 const fakeKey = "mock-runtime-key";
 const classroom = { id: "classroom-e2e", lessonId: "lesson-e2e", title: "联调测试课堂" };
@@ -175,10 +175,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === "/__test/history" && req.method === "POST") {
       const data = await body(req);
-      historyTruncation = {
-        limit: Number(data.limit ?? 0),
-        dropped: Number(data.dropped ?? 0),
-      };
+      historyTruncation = { dropped: Number(data.dropped ?? 0) };
       return json(res, 200, historyTruncation);
     }
     if (pathname === "/__test/quota" && req.method === "POST") {
@@ -296,11 +293,8 @@ const server = http.createServer(async (req, res) => {
           error: { message: "mock runtime key mismatch", code: "UNAUTHORIZED" },
         });
       const historyHeaders =
-        historyTruncation.dropped > 0 && historyTruncation.limit > 0
-          ? {
-              "x-platform-history-limit": String(historyTruncation.limit),
-              "x-platform-history-dropped": String(historyTruncation.dropped),
-            }
+        historyTruncation.dropped > 0
+          ? { "x-platform-history-dropped": String(historyTruncation.dropped) }
           : {};
       const completion = {
         id: "mock-completion",
