@@ -24,7 +24,8 @@ on:
       - 'pnpm-lock.yaml'
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 jobs:
   build:
@@ -55,7 +56,9 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build unsigned macOS DMG/ZIP
-        run: pnpm --filter @zcode/desktop run bundle -- --os mac --arch arm64
+        run: |
+          set -o pipefail
+          pnpm --filter @zcode/desktop run bundle -- --os mac --arch arm64 2>&1 | tee mac-build.log
 
       - name: Collect artifacts
         run: |
@@ -63,6 +66,30 @@ jobs:
           cp dist/mac-arm64/*.dmg dist-mac/ 2>/dev/null || true
           cp dist/mac-arm64/*.zip dist-mac/ 2>/dev/null || true
           ls -lh dist-mac
+
+      - name: Report build status to branch
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          BRANCH=ci/mac-build-report
+          mkdir -p .ci-report
+          {
+            echo "sha=${GITHUB_SHA}"
+            echo "status=${JOB_STATUS}"
+            echo "run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > .ci-report/status.txt
+          if [ -f mac-build.log ]; then
+            tail -c 40000 mac-build.log > .ci-report/build-tail.log || true
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f .ci-report
+          git commit -m "ci: mac build report ${JOB_STATUS} ${GITHUB_RUN_ID}"
+          git push --force origin "HEAD:refs/heads/${BRANCH}"
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
