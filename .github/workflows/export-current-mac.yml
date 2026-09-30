@@ -16,8 +16,8 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       SOURCE_SHA: aa8c3a95d0d09345df5b8afef3885281e35e3d5e
-      SOURCE_ARTIFACT: lingdong-client-0.2.0-zcode.3-mac-arm64
-      TARGET_VERSION: 0.2.0-zcode.3
+      SOURCE_ARTIFACT: lingdong-client-0.2.0-zcode.4-mac-arm64
+      TARGET_VERSION: 0.2.0-zcode.4
       TARGET_BRANCH: ci/zcode-current-mac
     steps:
       - uses: actions/checkout@v4

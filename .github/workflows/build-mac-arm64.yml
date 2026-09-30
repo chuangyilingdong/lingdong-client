@@ -94,7 +94,7 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lingdong-client-0.2.0-zcode.3-mac-arm64
+          name: lingdong-client-0.2.0-zcode.4-mac-arm64
           path: |
             dist-mac/*.dmg
             dist-mac/*.zip
