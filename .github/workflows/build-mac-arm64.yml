@@ -1,3 +1,4 @@
+# macOS Apple Silicon (arm64) 构建：push 即出未签名测试包（ad-hoc 签名），workflow_dispatch 可出正式签名包。
 name: Build macOS Apple Silicon (ZCode)
 
 on:
