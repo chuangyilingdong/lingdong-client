@@ -48,7 +48,12 @@ const mock = spawn(process.execPath, [resolve("packages/desktop/tests/mock-platf
 mock.unref();
 
 const appLog = openSync(join(root, "app.log"), "a");
-const app = spawn(exe, [`--remote-debugging-port=${cdpPort}`], {
+// 额外 argv：老师端备课深链这类场景需要让应用是「被深链冷启动」的。
+const extraAppArgs = (process.env.LINGDONG_E2E_APP_ARGS || "")
+  .split(" ")
+  .map((item) => item.trim())
+  .filter(Boolean);
+const app = spawn(exe, [`--remote-debugging-port=${cdpPort}`, ...extraAppArgs], {
   cwd: process.cwd(),
   env,
   detached: true,

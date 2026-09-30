@@ -58,7 +58,8 @@
     "smoke:platform:classroom-entry": "node packages/desktop/tests/windows-classroom-entry.e2e.mjs single",
     "smoke:platform:contract": "node packages/desktop/tests/windows-platform-contract.e2e.mjs no-workspace-path",
     "smoke:platform:cache": "node packages/desktop/tests/windows-cache-usage.e2e.mjs",
-    "smoke:platform:logout": "node packages/desktop/tests/windows-logout-flow.e2e.mjs"
+    "smoke:platform:logout": "node packages/desktop/tests/windows-logout-flow.e2e.mjs",
+    "smoke:platform:prep": "node packages/desktop/tests/windows-prep-mode.e2e.mjs"
   },
   "dependencies": {
     "border-beam": "^1.0.1",

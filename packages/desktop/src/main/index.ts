@@ -2034,7 +2034,8 @@ app.whenReady().then(async () => {
     PLATFORM_GATEWAY_BASE_URL: lingdongPlatform.context.gateway?.baseUrl ?? "",
     ZCODE_LINGDONG_WORKSPACE_PATH: lingdongPlatform.workspacePath,
     ZCODE_LINGDONG_WORKSPACE_IDENTITY: lingdongPlatform.workspaceIdentity,
-    ZCODE_LINGDONG_CLASSROOM_ID: lingdongPlatform.context.classroom.id,
+    // 备课模式没有课堂（classroom 恒 null），这里不能直接读 .id。
+    ZCODE_LINGDONG_CLASSROOM_ID: lingdongPlatform.context.classroom?.id ?? "",
     ZCODE_LINGDONG_QUOTA_FILE: lingdongPlatform.quotaFilePath,
   });
   Object.assign(process.env, hostProcessLocalEnv);

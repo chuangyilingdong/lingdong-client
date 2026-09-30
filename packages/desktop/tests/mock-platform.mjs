@@ -1,3 +1,4 @@
+/* oxlint-disable eslint(max-lines) -- mock 平台在单文件里复刻生产契约，拆开会让各场景响应形状漂移。 */
 import http from "node:http";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
@@ -61,6 +62,8 @@ let classroomMode = "active";
 let activeClassroomCount = 1;
 // 最近一次 client-context 选中的课堂，供工具回合解析工作区内文件。
 let activeClassroom = CLASSROOMS[0];
+// 老师端备课：记录客户端确实带了 prep=1&lessonId=… 来取上下文。
+const prepContexts = [];
 const requests = [];
 const works = [];
 let used = 0;
@@ -120,6 +123,34 @@ async function body(req) {
   for await (const c of req) raw += c;
   return raw ? JSON.parse(raw) : {};
 }
+/**
+ * 老师端「VibeCoding 备课」上下文（对齐平台生产响应）。
+ * 特征：prep:true、classroom 恒 null、有 lesson/presets/models，**刻意不给 gateway/sends**——
+ * 平台靠「不发运行密钥」兜底，客户端结构上就发不出生成请求。
+ */
+function prepContext(lessonId) {
+  return {
+    prep: true,
+    classroom: null,
+    classrooms: [],
+    upcoming: null,
+    reason: "TEACHER_PREP",
+    message: "备课模式：可以走一遍学生的界面流程，但不能生成内容",
+    user: { id: "e2e-teacher", name: "联调老师", role: "TEACHER" },
+    lesson: {
+      id: lessonId ?? "lesson-prep-e2e",
+      title: "联调备课课时",
+      seriesTitle: "联调备课课时",
+      deliveryMode: "VIBECODING",
+      deliveryModes: ["VIBECODING", "CANVAS"],
+      capabilities: ["image", "music", "text", "video"],
+    },
+    presets: [{ title: "备课预设", text: "这是备课模式的预设提示词" }],
+    models: [{ id: "mock-model", displayName: "Mock Model" }],
+    defaultModel: "mock-model",
+  };
+}
+
 function context(sessionId) {
   const publicOf = ({ id, lessonId, title }) => ({ id, lessonId, title });
   if (classroomMode === "none") {
@@ -236,6 +267,7 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/__test/state")
       return json(res, 200, {
         requests,
+        prepContexts,
         works,
         used,
         revision,
@@ -255,8 +287,13 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/student/runtime/client-context") {
       if (sessionSuperseded)
         return fail(res, 401, "SESSION_SUPERSEDED", "当前账号已在其他设备登录");
-      const sessionId = new URL(req.url, origin).searchParams.get("sessionId");
-      return ok(res, context(sessionId));
+      const params = new URL(req.url, origin).searchParams;
+      if (params.get("prep") === "1") {
+        const lessonId = params.get("lessonId");
+        prepContexts.push({ lessonId, at: Date.now() });
+        return ok(res, prepContext(lessonId));
+      }
+      return ok(res, context(params.get("sessionId")));
     }
     if (pathname === "/api/auth/logout") {
       logoutCalls.push({ authorization: req.headers.authorization ?? null, at: Date.now() });

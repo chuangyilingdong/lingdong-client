@@ -1,5 +1,8 @@
 const DEEP_LINK_SCHEME = "zcode";
-const DEEP_LINK_RE = /\bzcode:(?:\/\/|\/)?[^\s"'<>]+/i;
+// 从命令行里认出「我们自己的」深链：zcode 是客户端自身的动作链接，
+// lingdong 是平台网页/机构后台的入口链接（含 lingdong://open?prep=1&lesson=…）。
+// ⚠️ 只认 zcode 会让 lingdong 链接永远解析不出来——备课参数就是这么丢的。
+const DEEP_LINK_RE = /\b(?:zcode|lingdong):(?:\/\/|\/)?[^\s"'<>]+/i;
 const OAUTH_CALLBACK_HOSTS = new Set(["oauth"]);
 const PAYMENT_CALLBACK_HOST = "payment";
 const WORKSPACE_OPEN_HOST = "workspace";

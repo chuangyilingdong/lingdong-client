@@ -204,6 +204,9 @@ function RootInner({
   const theme = useZCodeStore((state) => state.theme);
   const user = useZCodeStore((state) => state.user);
   const classroomSnapshot = useClassroomPlatformSnapshot();
+  // 备课模式：平台故意不发 gateway，模型注册表必然是空的。但这不代表要老师去
+  // 「连接账号」——备课本来就不生成内容，所以连接引导在这一档必须关掉。
+  const platformPrepMode = classroomSnapshot.snapshot?.prep === true;
   const classroomMode = Boolean(platform.classroom);
   const effectiveUser = useMemo(
     () => resolveClassroomUserInfo(classroomSnapshot.snapshot?.user, user),
@@ -451,7 +454,7 @@ function RootInner({
     shouldEnableProviderAvailabilityLoginEntryGuard();
   const { startupCheckCompleted: providerAvailabilityStartupCheckCompleted } =
     useProviderAvailabilityLoginEntryGuard({
-      enabled: providerAvailabilityLoginEntryGuardEnabled,
+      enabled: providerAvailabilityLoginEntryGuardEnabled && !platformPrepMode,
       user,
       isRestoringOAuthSession: isResolvingStartupAuthState || providerStartupSyncPending,
       providerFamilyDomain: appSettings?.providerFamilyDomain,
