@@ -1593,6 +1593,9 @@ function waitForStartupUpdateDecision(timeoutMs = 8000): Promise<void> {
         state.kind === "download-progress" ||
         state.kind === "update-downloaded";
       if (hasPendingUpdate) {
+        // 超时只用来约束「检查」这一段。一旦确实有更新，就进入「等用户处理」阶段：
+        // 必须把计时器停掉，否则 8 秒一到就会把登录门放出来，变成更新窗与登录门同时挂着。
+        clearTimeout(timer);
         openUpdateStatusWindow();
         void waitForUpdateStatusWindowClose().then(finish);
         return;
