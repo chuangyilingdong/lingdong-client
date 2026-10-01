@@ -1554,6 +1554,57 @@ function syncUpdateStatusWindowLayout(win: BrowserWindow) {
   syncUpdateStatusWindowChrome(win);
 }
 
+/** 更新窗关闭后 resolve；启动更新门用它决定什么时候放行到登录门。 */
+function waitForUpdateStatusWindowClose(): Promise<void> {
+  const win = updateStatusWindow;
+  if (!win || win.isDestroyed()) return Promise.resolve();
+  return new Promise((resolve) => {
+    win.once("closed", () => resolve());
+  });
+}
+
+/**
+ * 启动更新门：等一次更新检查结果，决定「先更新」还是「直接进登录」。
+ *
+ * - 有更新（update-available / download-progress / update-downloaded）→ 先把更新窗弹出来，
+ *   等用户处理完（关掉窗口）再继续 —— 学生不该先被要求登录、才发现要更新。
+ * - 确认没有更新（checking → idle）→ 立刻放行。
+ * - 超时（网络慢/平台不可达）→ 放行，绝不把启动卡死。
+ */
+function waitForStartupUpdateDecision(timeoutMs = 8000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let sawChecking = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      dispose();
+      clearTimeout(timer);
+      resolve();
+    };
+    const onState = (state: UpdateStatePayload) => {
+      if (settled) return;
+      if (state.kind === "checking") {
+        sawChecking = true;
+        return;
+      }
+      const hasPendingUpdate =
+        state.kind === "update-available" ||
+        state.kind === "download-progress" ||
+        state.kind === "update-downloaded";
+      if (hasPendingUpdate) {
+        openUpdateStatusWindow();
+        void waitForUpdateStatusWindowClose().then(finish);
+        return;
+      }
+      if (state.kind === "idle" && sawChecking) finish();
+    };
+    const dispose = onAutoUpdaterStateChanged(onState);
+    const timer = setTimeout(finish, timeoutMs);
+    onState(getAutoUpdaterState());
+  });
+}
+
 function openUpdateStatusWindow() {
   if (updateStatusWindow && !updateStatusWindow.isDestroyed()) {
     if (updateStatusWindow.isMinimized()) {
@@ -2018,6 +2069,29 @@ app.whenReady().then(async () => {
     // 读取失败不影响启动，使用默认 homedir
   }
 
+  // 启动更新门：更新检查必须排在登录门**之前**。
+  // 旧顺序把 initAutoUpdater 放在登录之后，于是「有更新」这件事只在登录成功后才看得到；
+  // 登录本身失败/被挡住时，用户永远看不到更新提示。
+  void initAutoUpdater({
+    enabled: ZCODE_PRODUCT_FLAVOR === "production",
+    onBeforeQuitAndInstall: async () => {
+      notifyStabilityLifecycle("update_install");
+      await prepareAppQuit("auto-update quitAndInstall", "update-install");
+      if (process.platform === "win32") {
+        await prepareWindowsProcessesForUpdateInstall();
+      }
+    },
+    settingService: mainSettingService,
+    locale: currentApplicationLocale,
+    deviceMid,
+    resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
+    updateFeedSource: resolveUpdateFeedSourceFromStartupConfig({
+      argv: process.argv,
+      env: process.env,
+    }),
+  });
+  await waitForStartupUpdateDecision();
+
   // 灵动ai 平台登录与课堂上下文必须先于首个 Host/Agent 启动。
   // ZCode 的 managed provider 配置、课堂 workspace 与平台网关凭据都由这里注入。
   const lingdongPlatform = await runLingdongPlatformGate();
@@ -2102,27 +2176,8 @@ app.whenReady().then(async () => {
   await hydratePendingPostUpdateReleaseNotes(mainSettingService);
   logWindowsBundledRuntimeIntegrityDiagnostic();
 
-  // 启动自动更新检查（后台执行，不阻塞主界面）
-  // Preview 身份无论连接哪个后端都不自动更新：stable feed 上只分发正式 ZCode 安装包，
-  // 不向 Preview 渠道提供更新。
-  void initAutoUpdater({
-    enabled: ZCODE_PRODUCT_FLAVOR === "production",
-    onBeforeQuitAndInstall: async () => {
-      notifyStabilityLifecycle("update_install");
-      await prepareAppQuit("auto-update quitAndInstall", "update-install");
-      if (process.platform === "win32") {
-        await prepareWindowsProcessesForUpdateInstall();
-      }
-    },
-    settingService: mainSettingService,
-    locale: currentApplicationLocale,
-    deviceMid,
-    resolveEndpointOrigin: resolveCurrentZCodeEndpointOrigin,
-    updateFeedSource: resolveUpdateFeedSourceFromStartupConfig({
-      argv: process.argv,
-      env: process.env,
-    }),
-  });
+  // 自动更新检查已提前到登录门之前（见 waitForStartupUpdateDecision 调用点）：
+  // 有更新必须先让用户看到，而不是等到登录成功之后。
 
   if (process.platform === "darwin" || process.platform === "win32") {
     app.clearRecentDocuments();
