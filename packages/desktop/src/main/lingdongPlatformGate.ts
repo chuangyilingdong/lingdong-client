@@ -82,6 +82,24 @@ function record<T>(value: unknown): value is Record<string, T> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * 登录/取上下文这类平台请求在**网络层**失败时，Node 只会抛一句 `fetch failed`，
+ * 学生/老师看到完全无从下手。这里把它翻成人话，并把底层错误码（ECONNRESET /
+ * ENOTFOUND / ETIMEDOUT / 证书错误…）带出来，方便现场自查也方便我们定位。
+ * 非网络错误（平台返回的业务错误）原样保留。
+ */
+function describePlatformNetworkError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (!/fetch failed/iu.test(message)) return message;
+  const cause = (error as { cause?: { code?: unknown; message?: unknown } })?.cause;
+  const code = typeof cause?.code === "string" ? cause.code : "";
+  const causeMessage = typeof cause?.message === "string" ? cause.message : "";
+  const detail = code || causeMessage;
+  return detail
+    ? `无法连接灵动ai平台（${detail}），请检查网络后重试。`
+    : "无法连接灵动ai平台，请检查网络后重试。";
+}
+
 function messageFrom(value: unknown, fallback: string): string {
   if (record<unknown>(value)) {
     const error = value.error;
@@ -223,7 +241,7 @@ async function handleLogin(
     gateWindow?.close();
     return { ok: true, user: session.user, classroom: context.classroom, workspacePath };
   } catch (error) {
-    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+    return { ok: false, message: describePlatformNetworkError(error) };
   }
 }
 
