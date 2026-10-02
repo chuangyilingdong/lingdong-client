@@ -14,7 +14,10 @@
    - 当前自动取工作区里**最近更新**的可提交入口文件。
    - 其他工作区文件不再逐项展示，也不再要求学生勾选。
 2. 选中主作品后，客户端解析它涉及的全部本地引用文件：
-   - HTML 的 `src` / `href` / `poster`，以及内联 `<style>` 和引用 CSS 里的 `url()`。
+   - HTML/SVG 的 `src` / `href` / `xlink:href` / `poster`，以及内联 `<style>` 和引用 CSS 里的 `url()`。
+   - HTML 内联 `<script>`、独立的 `.js/.mjs/.cjs/.json` 中，引号内整段等于相对路径的字符串。
+   - 递归扫描被引用的 `.css/.js/.mjs/.cjs/.json/.svg`，覆盖 `new Audio("assets/sfx.wav")`、
+     `fetch("data/level.json")`、`img.src = "assets/x.png"`、文件清单数组等常见动态引用。
    - UI 以只读方式列出“自动包含”的引用文件；这些文件不单独勾选。
 3. UI 显示最终清单的总文件数和原始大小合计。
 4. 用户点击提交时，renderer 只发送主作品一项；宿主在提交前用同一份解析结果重新打包
@@ -98,10 +101,11 @@ type ClassroomWorkspaceSubmitPreview = {
 ## 清单怎么算
 
 1. 起点是唯一的主作品入口，放进 `files[0]` 与顶层 `name`。
-2. 从入口 HTML 出发扫 `src=` / `href=` / `poster=`，以及 `<style>` 内联样式与引用的 `.css` 里的 `url()`。
+2. 从入口 HTML 出发扫 `src=` / `href=` / `poster=`，内联 `<style>` 与引用的 `.css` 里的 `url()`，
+   内联 `<script>` 与引用的 `.js/.json` 里“引号内整段相对路径”的字符串。
 3. 丢掉：`http(s)://`、`//` 协议相对、`data:` 等带协议、`#` 页内锚点、以 `/` 开头的站点绝对路径。
 4. 去掉开头 `./` 与 `?query`/`#hash` 后，按**所在文件**的相对位置解析；工作区里存在且在白名单内的才带上。
-5. CSS 会继续向下扫一层（CSS 引用的图/字体也带上）。
+5. CSS / JS / JSON / SVG 会继续递归扫描，直到不再发现新的工作区文件或达到数量/体积预算。
 
 ## 名字白名单（平台服务端逐段校验，不合规整单 400、不静默改名）
 

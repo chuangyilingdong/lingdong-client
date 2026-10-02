@@ -580,11 +580,23 @@ function normalizeWorkAssetName(raw: string): string | null {
   return name.length <= WORK_ASSET_NAME_MAX_CHARS ? name : null;
 }
 
-// 入口 HTML / CSS 里的本地引用：HTML 属性（src|href|poster）与 CSS url()。
+// 本地引用扫描与平台 `localArtifactReferences` 对齐：
+// HTML/SVG 属性、CSS url()、JS/JSON 引号内整段相对路径、HTML 内联 <script>。
 const HTML_LOCAL_REFERENCE_PATTERN =
   /\b(?:src|href|poster)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`=<>]+))/giu;
 const CSS_URL_REFERENCE_PATTERN = /url\(\s*(?:"([^"]*)"|'([^']*)'|([^)]*))\s*\)/giu;
 const HTML_STYLE_BLOCK_PATTERN = /<style\b[^>]*>([\s\S]*?)<\/style>/giu;
+const HTML_SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>([\s\S]*?)<\/script>/giu;
+const JS_QUOTED_REFERENCE_PATTERN = /["'`]([^"'`\n]{1,120})["'`]/gu;
+const JS_REFERENCE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".json"]);
+const RECURSIVE_REFERENCE_EXTENSIONS = new Set([
+  ".css",
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".json",
+  ".svg",
+]);
 
 function firstReferenceGroup(match: RegExpMatchArray): string | undefined {
   return match[1] ?? match[2] ?? match[3];
@@ -600,13 +612,16 @@ function normalizeLocalReference(value: string | undefined): string | null {
   if (!reference) return null;
   if (/^(?:[a-z][a-z0-9+.-]*:|\/\/)/iu.test(reference)) return null;
   reference = reference.replace(/[?#].*$/u, "").trim();
-  if (!reference || reference.startsWith("/")) return null;
+  if (!reference || reference.startsWith("/") || reference.includes("\\")) return null;
   reference = reference.replace(/^\.\//u, "").trim();
-  if (!reference || reference === "." || reference.startsWith("..")) return null;
+  if (!reference || reference === "." || reference.includes("..")) return null;
   return reference;
 }
 
-function extractLocalReferences(content: string, kind: "html" | "css"): string[] {
+function extractLocalReferences(
+  content: string,
+  kind: "html" | "css" | "js" | "json" | "svg",
+): string[] {
   const references: string[] = [];
   const collect = (pattern: RegExp, text: string) => {
     for (const match of text.matchAll(pattern)) {
@@ -618,9 +633,21 @@ function extractLocalReferences(content: string, kind: "html" | "css"): string[]
     collect(CSS_URL_REFERENCE_PATTERN, content);
     return references;
   }
+  if (kind === "js" || kind === "json") {
+    collect(JS_QUOTED_REFERENCE_PATTERN, content);
+    return references;
+  }
   collect(HTML_LOCAL_REFERENCE_PATTERN, content);
-  for (const styleBlock of content.matchAll(HTML_STYLE_BLOCK_PATTERN)) {
-    collect(CSS_URL_REFERENCE_PATTERN, styleBlock[1] ?? "");
+  if (kind === "html" || kind === "svg") {
+    collect(CSS_URL_REFERENCE_PATTERN, content);
+  }
+  if (kind === "html") {
+    for (const styleBlock of content.matchAll(HTML_STYLE_BLOCK_PATTERN)) {
+      collect(CSS_URL_REFERENCE_PATTERN, styleBlock[1] ?? "");
+    }
+    for (const scriptBlock of content.matchAll(HTML_SCRIPT_BLOCK_PATTERN)) {
+      collect(JS_QUOTED_REFERENCE_PATTERN, scriptBlock[1] ?? "");
+    }
   }
   return references;
 }
@@ -856,7 +883,18 @@ async function collectReferencedWorkAssets(input: {
     if (!current || visited.has(current)) continue;
     visited.add(current);
     const extension = extname(current).toLowerCase();
-    const kind = extension === ".css" ? "css" : HTML_ENTRY_EXTENSIONS.has(extension) ? "html" : null;
+    const kind =
+      extension === ".css"
+        ? "css"
+        : extension === ".svg"
+          ? "svg"
+          : JS_REFERENCE_EXTENSIONS.has(extension)
+            ? extension === ".json"
+              ? "json"
+              : "js"
+            : HTML_ENTRY_EXTENSIONS.has(extension)
+              ? "html"
+              : null;
     if (!kind) continue;
     const content = await readFile(current, "utf8").catch(() => "");
     if (!content) continue;
@@ -869,7 +907,9 @@ async function collectReferencedWorkAssets(input: {
       const name = toEntryRelativeName(input.entryDir, absolute);
       if (!name) continue;
       await input.addFile(absolute, name, true);
-      if (extname(absolute).toLowerCase() === ".css") pending.push(absolute);
+      if (RECURSIVE_REFERENCE_EXTENSIONS.has(extname(absolute).toLowerCase())) {
+        pending.push(absolute);
+      }
     }
   }
 }

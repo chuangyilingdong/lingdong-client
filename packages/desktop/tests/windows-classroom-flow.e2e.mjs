@@ -114,9 +114,9 @@ try {
   // 对话框只让学生选择一个主作品；引用素材必须由客户端顺着入口自动解析并只读展示。
   await dialog.getByText("主作品 ·", { exact: false }).waitFor({ timeout: 10_000 });
   await dialog.getByText("index.html", { exact: true }).waitFor({ timeout: 10_000 });
-  await dialog.getByText("自动包含 4 个引用文件", { exact: true }).waitFor({ timeout: 10_000 });
+  await dialog.getByText("自动包含 7 个引用文件", { exact: true }).waitFor({ timeout: 10_000 });
   assert.equal(await dialog.getByText("notes.txt", { exact: true }).count(), 0);
-  await dialog.getByText("最终将提交 5 个文件", { exact: true }).waitFor({ timeout: 10_000 });
+  await dialog.getByText("最终将提交 8 个文件", { exact: true }).waitFor({ timeout: 10_000 });
   await dialog.getByText(/总大小 \d+(?:\.\d+)? (?:B|KB|MB)/u).waitFor({ timeout: 10_000 });
   await dialog.getByRole("button", { name: "确认并提交主作品", exact: true }).click();
   await dialog.getByText("作品已提交", { exact: false }).waitFor({ timeout: 20_000 });
@@ -151,6 +151,17 @@ try {
     "HTML <video> 引用的视频必须按二进制提交",
   );
   assert.equal(fileByName.get("assets/bg.png")?.binary, true, "CSS url() 引用的图片也要带上");
+  assert.equal(fileByName.get("app.js")?.binary, false, "JS 引用的脚本必须按文本提交");
+  assert.equal(
+    fileByName.get("assets/guide.pdf")?.binary,
+    true,
+    "JS 字符串引用的 PDF 必须按二进制提交",
+  );
+  assert.equal(
+    fileByName.get("assets/report.docx")?.binary,
+    true,
+    "JS 字符串引用的 Word 必须按二进制提交",
+  );
   assert.ok(
     !submittedFiles.some((file) => /^(?:https?:|data:|\/|#)/u.test(file.name)),
     `外部/绝对引用不得出现在提交清单：${submittedFiles.map((f) => f.name).join(",")}`,

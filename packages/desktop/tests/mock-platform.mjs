@@ -29,9 +29,15 @@ for (const item of CLASSROOMS) {
   await writeFile(join(item.workspace, "assets", "hero.png"), TINY_PNG);
   await writeFile(join(item.workspace, "assets", "bg.png"), TINY_PNG);
   await writeFile(join(item.workspace, "assets", "clip.mp4"), Buffer.from("MOCK_MP4_BYTES"));
+  await writeFile(join(item.workspace, "assets", "guide.pdf"), Buffer.from("%PDF-1.4\nMOCK_PDF_BYTES"));
+  await writeFile(join(item.workspace, "assets", "report.docx"), Buffer.from("MOCK_DOCX_BYTES"));
   await writeFile(
     join(item.workspace, "style.css"),
     `body{background:url("assets/bg.png") no-repeat}\n`,
+  );
+  await writeFile(
+    join(item.workspace, "app.js"),
+    `const dynamicFiles = ["assets/guide.pdf", "assets/report.docx"];\n`,
   );
   // 入口 HTML：三条本地引用（css / img / video）必须在清单里；三条外部/无效引用必须在清单外。
   // ⚠️ 过滤样本放进 HTML 注释：客户端扫的是原始文本（照样能覆盖过滤规则），
@@ -43,6 +49,7 @@ for (const item of CLASSROOMS) {
     `<h1>Mock ${item.id}</h1>`,
     "<img src='assets/hero.png' alt='hero'>",
     "<video src='assets/clip.mp4'></video>",
+    "<script src='app.js'></script>",
     "<!--",
     "<img src='https://example.com/remote.png'>",
     "<img src='data:image/png;base64,AAAA'>",

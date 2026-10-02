@@ -113,7 +113,8 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 **客户端会带上入口 HTML 引用的本地素材**（2026-09-30 起，见 `docs/specs/lingdong-work-asset-bundle.md`）：
 
-- 从入口扫 `src=` / `href=` / `poster=` 与 CSS `url()`，丢掉 `http(s)://`、`//`、`data:`、`#`、`/` 开头；
+- 从入口扫 HTML/SVG `src=` / `href=` / `poster=`、CSS `url()`、内联 `<script>`，以及 `.js/.json` 中
+  “引号内整段相对路径”的字符串；丢掉 `http(s)://`、`//`、`data:`、`#`、`/` 开头；
 - `name` 用相对路径且与 HTML 里写的**逐字一致**（`src="assets/hero.png"` → `name: "assets/hero.png"`），
   相对**入口文件所在目录**计算；`.css`/`.js` 仍按 `binary: false`，图片/视频/音频按 `binary: true`；
 - 名字白名单（平台逐段校验）：≤6 段、单段 ≤64 字、整名 ≤120 字，段首中英文/数字、段内可含 `._-`；
