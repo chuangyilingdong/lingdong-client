@@ -61,6 +61,13 @@ jobs:
           set -o pipefail
           pnpm --filter @zcode/desktop run bundle -- --os mac --arch arm64 2>&1 | tee mac-build.log
 
+      - name: Smoke launch macOS app
+        run: |
+          set -euo pipefail
+          app="$(find dist/mac-arm64 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          node scripts/macos-packaged-smoke.mjs "$app"
+
       - name: Collect artifacts
         run: |
           mkdir -p dist-mac
