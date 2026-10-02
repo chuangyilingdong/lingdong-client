@@ -2,12 +2,13 @@
 import { app, BrowserWindow, ipcMain } from "electron";
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, readdir, realpath, stat } from "node:fs/promises";
+import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
+import type { ClassroomWorkspaceSubmitPreview } from "@zcode/shared";
 
 type LingdongUser = {
   readonly id?: string;
@@ -63,6 +64,14 @@ let handlersRegistered = false;
 let platformGatePending = false;
 // 老师端「VibeCoding 备课」深链带来的课时 id：登录/重新取上下文时用它走备课分支。
 let pendingPrepLessonId: string | null = null;
+const CLASSROOM_END_REASONS = new Set([
+  "NOT_STARTED",
+  "CLASSROOM_NOT_AVAILABLE",
+  "CLASSROOM_MODE_MISMATCH",
+]);
+const CLASSROOM_POLL_DEFAULT_MS = 5_000;
+let classroomPollTimer: NodeJS.Timeout | null = null;
+let classroomExitInFlight = false;
 
 /** 深链 `lingdong://open?prep=1&lesson=<id>` 的落点；null 表示回到学生路径。 */
 export function setLingdongPrepLessonId(lessonId: string | null): void {
@@ -130,6 +139,36 @@ async function apiRequest(path: string, init: RequestInit = {}, token?: string):
   return payload;
 }
 
+/**
+ * 课堂结束后主动退出失效的创作环境。
+ * 只认 student client-context 的成功响应；网络/鉴权错误留给原请求处理，不能制造离线登出。
+ */
+async function checkClassroomStillActive(): Promise<void> {
+  const state = activeState;
+  if (!state || isPrepContext(state.context) || classroomExitInFlight) return;
+  try {
+    const context = unwrap<LingdongContext>(
+      await apiRequest("/api/student/runtime/client-context", {}, state.session.token),
+    );
+    if (context.classroom) return;
+    if (!CLASSROOM_END_REASONS.has(String(context.reason || ""))) return;
+    classroomExitInFlight = true;
+    await writeGateNotice("课堂已结束，请重新登录。").catch(() => {});
+    await logoutFromPlatform();
+    app.relaunch();
+    app.quit();
+  } catch {
+    // 网络抖动与临时服务错误不触发退出；下一轮仍会继续检查。
+  }
+}
+
+function startClassroomPolling(): void {
+  stopClassroomPolling();
+  if (!activeState || isPrepContext(activeState.context)) return;
+  classroomPollTimer = setInterval(() => void checkClassroomStillActive(), classroomPollIntervalMs());
+  classroomPollTimer.unref?.();
+}
+
 function unwrap<T>(value: unknown): T {
   if (record<unknown>(value) && "data" in value) return value.data as T;
   return value as T;
@@ -171,6 +210,85 @@ async function buildProviderConfig(context: LingdongContext, targetPath?: string
 function quotaFilePathForIdentity(identity: string): string {
   const key = createHash("sha256").update(identity).digest("hex");
   return join(getAppConfigDir(), "runtime", "lingdong-quota", `${key}.json`);
+}
+
+type SubmittedWorkRecord = Readonly<{ revision: string; submittedAt: string }>;
+type SubmissionStateFile = { version: 1; records: Record<string, SubmittedWorkRecord> };
+
+function submissionStatePath(workspaceIdentity: string): string {
+  const key = createHash("sha256").update(workspaceIdentity).digest("hex");
+  return join(getAppConfigDir(), "runtime", "lingdong-submissions", `${key}.json`);
+}
+
+async function readSubmissionRecord(
+  workspaceIdentity: string,
+  entryRelativePath: string,
+): Promise<SubmittedWorkRecord | null> {
+  try {
+    const raw = JSON.parse(await readFile(submissionStatePath(workspaceIdentity), "utf8")) as unknown;
+    if (!record<unknown>(raw) || !record<unknown>(raw.records)) return null;
+    const value = raw.records[entryRelativePath];
+    if (!record<unknown>(value)) return null;
+    return typeof value.revision === "string" && typeof value.submittedAt === "string"
+      ? { revision: value.revision, submittedAt: value.submittedAt }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeSubmissionRecord(
+  workspaceIdentity: string,
+  entryRelativePath: string,
+  recordValue: SubmittedWorkRecord,
+): Promise<void> {
+  const path = submissionStatePath(workspaceIdentity);
+  let state: SubmissionStateFile = { version: 1, records: {} };
+  try {
+    const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
+    if (record<unknown>(raw) && record<unknown>(raw.records)) {
+      state = { version: 1, records: raw.records as Record<string, SubmittedWorkRecord> };
+    }
+  } catch {
+    // 首次提交或文件损坏时从空状态重建；提交成功事实已经在平台上。
+  }
+  state.records[entryRelativePath] = recordValue;
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify(state, null, 2), "utf8");
+}
+
+function gateNoticePath(): string {
+  return join(getAppConfigDir(), "runtime", "lingdong-gate-notice.json");
+}
+
+async function writeGateNotice(message: string): Promise<void> {
+  const path = gateNoticePath();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, JSON.stringify({ message, createdAt: new Date().toISOString() }), "utf8");
+}
+
+async function consumeGateNotice(): Promise<string | null> {
+  const path = gateNoticePath();
+  try {
+    const raw = JSON.parse(await readFile(path, "utf8")) as unknown;
+    await rm(path, { force: true });
+    return record<unknown>(raw) && typeof raw.message === "string" && raw.message.trim()
+      ? raw.message.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function classroomPollIntervalMs(): number {
+  const configured = Number(process.env.LINGDONG_CLASSROOM_POLL_MS || 0);
+  const wanted = Number.isFinite(configured) && configured > 0 ? configured : CLASSROOM_POLL_DEFAULT_MS;
+  return Math.max(1_000, Math.min(60_000, wanted));
+}
+
+function stopClassroomPolling(): void {
+  if (classroomPollTimer) clearInterval(classroomPollTimer);
+  classroomPollTimer = null;
 }
 
 async function handleLogin(
@@ -236,6 +354,7 @@ async function handleLogin(
     process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY = activeState.workspaceIdentity;
     process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom?.id ?? "";
     process.env.ZCODE_LINGDONG_QUOTA_FILE = prep ? "" : quotaFilePath;
+    startClassroomPolling();
     // 登录成功后关闭登录窗，但 platformGatePending 会一直保持到主窗口就绪：
     // 应用进入"零窗口"瞬间时 window-all-closed 会被 pending 拦住，不会误退出。
     gateWindow?.close();
@@ -292,7 +411,59 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
     }
   }
   files.sort((a, b) => b.updatedAt - a.updatedAt);
-  return { ok: true, files, workspacePath: root, workspaceIdentity: activeState.workspaceIdentity };
+  // 只选最近更新的可提交入口作为主作品；引用素材由 resolveSubmitPlan 自动解析。
+  // 该预览与真实提交共用解析函数，避免 UI 数字和实际包内容漂移。
+  const entry = files.find((file) =>
+    SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.relativePath).toLowerCase()),
+  );
+  let preview: ClassroomWorkspaceSubmitPreview | undefined;
+  let previewError: string | undefined;
+  if (entry) {
+    try {
+      const plan = await resolveSubmitPlan([
+        { path: entry.path, relativePath: entry.relativePath },
+      ]);
+      const submissionRecord = await readSubmissionRecord(
+        activeState.workspaceIdentity,
+        plan.entryRelativePath,
+      );
+      const platformSubmission =
+        submissionRecord ??
+        (await findLatestPlatformSubmission(
+          plan.entryName,
+          activeState.context.classroom?.id ?? null,
+        ));
+      const latestMtimeMs = Math.max(0, ...plan.files.map((file) => file.mtimeMs));
+      const submitted = submissionRecord
+        ? submissionRecord.revision === plan.revision
+        : Boolean(platformSubmission && latestMtimeMs <= platformSubmission.submittedAtMs + 2_000);
+      const lastSubmittedAt = submissionRecord?.submittedAt ?? platformSubmission?.submittedAt;
+      preview = {
+        entry,
+        files: plan.files.map((file) => ({
+          name: file.name,
+          relativePath: file.relativePath,
+          path: file.absolute,
+          size: file.size,
+          autoIncluded: file.autoIncluded,
+        })),
+        totalBytes: plan.files.reduce((sum, file) => sum + file.size, 0),
+        submitted,
+        hasNewOutput: !submitted,
+        ...(lastSubmittedAt ? { lastSubmittedAt } : {}),
+      };
+    } catch (error) {
+      previewError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  return {
+    ok: true,
+    files,
+    preview,
+    previewError,
+    workspacePath: root,
+    workspaceIdentity: activeState.workspaceIdentity,
+  };
 }
 
 type SubmitItem = Readonly<{ path?: unknown; relativePath?: unknown; name?: unknown }>;
@@ -470,9 +641,42 @@ function pathInside(root: string, candidate: string): boolean {
   return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !rel.includes(`..${sep}`));
 }
 
-async function prepareSubmitFiles(
-  items: readonly SubmitItem[],
-): Promise<{ readonly files: WorkFilePayload[]; readonly entryPath: string }> {
+type WorkFilePlan = Readonly<{
+  absolute: string;
+  name: string;
+  relativePath: string;
+  size: number;
+  mtimeMs: number;
+  binary: boolean;
+  autoIncluded: boolean;
+}>;
+type WorkSubmitPlan = Readonly<{
+  entryPath: string;
+  entryName: string;
+  entryRelativePath: string;
+  revision: string;
+  files: readonly WorkFilePlan[];
+}>;
+
+/** 用最终清单的路径、大小与 mtime 计算提交指纹；任一包含文件变化都会得到新值。 */
+function workPlanRevision(files: readonly WorkFilePlan[]): string {
+  const hash = createHash("sha256");
+  for (const file of files) {
+    hash.update(file.name);
+    hash.update("\u0000");
+    hash.update(String(file.size));
+    hash.update("\u0000");
+    hash.update(String(file.mtimeMs));
+    hash.update("\n");
+  }
+  return hash.digest("hex");
+}
+
+/**
+ * 解析一次提交的权威清单，不读取文件内容。
+ * UI 预览和真实提交共用这一份，避免「界面算出的清单」与「实际上传的清单」分叉。
+ */
+async function resolveSubmitPlan(items: readonly SubmitItem[]): Promise<WorkSubmitPlan> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const root = await realpath(activeState.workspacePath);
 
@@ -504,12 +708,16 @@ async function prepareSubmitFiles(
     );
   }
 
-  const files: WorkFilePayload[] = [];
+  const files: WorkFilePlan[] = [];
   const usedNames = new Set<string>();
   const includedPaths = new Set<string>();
   let totalBytes = 0;
 
-  const addFile = async (absolute: string, relativeName: string): Promise<boolean> => {
+  const addFile = async (
+    absolute: string,
+    relativeName: string,
+    autoIncluded: boolean,
+  ): Promise<boolean> => {
     if (includedPaths.has(absolute) || files.length >= MAX_WORK_FILES) return false;
     const name = normalizeWorkAssetName(relativeName);
     if (!name || usedNames.has(name)) return false;
@@ -519,12 +727,14 @@ async function prepareSubmitFiles(
     if (!info?.isFile()) return false;
     if (info.size > MAX_WORK_TOTAL_BYTES || totalBytes + info.size > MAX_WORK_TOTAL_BYTES)
       return false;
-    const bytes = await readFile(absolute);
-    const binary = !WORK_TEXT_EXTENSIONS.has(extension);
     files.push({
+      absolute,
       name,
-      content: binary ? bytes.toString("base64") : bytes.toString("utf8"),
-      binary,
+      relativePath: relative(root, absolute).replaceAll("\\", "/"),
+      size: info.size,
+      mtimeMs: info.mtimeMs,
+      binary: !WORK_TEXT_EXTENSIONS.has(extension),
+      autoIncluded,
     });
     usedNames.add(name);
     includedPaths.add(absolute);
@@ -533,12 +743,11 @@ async function prepareSubmitFiles(
   };
 
   // 入口先落进 files，保证 files[0] 与顶层 name 指向主产物。
-  await addFile(entryCandidate.absolute, entryName);
+  await addFile(entryCandidate.absolute, entryName, false);
   for (const candidate of candidates) {
     if (candidate.absolute === entryCandidate.absolute) continue;
-    const name =
-      toEntryRelativeName(entryDir, candidate.absolute) ?? basename(candidate.absolute);
-    await addFile(candidate.absolute, name);
+    const name = toEntryRelativeName(entryDir, candidate.absolute) ?? basename(candidate.absolute);
+    await addFile(candidate.absolute, name, false);
   }
 
   // 入口 HTML 引用的本地素材一并带上：图片/视频/音频按二进制，css/js 仍按文本（平台会内联进预览）。
@@ -552,9 +761,83 @@ async function prepareSubmitFiles(
   }
 
   if (files.length === 0) throw new Error("没有找到可以提交的作品文件。");
-  return { files, entryPath: entryCandidate.absolute };
+  const entry = files.find((file) => file.absolute === entryCandidate.absolute);
+  if (!entry) throw new Error("没有找到可以提交的主作品文件。");
+  return {
+    entryPath: entry.absolute,
+    entryName: entry.name,
+    entryRelativePath: entry.relativePath,
+    revision: workPlanRevision(files),
+    files,
+  };
 }
 
+type PlatformSubmissionRecord = Readonly<{ submittedAt: string; submittedAtMs: number }>;
+
+/**
+ * 本地没有提交指纹时的平台兜底：按课堂与主作品匹配最近一次 VibeCoding 提交。
+ * 平台查询失败返回 null，让新作品保持可提交；宁可多交一次，也不能误挡。
+ */
+async function findLatestPlatformSubmission(
+  entryName: string,
+  classroomId: string | null,
+): Promise<PlatformSubmissionRecord | null> {
+  try {
+    const payload = unwrap<Record<string, unknown>>(
+      await callPlatform("/api/student/works?page=1&limit=50"),
+    );
+    const items = Array.isArray(payload.items)
+      ? payload.items
+      : Array.isArray(payload.works)
+        ? payload.works
+        : [];
+    let latest: PlatformSubmissionRecord | null = null;
+    for (const item of items) {
+      if (!record<unknown>(item)) continue;
+      if (String(item.source || "").toUpperCase() !== "VIBECODING") continue;
+      if (String(item.entryFile || "") !== entryName) continue;
+      if (classroomId && String(item.classSessionId || "") !== classroomId) continue;
+      const submittedAt = String(item.submittedAt || "");
+      const submittedAtMs = Date.parse(submittedAt);
+      if (!Number.isFinite(submittedAtMs)) continue;
+      if (!latest || submittedAtMs > latest.submittedAtMs) {
+        latest = { submittedAt, submittedAtMs };
+      }
+    }
+    return latest;
+  } catch {
+    return null;
+  }
+}
+
+async function prepareSubmitFiles(
+  items: readonly SubmitItem[],
+): Promise<{
+  readonly files: WorkFilePayload[];
+  readonly entryPath: string;
+  readonly entryName: string;
+  readonly entryRelativePath: string;
+  readonly revision: string;
+}> {
+  const plan = await resolveSubmitPlan(items);
+  const files = await Promise.all(
+    plan.files.map(async (file) => {
+      const bytes = await readFile(file.absolute);
+      return {
+        name: file.name,
+        content: file.binary ? bytes.toString("base64") : bytes.toString("utf8"),
+        binary: file.binary,
+      };
+    }),
+  );
+  return {
+    files,
+    entryPath: plan.entryPath,
+    entryName: plan.entryName,
+    entryRelativePath: plan.entryRelativePath,
+    revision: plan.revision,
+  };
+}
 /**
  * 从入口 HTML 出发，沿着 src/href/poster 与 CSS url() 收集工作区内的本地素材。
  * 引用串（去掉 ./、?query、#hash 之后）就是提交给平台的 name，
@@ -564,7 +847,7 @@ async function collectReferencedWorkAssets(input: {
   root: string;
   entryAbsolute: string;
   entryDir: string;
-  addFile: (absolute: string, relativeName: string) => Promise<boolean>;
+  addFile: (absolute: string, relativeName: string, autoIncluded: boolean) => Promise<boolean>;
 }): Promise<void> {
   const visited = new Set<string>();
   const pending: string[] = [input.entryAbsolute];
@@ -585,7 +868,7 @@ async function collectReferencedWorkAssets(input: {
       if (!absolute || !pathInside(input.root, absolute)) continue;
       const name = toEntryRelativeName(input.entryDir, absolute);
       if (!name) continue;
-      await input.addFile(absolute, name);
+      await input.addFile(absolute, name, true);
       if (extname(absolute).toLowerCase() === ".css") pending.push(absolute);
     }
   }
@@ -718,12 +1001,22 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
     throw new Error("作品编码后太大，请减少素材后再提交。");
   }
   // 平台新版在提交响应里直接回 works（形状同 GET /student/works）；解包后交给 renderer。
-  return unwrap<Record<string, unknown>>(
+  const result = unwrap<Record<string, unknown>>(
     await callPlatform("/api/student/runtime/submit-upload", {
       method: "POST",
       body: JSON.stringify(body),
     }),
   );
+  try {
+    await writeSubmissionRecord(activeState.workspaceIdentity, prepared.entryRelativePath, {
+      revision: prepared.revision,
+      submittedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    // 平台提交已经成功；本地去重状态写失败只影响按钮置灰，不能把成功改判成失败。
+    console.warn("[lingdong-gate] 记录作品提交指纹失败，下次扫描可能允许重复提交。", error);
+  }
+  return result;
 }
 
 async function callPlatform(path: string, init: RequestInit = {}): Promise<unknown> {
@@ -826,6 +1119,7 @@ export function isLingdongGateWindow(window: unknown): boolean {
 export async function runLingdongPlatformGate(): Promise<LingdongPlatformState | null> {
   registerPlatformHandlers();
   platformGatePending = true;
+  const gateNotice = await consumeGateNotice();
   if (activeState) return activeState;
   // 用户直接关闭登录窗时 resolve(null) 表示取消启动；绝不 reject，
   // 否则 app.whenReady() 链上会出现无人处理的 Promise 拒绝。
@@ -875,7 +1169,7 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState |
     );
     // 品牌资源随包分发；资源异常时仍回退到内联登录页，不能让学生停在白屏。
     void gateWindow
-      .loadFile(gateFile)
+      .loadFile(gateFile, gateNotice ? { query: { notice: gateNotice } } : undefined)
       .catch(() =>
         gateWindow?.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(gateHtml())}`),
       );
@@ -895,6 +1189,7 @@ export function finishLingdongPlatformGate(): void {
 }
 
 export async function disposeLingdongPlatformGate(): Promise<void> {
+  stopClassroomPolling();
   const binding = providerBinding;
   providerBinding = null;
   await binding?.dispose();

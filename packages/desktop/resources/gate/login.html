@@ -267,6 +267,11 @@
       const error = document.getElementById("status");
       const form = document.getElementById("form");
       const submit = document.getElementById("submit");
+      const notice = new URLSearchParams(location.search).get("notice");
+      if (notice) {
+        error.textContent = notice;
+        error.hidden = false;
+      }
       form.addEventListener("submit", async (event) => {
         event.preventDefault();
         error.hidden = true;

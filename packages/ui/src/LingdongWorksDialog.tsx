@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { CheckSquare, FileUp, MinusSquare, RefreshCw, Square } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { FileText, FileUp, Paperclip, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import {
   Dialog,
@@ -14,8 +14,7 @@ import type { ClassroomWorkspaceScan } from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 
 // 平台单次提交的整单上限（base64 解码后合计，封面另算）：现在是 100MB。
-// 平台侧可调（RUNTIME_UPLOAD_MAX_BYTES），这里必须跟它保持一致——
-// 否则超过客户端这条线的好素材会被静默丢掉，学生与平台两边都看不出原因。
+// 平台侧可调（RUNTIME_UPLOAD_MAX_BYTES），这里必须跟它保持一致。
 const MAX_SUBMIT_TOTAL_BYTES = 100 * 1024 * 1024;
 
 function formatBytes(size: number): string {
@@ -33,7 +32,6 @@ export function LingdongWorksDialog({
 }) {
   const classroom = usePlatform().classroom;
   const [scan, setScan] = useState<ClassroomWorkspaceScan | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -45,9 +43,8 @@ export function LingdongWorksDialog({
       const result = await classroom.scanWorkspaceFiles();
       if (!result?.ok) throw new Error(result.message || "无法扫描课堂工作区。");
       setScan(result);
-      const files = result.files ?? [];
-      setSelected(new Set(files.slice(0, 1).map((file) => file.path)));
     } catch (error) {
+      setScan(null);
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
@@ -58,45 +55,26 @@ export function LingdongWorksDialog({
     if (open) void refresh();
   }, [open, refresh]);
 
-  const files = scan?.files ?? [];
-  const allSelected = files.length > 0 && selected.size === files.length;
-  const someSelected = selected.size > 0 && !allSelected;
-  const selectedFiles = useMemo(
-    () => files.filter((file) => selected.has(file.path)),
-    [files, selected],
-  );
-
-  const oversizedFiles = useMemo(
-    () => selectedFiles.filter((file) => file.size > MAX_SUBMIT_TOTAL_BYTES),
-    [selectedFiles],
-  );
-  const oversizedPaths = useMemo(
-    () => new Set(oversizedFiles.map((file) => file.path)),
-    [oversizedFiles],
-  );
-
-  const toggle = (path: string) => {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
+  const preview = scan?.preview;
+  const autoIncludedFiles = preview?.files.filter((file) => file.autoIncluded) ?? [];
+  const totalBytes = preview?.totalBytes ?? 0;
+  const overLimit = totalBytes > MAX_SUBMIT_TOTAL_BYTES;
+  const noNewOutput = Boolean(preview?.submitted && !preview.hasNewOutput);
+  const hasSubmittedBefore = Boolean(preview?.lastSubmittedAt);
+  const canSubmit = Boolean(preview && !overLimit && !noNewOutput);
 
   const submit = async () => {
-    if (!scan || selectedFiles.length === 0) return;
+    if (!preview) return;
     setBusy(true);
     setMessage("");
     try {
       if (!classroom) throw new Error("当前环境不支持课堂作品提交。");
-      // copyrightConfirmed 只在用户点击提交按钮后置真；UI 不做默认确认。
+      // 只提交主作品；引用素材由宿主用与预览相同的规则自动打包。
       const result = await classroom.submitWork({
         copyrightConfirmed: true,
-        items: selectedFiles.map((file) => ({ path: file.path, name: file.relativePath })),
+        items: [{ path: preview.entry.path, name: preview.entry.relativePath }],
       });
       if (result?.ok === false) throw new Error(result.message || "提交失败。");
-      // 平台新版提交响应直接带 works；未发版时回落到作品列表接口，两条路都要能用。
       const submitted = Array.isArray(result?.works) ? result.works : null;
       let nextCount: number | null = null;
       if (submitted) {
@@ -109,7 +87,17 @@ export function LingdongWorksDialog({
             ? works.works.length
             : null;
       }
-      setMessage(nextCount === null ? "作品已提交，平台正在处理。" : `作品已提交，平台当前返回 ${nextCount} 条作品记录。`);
+      try {
+        const nextScan = await classroom.scanWorkspaceFiles();
+        if (nextScan?.ok) setScan(nextScan);
+      } catch {
+        // 提交已经成功；重扫失败只影响按钮状态，不能把成功改判成失败。
+      }
+      setMessage(
+        nextCount === null
+          ? "作品已提交，平台正在处理。"
+          : `作品已提交，平台当前返回 ${nextCount} 条作品记录。`,
+      );
     } catch (error) {
       // Electron 的 IPC 拒绝会把方法名拼进 message，学生不该看到那串内部前缀。
       const raw = error instanceof Error ? error.message : String(error);
@@ -127,72 +115,103 @@ export function LingdongWorksDialog({
             <FileUp className="size-5" /> 提交课堂作品
           </DialogTitle>
           <DialogDescription>
-            从当前课堂工作区选择需要提交的文件。文件会通过灵动ai平台上传，不会把平台 token 暴露给页面。
+            只选择主作品文件，引用的素材会按相对路径自动一起提交。
           </DialogDescription>
         </DialogHeader>
         <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2">
           <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">
             {scan?.workspacePath || "正在读取课堂工作区…"}
           </span>
-          <Button type="button" variant="ghost" size="icon-sm" onClick={() => void refresh()} disabled={busy}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => void refresh()}
+            disabled={busy}
+          >
             <RefreshCw className={cn("size-4", busy && "animate-spin")} />
           </Button>
         </div>
-        <div className="max-h-[360px] overflow-auto rounded-lg border border-border">
-          {files.length === 0 ? (
-            <div className="p-8 text-center text-ui-sm text-foreground-subtle">当前工作区没有可提交文件。</div>
-          ) : (
+        <div className="max-h-[420px] overflow-auto rounded-lg border border-border">
+          {preview ? (
             <div className="divide-y divide-border">
-              <button
-                type="button"
-                className="flex w-full items-center gap-3 px-3 py-2 text-left text-ui-sm hover:bg-surface-hover"
-                onClick={() => setSelected(allSelected ? new Set() : new Set(files.map((file) => file.path)))}
-              >
-                {/* 以前未选中也画一个勾、只是变暗，学生根本分不清「全选了没」。 */}
-                {allSelected ? (
-                  <CheckSquare className="size-4 text-brand" />
-                ) : someSelected ? (
-                  <MinusSquare className="size-4 text-foreground-subtle" />
-                ) : (
-                  <Square className="size-4 text-foreground-subtle" />
-                )}
-                <span className="font-medium">{allSelected ? "取消全选" : "全选可提交文件"}</span>
-                <span className="ml-auto text-foreground-subtle">{files.length} 个</span>
-              </button>
-              {files.map((file) => (
-                <button
-                  type="button"
-                  key={file.path}
-                  className="flex w-full items-center gap-3 px-3 py-2 text-left hover:bg-surface-hover"
-                  onClick={() => toggle(file.path)}
-                >
-                  {/* 未勾选必须是空框，不能是「暗勾」。 */}
-                  {selected.has(file.path) ? (
-                    <CheckSquare className="size-4 text-brand" />
-                  ) : (
-                    <Square className="size-4 text-foreground-subtle" />
-                  )}
-                  <span className="min-w-0 flex-1 truncate text-ui-sm">{file.relativePath}</span>
-                  <span
-                    className={cn(
-                      "shrink-0 text-ui-xs",
-                      oversizedPaths.has(file.path) ? "text-warning" : "text-foreground-subtle",
-                    )}
-                  >
-                    {formatBytes(file.size)}
-                    {oversizedPaths.has(file.path) ? " · 超上限" : ""}
-                  </span>
-                </button>
-              ))}
+              <div className="flex items-center gap-3 px-3 py-3">
+                <FileText className="size-5 shrink-0 text-brand" />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-ui-sm font-medium">
+                    {preview.entry.relativePath}
+                  </div>
+                  <div className="mt-0.5 text-ui-xs text-foreground-subtle">
+                    主作品 · {formatBytes(preview.entry.size)}
+                  </div>
+                </div>
+              </div>
+              {autoIncludedFiles.length > 0 ? (
+                <div className="space-y-2 px-3 py-3">
+                  <div className="flex items-center gap-2 text-ui-xs text-foreground-subtle">
+                    <Paperclip className="size-3.5" />
+                    自动包含 {autoIncludedFiles.length} 个引用文件
+                  </div>
+                  <div className="space-y-1.5">
+                    {autoIncludedFiles.map((file) => (
+                      <div key={file.path} className="flex items-center gap-3 text-ui-sm">
+                        <span className="min-w-0 flex-1 truncate text-foreground-subtle">
+                          {file.relativePath}
+                        </span>
+                        <span className="shrink-0 text-ui-xs text-foreground-subtle">
+                          {formatBytes(file.size)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="px-3 py-2 text-ui-xs text-foreground-subtle">
+                  未检测到需要自动包含的引用文件。
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-8 text-center text-ui-sm text-foreground-subtle">
+              {scan?.previewError || "当前工作区没有可提交的主作品文件。"}
             </div>
           )}
         </div>
-        {message ? <div className="rounded-lg bg-accent px-3 py-2 text-ui-sm text-foreground">{message}</div> : null}
+        <div
+          className={cn(
+            "flex items-center justify-between rounded-lg border px-3 py-2 text-ui-sm",
+            overLimit ? "border-warning/40 bg-warning/10 text-warning" : "border-border bg-surface",
+          )}
+        >
+          <span>
+            {noNewOutput
+              ? "已提交，当前没有新产出"
+              : hasSubmittedBefore
+                ? `检测到新产出 · 将提交 ${preview?.files.length ?? 0} 个文件`
+                : `最终将提交 ${preview?.files.length ?? 0} 个文件`}
+          </span>
+          <span>总大小 {preview ? formatBytes(totalBytes) : "—"}</span>
+        </div>
+        {overLimit ? (
+          <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-ui-sm text-warning">
+            平台单次提交上限 {formatBytes(MAX_SUBMIT_TOTAL_BYTES)}，当前总大小已超出。
+          </div>
+        ) : null}
+        {message ? (
+          <div className="rounded-lg bg-accent px-3 py-2 text-ui-sm text-foreground">{message}</div>
+        ) : null}
         <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>关闭</Button>
-          <Button type="button" onClick={() => void submit()} disabled={busy || selectedFiles.length === 0}>
-            {/* 该按钮即“确认原创并提交”，copyrightConfirmed 只在用户点击后置真。 */}
-            {busy ? "处理中…" : `确认并提交 ${selectedFiles.length} 个文件`}
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+            关闭
+          </Button>
+          <Button type="button" onClick={() => void submit()} disabled={busy || !canSubmit}>
+            {busy
+              ? "处理中…"
+              : noNewOutput
+                ? "已提交，无新产出"
+                : hasSubmittedBefore
+                  ? "确认并提交新版本"
+                  : "确认并提交主作品"}
           </Button>
         </DialogFooter>
       </DialogContent>

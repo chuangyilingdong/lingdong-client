@@ -573,12 +573,37 @@ export interface ClassroomWorkspaceFile {
   readonly updatedAt: number;
 }
 
+export interface ClassroomWorkspaceBundleFile {
+  /** 提交给平台的相对资源名。 */
+  readonly name: string;
+  /** 工作区内用于展示的相对路径。 */
+  readonly relativePath: string;
+  readonly path: string;
+  readonly size: number;
+  /** true 表示由入口文件引用自动带入，UI 不单独勾选。 */
+  readonly autoIncluded: boolean;
+}
+
+export interface ClassroomWorkspaceSubmitPreview {
+  readonly entry: ClassroomWorkspaceFile;
+  readonly files: readonly ClassroomWorkspaceBundleFile[];
+  readonly totalBytes: number;
+  /** 当前打包内容是否已有匹配的成功提交记录。 */
+  readonly submitted: boolean;
+  /** 相比最近一次成功提交，是否包含新产出。 */
+  readonly hasNewOutput: boolean;
+  readonly lastSubmittedAt?: string;
+}
+
 export interface ClassroomWorkspaceScan {
   readonly ok: boolean;
   readonly message?: string;
   readonly files: readonly ClassroomWorkspaceFile[];
   readonly workspacePath?: string;
   readonly workspaceIdentity?: string;
+  /** 唯一主作品及自动带入素材的权威预览；无入口时缺省。 */
+  readonly preview?: ClassroomWorkspaceSubmitPreview;
+  readonly previewError?: string;
 }
 
 export interface ClassroomWorkItem {

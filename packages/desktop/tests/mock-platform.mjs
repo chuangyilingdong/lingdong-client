@@ -318,6 +318,10 @@ const server = http.createServer(async (req, res) => {
       works.push({
         id: "work-" + (works.length + 1),
         name: data.name,
+        entryFile: data.name,
+        classSessionId: activeClassroom.id,
+        source: "VIBECODING",
+        submittedAt: new Date().toISOString(),
         files: data.files?.map((f) => ({ name: f.name, binary: !!f.binary })),
         cover: !!data.cover,
       });
@@ -455,4 +459,3 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.listen(19090, "127.0.0.1", () => console.log("WINDOWS_PLATFORM_MOCK_READY 19090"));
-

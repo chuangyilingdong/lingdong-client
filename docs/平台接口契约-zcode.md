@@ -119,7 +119,7 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 - 名字白名单（平台逐段校验）：≤6 段、单段 ≤64 字、整名 ≤120 字，段首中英文/数字、段内可含 `._-`；
   禁 `..`、隐藏文件、绝对路径、盘符与反斜杠。
 
-客户端默认最多提交 60 个文件、总原始大小 16 MiB，JSON 请求上限约 24 MiB；平台应返回 `warnings` / `missingAssets` / `works` 供客户端回显。
+客户端默认最多提交 60 个文件、总原始大小 100 MiB，自身请求预检上限 140 MiB；平台接收层必须覆盖 100 MiB 原始文件 base64 后的约 133 MiB 传输量，并返回 `warnings` / `missingAssets` / `works` 供客户端回显。
 客户端**不自己拼** `/api/student/file-assets/...` 地址——相对引用的改写由平台做。
 
 提交失败不能因可选封面失败而阻断正文作品上传。
@@ -186,12 +186,12 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂能力统一收敛为
 `IPlatformService.classroom`（`IClassroomPlatformService`）：
 
-| 方法                   | 用途               | 说明                                      |
-| ---------------------- | ------------------ | ----------------------------------------- |
-| `getPresets()`         | 当前课堂提示词预设 | 插入草稿，不自动发送                      |
-| `scanWorkspaceFiles()` | 扫描课堂工作区候选 | 返回 path/relativePath/size/updatedAt     |
-| `submitWork(payload)`  | 提交作品           | `copyrightConfirmed` 必须来自用户显式确认 |
-| `listWorks()`          | 查询历史作品       | 提交后回显                                |
+| 方法                   | 用途                           | 说明                                                     |
+| ---------------------- | ------------------------------ | -------------------------------------------------------- |
+| `getPresets()`         | 当前课堂提示词预设             | 插入草稿，不自动发送                                     |
+| `scanWorkspaceFiles()` | 扫描课堂工作区候选与主作品预览 | 返回候选元数据，以及唯一主作品和自动引用文件的 `preview` |
+| `submitWork(payload)`  | 提交作品                       | `copyrightConfirmed` 必须来自用户显式确认                |
+| `listWorks()`          | 查询历史作品                   | 提交后回显                                               |
 
 约束：
 

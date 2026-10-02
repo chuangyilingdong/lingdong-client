@@ -115,7 +115,7 @@ try {
     } else {
       const dialog = page.getByRole("dialog");
       await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
-      await dialog.getByRole("button", { name: /确认并提交 1 个文件/ }).click();
+      await dialog.getByRole("button", { name: "确认并提交主作品", exact: true }).click();
       // mock 在 submitIncludesWorks 下故意让 GET /student/works 返回 0 条；
       // 若客户端显示 1 条，说明它用的是提交响应里的 works。
       await dialog.getByText("平台当前返回 1 条作品记录", { exact: false }).waitFor({

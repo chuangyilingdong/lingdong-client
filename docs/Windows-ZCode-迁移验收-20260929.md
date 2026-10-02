@@ -163,7 +163,7 @@ Mac 暂不推进。现有发布脚本仍有双端版本一致性约束；Windows
 
 ### 语义
 
-- `copyrightConfirmed` 只在用户点击“确认并提交 N 个文件”后置真；按钮文案即确认动作，UI 不再隐式默认。
+- `copyrightConfirmed` 只在用户点击“确认并提交主作品”后置真；按钮文案即确认动作，UI 不再隐式默认。
 - 缺少 `classroom` 能力（Web/手机）时提示“当前环境不支持课堂作品提交。”，不再退化成“无法扫描课堂工作区”。
 - 可选封面失败仍不阻断正文提交（由 main 采集，客户端不感知）。
 
@@ -349,7 +349,7 @@ electron-updater 的下载与校验已验证，替换动作属标准路径。
 - 客户端行为：从入口扫 `src=`/`href=`/`poster=` 与 CSS `url()`；丢掉 `http(s)://`、`//`、`data:`、`#`、`/` 开头；`name` 用相对入口目录的路径且与 HTML 里写的逐字一致；css/js 按文本、图片/视频/音频按二进制。
 - 顺带修掉一处既有遗漏：`WORK_ALLOWED_EXTENSIONS` 缺 `.css`，入口引用的样式表一直没被带上——现已补上。
 - 名字按平台白名单校验（≤6 段、单段 ≤64、整名 ≤120，段首中英文/数字，段内 `._-`；禁 `..`/隐藏文件/绝对路径/盘符/反斜杠）。
-- 验证：打包态课堂 E2E 只勾选 `index.html`，提交清单实测为 `index.html`(text)、`style.css`(text)、`assets/hero.png`(binary)、`assets/clip.mp4`(binary)、`assets/bg.png`(binary)；`https://…`、`data:…`、`#anchor` 均未出现。
+- 验证：打包态课堂 E2E 只显示主作品 `index.html`，引用素材只读展示并自动提交；提交清单实测为 `index.html`(text)、`style.css`(text)、`assets/hero.png`(binary)、`assets/clip.mp4`(binary)、`assets/bg.png`(binary)；`https://…`、`data:…`、`#anchor` 均未出现。
 - 契约与不变量见 `docs/specs/lingdong-work-asset-bundle.md`。
 
 ### 作品素材修复后的 Windows 候选包（未发布）

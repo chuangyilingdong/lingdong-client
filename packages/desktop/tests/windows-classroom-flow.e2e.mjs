@@ -1,7 +1,7 @@
 // 前提：已构建 Windows 源码并用独立测试数据根启动 Electron；mock 只使用本地虚构账号。
 import assert from "node:assert/strict";
 import { chromium } from "playwright-core";
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 const cdp = process.env.LINGDONG_E2E_CDP || "http://127.0.0.1:9229";
 const mock = process.env.LINGDONG_E2E_MOCK || "http://127.0.0.1:19090";
@@ -38,11 +38,17 @@ try {
     const created = context.waitForEvent("page", { timeout: 30_000 });
     await gate.locator("#submit").click();
     const main = await created;
-    await main.waitForURL("file:**", { timeout: 30_000 });
+    await main.waitForURL((url) => url.protocol === "file:" || url.hostname === "localhost", {
+      timeout: 30_000,
+    });
   }
   const page = context
     .pages()
-    .find((p) => p.url().startsWith("file:") && !/login\.html/.test(p.url()));
+    .find(
+      (p) =>
+        (p.url().startsWith("file:") || p.url().startsWith("http://localhost:5174")) &&
+        !/login\.html/.test(p.url()),
+    );
   assert.ok(page, "主窗口必须创建");
   const exitOnboarding = page.getByRole("button", { name: "退出引导", exact: true });
   await page
@@ -95,9 +101,7 @@ try {
   await presetsDialog
     .getByText("已插入当前任务输入框。", { exact: false })
     .waitFor({ timeout: 10_000 });
-  const composerAfterPreset = await page
-    .locator('[data-testid="v4-composer-input"]')
-    .innerText();
+  const composerAfterPreset = await page.locator('[data-testid="v4-composer-input"]').innerText();
   assert.ok(
     composerAfterPreset.includes("读取 notes.txt 并总结内容"),
     `预设必须真的插入输入框，实际内容：${JSON.stringify(composerAfterPreset)}`,
@@ -107,16 +111,18 @@ try {
 
   await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  // 先全选再清空，确保只勾选入口 HTML：素材不是学生勾的，必须由客户端顺着
-  // 入口里的相对引用自动带上，这条断言才有意义。
-  await dialog.getByRole("button", { name: /全选可提交文件/ }).click();
-  await dialog.getByRole("button", { name: /取消全选/ }).click();
-  await dialog.locator("button").filter({ hasText: "index.html" }).first().click();
-  await dialog.getByRole("button", { name: "确认并提交 1 个文件", exact: true }).waitFor({
-    timeout: 10_000,
-  });
-  await dialog.getByRole("button", { name: /确认并提交 \d+ 个文件/ }).click();
+  // 对话框只让学生选择一个主作品；引用素材必须由客户端顺着入口自动解析并只读展示。
+  await dialog.getByText("主作品 ·", { exact: false }).waitFor({ timeout: 10_000 });
+  await dialog.getByText("index.html", { exact: true }).waitFor({ timeout: 10_000 });
+  await dialog.getByText("自动包含 4 个引用文件", { exact: true }).waitFor({ timeout: 10_000 });
+  assert.equal(await dialog.getByText("notes.txt", { exact: true }).count(), 0);
+  await dialog.getByText("最终将提交 5 个文件", { exact: true }).waitFor({ timeout: 10_000 });
+  await dialog.getByText(/总大小 \d+(?:\.\d+)? (?:B|KB|MB)/u).waitFor({ timeout: 10_000 });
+  await dialog.getByRole("button", { name: "确认并提交主作品", exact: true }).click();
   await dialog.getByText("作品已提交", { exact: false }).waitFor({ timeout: 20_000 });
+  const submittedButton = dialog.getByRole("button", { name: "已提交，无新产出", exact: true });
+  await submittedButton.waitFor({ timeout: 10_000 });
+  assert.equal(await submittedButton.isDisabled(), true, "没有新产出时提交按钮必须置灰");
   const result = await (await fetch(`${mock}/__test/state`)).json();
   assert.ok(result.requests.length > 0 && result.requests.every((r) => r.keyMatches));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 1));
@@ -129,16 +135,41 @@ try {
   // css 走文本（平台内联），图片/视频走二进制；外链、data:、页内锚点一条都不能带。
   const submittedFiles = submitted.files ?? [];
   const fileByName = new Map(submittedFiles.map((file) => [file.name, file]));
-  assert.ok(fileByName.has("index.html"), `缺少入口文件：${submittedFiles.map((f) => f.name).join(",")}`);
+  assert.ok(
+    fileByName.has("index.html"),
+    `缺少入口文件：${submittedFiles.map((f) => f.name).join(",")}`,
+  );
   assert.equal(fileByName.get("style.css")?.binary, false, "css 必须按文本提交");
-  assert.equal(fileByName.get("assets/hero.png")?.binary, true, "HTML <img> 引用的图片必须按二进制提交");
-  assert.equal(fileByName.get("assets/clip.mp4")?.binary, true, "HTML <video> 引用的视频必须按二进制提交");
+  assert.equal(
+    fileByName.get("assets/hero.png")?.binary,
+    true,
+    "HTML <img> 引用的图片必须按二进制提交",
+  );
+  assert.equal(
+    fileByName.get("assets/clip.mp4")?.binary,
+    true,
+    "HTML <video> 引用的视频必须按二进制提交",
+  );
   assert.equal(fileByName.get("assets/bg.png")?.binary, true, "CSS url() 引用的图片也要带上");
   assert.ok(
     !submittedFiles.some((file) => /^(?:https?:|data:|\/|#)/u.test(file.name)),
     `外部/绝对引用不得出现在提交清单：${submittedFiles.map((f) => f.name).join(",")}`,
   );
   assert.ok(!submittedFiles.some((file) => file.name.includes("remote")), "外链素材不得被提交");
+  // 再产出后按钮必须重新可用：改入口文件会让最终打包指纹变化。
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
+  await writeFile(resolve(".tmp/windows-platform-e2e/classroom/index.html"), "<!-- new output -->\n", {
+    flag: "a",
+  });
+  await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
+  const refreshedDialog = page.getByRole("dialog");
+  const newVersionButton = refreshedDialog.getByRole("button", {
+    name: "确认并提交新版本",
+    exact: true,
+  });
+  await newVersionButton.waitFor({ timeout: 10_000 });
+  assert.equal(await newVersionButton.isDisabled(), false, "有新产出时必须允许提交新版本");
   const directory = resolve(".tmp/windows-platform-e2e");
   await mkdir(directory, { recursive: true });
   await page.screenshot({ path: resolve(directory, "e2e-pass.png") });
