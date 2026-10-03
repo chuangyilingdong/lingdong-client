@@ -3,7 +3,7 @@ name: Export current ZCode mac artifact
 on:
   push:
     branches: [codex/zcode-migration]
-    paths: ['.github/workflows/export-current-mac.yml']
+    paths: [".github/workflows/export-current-mac.yml"]
 
 permissions:
   actions: read
@@ -16,8 +16,8 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ github.sha }}
-      SOURCE_ARTIFACT: lingdong-client-0.2.3-mac-arm64
-      TARGET_VERSION: 0.2.3
+      SOURCE_ARTIFACT: lingdong-client-0.2.4-mac-arm64
+      TARGET_VERSION: 0.2.4
       TARGET_BRANCH: ci/zcode-current-mac
     steps:
       - uses: actions/checkout@v4

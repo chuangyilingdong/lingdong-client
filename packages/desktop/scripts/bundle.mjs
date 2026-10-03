@@ -735,6 +735,10 @@ async function main() {
     run(pnpmCommand, ["build"], buildEnv);
   }
 
+  runTimedSync("bundle:verify-brand-icons", () =>
+    run(process.execPath, [resolve(desktopRoot, "scripts", "verify-brand-icons.mjs")]),
+  );
+
   await runTimedAsync("bundle:electron-builder", () =>
     runElectronBuilderWithRetry(buildArgs, buildEnv),
   );

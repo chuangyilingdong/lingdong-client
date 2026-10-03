@@ -14,15 +14,15 @@ on:
       - codex/zcode-migration
       - main
     paths:
-      - '.github/workflows/build-mac-arm64.yml'
-      - '.github/workflows/export-mac-artifact.yml'
-      - 'packages/**'
-      - 'apps/**'
-      - 'config/**'
-      - 'scripts/**'
-      - 'public/**'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
+      - ".github/workflows/build-mac-arm64.yml"
+      - ".github/workflows/export-mac-artifact.yml"
+      - "packages/**"
+      - "apps/**"
+      - "config/**"
+      - "scripts/**"
+      - "public/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
 
 permissions:
   contents: write
@@ -34,8 +34,8 @@ jobs:
     timeout-minutes: 240
     env:
       ZCODE_ENV: production
-      ZCODE_PREVIEW_IDENTITY: '0'
-      ZCODE_ENABLE_MAC_SIGN: '0'
+      ZCODE_PREVIEW_IDENTITY: "0"
+      ZCODE_ENABLE_MAC_SIGN: "0"
       ZCODE_DESKTOP_DIST_DIR: ${{ github.workspace }}/dist/mac-arm64
       LINGDONG_API_BASE: https://aicyld.com
     steps:
@@ -67,6 +67,13 @@ jobs:
           app="$(find dist/mac-arm64 -type d -name '*.app' -print -quit)"
           test -n "$app"
           node scripts/macos-packaged-smoke.mjs "$app"
+
+      - name: Verify macOS icon branding
+        run: |
+          set -euo pipefail
+          app="$(find dist/mac-arm64 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          node packages/desktop/scripts/verify-brand-icons.mjs --app "$app"
 
       - name: Collect artifacts
         run: |
@@ -104,7 +111,7 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lingdong-client-0.2.3-mac-arm64
+          name: lingdong-client-0.2.4-mac-arm64
           path: |
             dist-mac/*.dmg
             dist-mac/*.zip

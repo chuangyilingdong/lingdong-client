@@ -735,6 +735,8 @@ export default {
     target: ["dmg", "zip"],
     category: "public.app-category.developer-tools",
     artifactName: buildDesktopArtifactName("mac"),
+    // macOS 使用透明四角的品牌方图标；electron-builder 在打包时再转换成 .app 使用的 icns。
+    icon: "resources/gate/app-icon-1024.png",
     extendInfo: {
       NSAppleEventsUsageDescription: `${desktopProductIdentity.productName} needs Apple Events access to coordinate local automation workflows with user-approved desktop apps.`,
     },
@@ -815,8 +817,7 @@ export default {
     size: "3200m",
     // 使用自定义安装背景图。
     background: "build/dmg_background.png",
-    // 安装盘图标统一使用安装专用素材，避免复用应用图标导致安装识别度不足。
-    icon: "build/icon_installer.icns",
+    // DMG 卷图标继承 mac.icon 转换后的灵动 ai icns，禁止再回退到 build 目录里的旧 ZCode .icns。
     contents: [
       // 实验性调整：为隐藏资源文件显式指定图标坐标，尽量把它们移到角落区域。
       { x: 640, y: 56, type: "file", path: ".background.tiff" },
