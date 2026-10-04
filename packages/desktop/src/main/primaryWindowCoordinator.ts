@@ -18,13 +18,13 @@ export type PrimaryWindowCreationDecision = "allow" | "block-force-update" | "bl
 
 export function resolvePrimaryWindowCreationDecision(params: {
   forceUpdateBlocked: boolean;
-  lingdongGatePending: boolean;
+  lingdongGateLoginPending: boolean;
 }): PrimaryWindowCreationDecision {
   // 强制升级是安全闸；即使登录门也在等待，也不能让旧版本主界面抢跑。
   if (params.forceUpdateBlocked) return "block-force-update";
   // 登录门未完成时禁止创建主窗口：否则 macOS activate 会用本地 lastWorkspaceSession
   // 启动旧课堂 workspace，等真正登录后再切到当前课堂，表现为工作区记录突然消失。
-  if (params.lingdongGatePending) return "block-lingdong-gate";
+  if (params.lingdongGateLoginPending) return "block-lingdong-gate";
   return "allow";
 }
 

@@ -69,7 +69,7 @@ Windows 客户端迁移到 ZCode 底座后，生产运行时仍使用 `ZCode` �
 
 修复规则：
 
-1. `primaryWindowCoordinator.canCreateWindow` 必须在 `isLingdongPlatformGatePending()` 为真时返回阻塞，并只聚焦登录窗。
-2. `app.activate`、Dock、托盘和其他入口共享同一阻塞边界；不得各自判断。
-3. 登录成功后由既有 `app-ready` 路径创建主窗口，此时 `ZCODE_LINGDONG_WORKSPACE_PATH` 已由当前 `client-context` 注入。
+1. 登录门状态拆成两个边界：`isLingdongPlatformGateLoginPending()` 只表示“用户还没完成登录”，用于阻塞主窗口；`isLingdongPlatformGatePending()` 表示“登录成功后仍要等主窗口 ready”，用于阻止窗口全关时提前退出。
+2. `primaryWindowCoordinator.canCreateWindow` 必须在 `isLingdongPlatformGateLoginPending()` 为真时阻塞，并只聚焦登录窗；`app.activate`、Dock、托盘和其他入口共享同一边界，不得各自判断。
+3. 登录成功后 `handleLogin` 写入 `activeState`，主窗口创建闸立即放行；随后仍由既有 `app-ready` 路径创建主窗口，此时 `ZCODE_LINGDONG_WORKSPACE_PATH` 已由当前 `client-context` 注入。
 4. 回归测试必须覆盖“登录门等待时 activate 不创建窗口，登录门完成后允许创建窗口”。

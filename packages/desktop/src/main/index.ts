@@ -120,6 +120,7 @@ import {
   finishLingdongPlatformGate,
   focusLingdongPlatformGateWindow,
   isLingdongGateWindow,
+  isLingdongPlatformGateLoginPending,
   isLingdongPlatformGatePending,
   runLingdongPlatformGate,
   setLingdongPrepLessonId,
@@ -931,7 +932,7 @@ const primaryWindowCoordinator = createPrimaryWindowCoordinator({
   canCreateWindow: (reason) => {
     const decision = resolvePrimaryWindowCreationDecision({
       forceUpdateBlocked: forceUpdateMainWindowCreationBlocked,
-      lingdongGatePending: isLingdongPlatformGatePending(),
+      lingdongGateLoginPending: isLingdongPlatformGateLoginPending(),
     });
     if (decision === "block-force-update") {
       // 强制升级命中后，Dock/托盘/activate/deep link 不能绕过 app-ready gate 创建旧版主界面。

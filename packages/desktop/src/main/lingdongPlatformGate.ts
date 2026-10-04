@@ -1150,6 +1150,11 @@ export function isLingdongPlatformGatePending(): boolean {
   return platformGatePending;
 }
 
+/** 主窗口创建闸：只等用户完成登录，不等主窗口 ready。 */
+export function isLingdongPlatformGateLoginPending(): boolean {
+  return platformGatePending && activeState === null;
+}
+
 export function focusLingdongPlatformGateWindow(): void {
   const window = gateWindow;
   if (!window || window.isDestroyed()) return;
