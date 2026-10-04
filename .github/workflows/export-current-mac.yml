@@ -1,3 +1,4 @@
+# Release trigger: macOS 0.2.5 login-gate fix.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 
