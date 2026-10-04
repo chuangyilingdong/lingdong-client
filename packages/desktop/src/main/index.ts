@@ -111,10 +111,14 @@ import {
   selectAppShutdownPolicy,
   type AppShutdownKind,
 } from "./appShutdownPolicy.js";
-import { createPrimaryWindowCoordinator } from "./primaryWindowCoordinator.js";
+import {
+  createPrimaryWindowCoordinator,
+  resolvePrimaryWindowCreationDecision,
+} from "./primaryWindowCoordinator.js";
 import {
   disposeLingdongPlatformGate,
   finishLingdongPlatformGate,
+  focusLingdongPlatformGateWindow,
   isLingdongGateWindow,
   isLingdongPlatformGatePending,
   runLingdongPlatformGate,
@@ -925,14 +929,23 @@ const primaryWindowCoordinator = createPrimaryWindowCoordinator({
     createWindowInstance(startupBootstrap);
   },
   canCreateWindow: (reason) => {
-    if (!forceUpdateMainWindowCreationBlocked) {
-      return true;
+    const decision = resolvePrimaryWindowCreationDecision({
+      forceUpdateBlocked: forceUpdateMainWindowCreationBlocked,
+      lingdongGatePending: isLingdongPlatformGatePending(),
+    });
+    if (decision === "block-force-update") {
+      // 强制升级命中后，Dock/托盘/activate/deep link 不能绕过 app-ready gate 创建旧版主界面。
+      logger.warn(`[force-update] 已阻止主窗口创建入口：${reason}`);
+      focusForceUpdateGateWindow();
+      return false;
     }
-
-    // 强制升级命中后，Dock/托盘/activate/deep link 不能绕过 app-ready gate 创建旧版主界面。
-    logger.warn(`[force-update] 已阻止主窗口创建入口：${reason}`);
-    focusForceUpdateGateWindow();
-    return false;
+    if (decision === "block-lingdong-gate") {
+      // macOS activate 可能在登录门完成前到达；此时只允许聚焦登录门，绝不能启动本地旧工作区。
+      logger.info(`[lingdong-gate] 登录门等待中，阻止主窗口创建：${reason}`);
+      focusLingdongPlatformGateWindow();
+      return false;
+    }
+    return true;
   },
   logger,
 });

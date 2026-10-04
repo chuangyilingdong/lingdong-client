@@ -1150,6 +1150,14 @@ export function isLingdongPlatformGatePending(): boolean {
   return platformGatePending;
 }
 
+export function focusLingdongPlatformGateWindow(): void {
+  const window = gateWindow;
+  if (!window || window.isDestroyed()) return;
+  if (window.isMinimized()) window.restore();
+  if (!window.isVisible()) window.show();
+  window.focus();
+}
+
 // 登录窗不是主界面：窗口协调器必须把它排除，
 // 否则 ensurePrimaryWindow 会把它当成"已存在窗口"复用，主窗口永不创建。
 export function isLingdongGateWindow(window: unknown): boolean {
