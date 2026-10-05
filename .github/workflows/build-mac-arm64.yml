@@ -1,4 +1,4 @@
-# Release trigger: macOS 0.2.5 login-gate fix.
+# Release trigger: macOS 0.2.6 branding release.
 # macOS Apple Silicon (arm64) 构建：push 即出未签名测试包（ad-hoc 签名），workflow_dispatch 可出正式签名包。
 name: Build macOS Apple Silicon (ZCode)
 
@@ -112,7 +112,7 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lingdong-client-0.2.5-mac-arm64
+          name: lingdong-client-0.2.6-mac-arm64
           path: |
             dist-mac/*.dmg
             dist-mac/*.zip

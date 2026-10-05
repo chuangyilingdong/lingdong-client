@@ -78,7 +78,7 @@ function getSidebarProfileName(user?: UserInfo | null): string {
     return username;
   }
 
-  return "ZCode";
+  return "灵动ai";
 }
 
 function getSidebarProfileBadge(

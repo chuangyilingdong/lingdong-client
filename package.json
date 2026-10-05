@@ -1,6 +1,6 @@
 {
   "name": "zcode",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
@@ -46,7 +46,7 @@
     "architecture:baseline:update": "node scripts/architecture/architecture-check.mjs baseline:update",
     "architecture:context": "node scripts/architecture/architecture-check.mjs context",
     "smoke:platform": "node scripts/smoke-zcode-platform-contract.mjs",
-    "test:platform": "tsx --test packages/desktop/tests/desktop-product-data-paths.test.ts packages/desktop/tests/deep-link-scheme-alignment.test.ts packages/desktop/tests/primary-window-creation-decision.test.ts packages/desktop/tests/lingdong-provider-config.test.ts packages/ui/tests/provider-login-gate.test.ts packages/ui/tests/classroom-workspace-tabs.test.ts packages/services/tests/lingdong-quota.test.ts",
+    "test:platform": "tsx --test packages/desktop/tests/desktop-product-data-paths.test.ts packages/desktop/tests/deep-link-scheme-alignment.test.ts packages/desktop/tests/primary-window-creation-decision.test.ts packages/desktop/tests/lingdong-branding.test.ts packages/desktop/tests/lingdong-provider-config.test.ts packages/ui/tests/provider-login-gate.test.ts packages/ui/tests/classroom-workspace-tabs.test.ts packages/services/tests/lingdong-quota.test.ts",
     "smoke:platform:windows": "node packages/desktop/tests/windows-classroom-flow.e2e.mjs",
     "smoke:platform:quota": "node packages/desktop/tests/windows-quota-flow.e2e.mjs limit-1",
     "smoke:platform:quota:unlimited": "node packages/desktop/tests/windows-quota-flow.e2e.mjs unlimited",

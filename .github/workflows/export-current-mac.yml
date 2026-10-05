@@ -1,4 +1,4 @@
-# Release trigger: macOS 0.2.5 login-gate fix.
+# Release trigger: macOS 0.2.6 branding release.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 
@@ -18,8 +18,8 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ github.sha }}
-      SOURCE_ARTIFACT: lingdong-client-0.2.5-mac-arm64
-      TARGET_VERSION: 0.2.5
+      SOURCE_ARTIFACT: lingdong-client-0.2.6-mac-arm64
+      TARGET_VERSION: 0.2.6
       TARGET_BRANCH: ci/zcode-current-mac
     steps:
       - uses: actions/checkout@v4
