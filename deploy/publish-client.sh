@@ -23,10 +23,11 @@
 set -euo pipefail
 
 KEY="${PUBLISH_CLIENT_SSH_KEY:-$HOME/.ssh/ai_kids_platform_ecs_temp_ed25519}"
-HOST="${PUBLISH_CLIENT_HOST:-root@8.134.80.184}"
+# 默认走稳定域名；服务器换 IP 不改脚本。accept-new 首次固定主机 key，后续 key 变化仍会拒绝。
+HOST="${PUBLISH_CLIENT_HOST:-root@aicyld.com}"
 REMOTE_DIR="/srv/ai-kids-platform/downloads"
 KNOWN_HOSTS="${PUBLISH_CLIENT_KNOWN_HOSTS:-$HOME/.ssh/known_hosts}"
-SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$KNOWN_HOSTS")
+SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=accept-new -o "UserKnownHostsFile=$KNOWN_HOSTS")
 DRY=0
 SINGLE=0
 
