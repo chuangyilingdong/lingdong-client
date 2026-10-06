@@ -56,6 +56,45 @@ import { registerDesktopSaveFileIpcHandler } from "./desktopSaveFile.js";
 import { registerDesktopPrintToPdfIpcHandler } from "./desktopPrintToPdf.js";
 import { registerCuaPipActiveSessionIpc } from "./desktopCuaPipIpc.js";
 
+export function registerDesktopUpdateWindowIpcHandlers(options: {
+  getUpdateState: () => UpdateStatePayload;
+  openUpdateStatusWindow: () => void;
+  getDesktopSessionActivity: () => {
+    runningAgentSessionCount: number;
+  };
+  getAutoUpdatePreferences: () => Promise<{
+    autoDownloadAndInstallUpdates: boolean;
+  }>;
+  setAutoDownloadAndInstallUpdates: (enabled: boolean) => Promise<void>;
+}) {
+  // 更新窗可能在登录门之前出现；这些 handler 必须先于平台登录初始化可用，
+  // 但后续完整平台 IPC 装配仍可能再次调用本函数，因此注册前统一幂等替换。
+  const registerHandler = (channel: string, handler: Parameters<typeof ipcMain.handle>[1]) => {
+    ipcMain.removeHandler(channel);
+    ipcMain.handle(channel, handler);
+  };
+
+  registerHandler(PlatformChannels.GetUpdateState, () => options.getUpdateState());
+  registerHandler(PlatformChannels.OpenUpdateStatusWindow, () => {
+    options.openUpdateStatusWindow();
+  });
+  registerHandler(PlatformChannels.GetAutoUpdatePreferences, () =>
+    options.getAutoUpdatePreferences(),
+  );
+  registerHandler(
+    PlatformChannels.SetAutoDownloadAndInstallUpdates,
+    async (_event, enabled: unknown) => {
+      if (typeof enabled !== "boolean") {
+        return;
+      }
+      await options.setAutoDownloadAndInstallUpdates(enabled);
+    },
+  );
+  registerHandler(PlatformChannels.GetDesktopSessionActivity, () =>
+    options.getDesktopSessionActivity(),
+  );
+}
+
 export function registerPlatformIpcHandlers(options: {
   fetchHelpConfig?: () => Promise<unknown>;
   logger: {
@@ -101,6 +140,8 @@ export function registerPlatformIpcHandlers(options: {
   /** Browser tab 关闭、挂起、恢复与跨重启 shell IPC。 */
   browserViewResidencyHandlers?: BrowserViewResidencyIpcHandlers;
 }) {
+  registerDesktopUpdateWindowIpcHandlers(options);
+
   ipcMain.handle(PlatformChannels.SelectDirectory, async () => {
     const result = await dialog.showOpenDialog({
       properties: ["openDirectory", "createDirectory"],
@@ -346,25 +387,6 @@ export function registerPlatformIpcHandlers(options: {
     },
   );
 
-  ipcMain.handle(PlatformChannels.GetUpdateState, () => options.getUpdateState());
-  ipcMain.handle(PlatformChannels.OpenUpdateStatusWindow, () => {
-    options.openUpdateStatusWindow();
-  });
-  ipcMain.handle(PlatformChannels.GetAutoUpdatePreferences, () =>
-    options.getAutoUpdatePreferences(),
-  );
-  ipcMain.handle(
-    PlatformChannels.SetAutoDownloadAndInstallUpdates,
-    async (_event, enabled: unknown) => {
-      if (typeof enabled !== "boolean") {
-        return;
-      }
-      await options.setAutoDownloadAndInstallUpdates(enabled);
-    },
-  );
-  ipcMain.handle(PlatformChannels.GetDesktopSessionActivity, () =>
-    options.getDesktopSessionActivity(),
-  );
   ipcMain.handle(PlatformChannels.GetDesktopZoomLevel, (event) => {
     const senderWindow = BrowserWindow.fromWebContents(event.sender);
     if (!senderWindow || senderWindow.isDestroyed()) {

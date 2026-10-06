@@ -28,14 +28,37 @@ const session = {
   logPath: null,
 };
 
-async function launchApp({ profileName, digest, withAuth = true, omitPlatformEntry = false }) {
+async function launchApp({
+  profileName,
+  digest,
+  withAuth = true,
+  omitPlatformEntry = false,
+  autoDownload = true,
+  pendingReadyVersion = null,
+}) {
   const profile = await mkdtemp(join(root, profileName + "-"));
   await mkdir(join(profile, ".zcode", "v2"), { recursive: true });
   await mkdir(join(profile, "electron"), { recursive: true });
   if (withAuth) {
     await writeFile(
       join(profile, ".zcode", "v2", "setting.json"),
-      JSON.stringify({ autoDownloadAndInstallUpdates: true }, null, 2),
+      JSON.stringify(
+        {
+          autoDownloadAndInstallUpdates: autoDownload,
+          ...(pendingReadyVersion
+            ? {
+                pendingPostUpdateReleaseNotes: {
+                  version: pendingReadyVersion,
+                  title: "更新联动 E2E",
+                  markdown: "恢复态安装验证",
+                  releaseDate: new Date().toISOString(),
+                },
+              }
+            : {}),
+        },
+        null,
+        2,
+      ),
     );
   }
   const manifest = {
@@ -147,7 +170,6 @@ async function loginThroughGate() {
 try {
   // 正例：清单 sha256 与安装包一致 → 必须下载完成。
   const good = await launchApp({ profileName: "positive", digest: sha256 });
-  await loginThroughGate();
   const goodLog = await waitForLog(
     good.logPath,
     (text) => text.includes(`[auto-update] downloaded: ${NEXT_VERSION}`),
@@ -164,7 +186,6 @@ try {
   // 反例：清单 sha256 与安装包不一致 → 必须失败且不得进入已下载状态。
   const wrongDigest = sha256.replace(/^./, sha256[0] === "0" ? "1" : "0");
   const bad = await launchApp({ profileName: "negative", digest: wrongDigest });
-  await loginThroughGate();
   const badLog = await waitForLog(
     bad.logPath,
     (text) =>
@@ -202,6 +223,68 @@ try {
   assert.ok(!/\[auto-update\] error:/.test(missingLog), "缺少本平台条目不得记成更新失败");
   stopApp();
 
+  // 第四场景：上一次下载完成但未安装，重启后必须先恢复 ready 更新窗，再允许登录。
+  // 用户显式点击“重启以更新”时，即使自动下载开关关闭，也必须重新 stage 当前版本并进入安装。
+  const restored = await launchApp({
+    profileName: "restored-ready",
+    digest: sha256,
+    autoDownload: false,
+    pendingReadyVersion: NEXT_VERSION,
+  });
+  {
+    const { chromium } = await import("playwright-core");
+    let browser;
+    for (let attempt = 0; attempt < 60 && !browser; attempt++) {
+      try {
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+      } catch {
+        await new Promise((r) => setTimeout(r, 500));
+      }
+    }
+    assert.ok(browser, "无法连接 Electron 调试端口");
+    try {
+      const context = browser.contexts()[0];
+      let updatePage;
+      for (let i = 0; i < 80; i++) {
+        updatePage = context.pages().find((p) => p.url().includes("windowKind=update-status"));
+        if (updatePage) break;
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      assert.ok(updatePage, "恢复态更新窗未在启动更新门阶段出现");
+      assert.ok(
+        !context
+          .pages()
+          .some((p) => /login\.html/.test(p.url()) || p.url().startsWith("data:text/html")),
+        "恢复态更新窗出现前不得先显示登录门",
+      );
+      await updatePage.getByRole("button", { name: /重启|Restart/ }).click();
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  }
+  const restoredLog = await waitForLog(
+    restored.logPath,
+    (text) =>
+      text.includes("[auto-update] restage completed for explicit install") ||
+      /\[auto-update\] error:/.test(text),
+    120_000,
+    "恢复态显式安装",
+  );
+  assert.ok(
+    restoredLog.includes("[auto-update] keep restored pending update"),
+    "启动检查应保留恢复态 ready，而不是先降回 available",
+  );
+  assert.ok(
+    restoredLog.includes("[auto-update] restage completed for explicit install"),
+    "恢复态点击重启后应重新下载并进入安装",
+  );
+  assert.ok(
+    restoredLog.includes("[auto-update] user requested quit and install"),
+    "重新 stage 完成后必须进入 quitAndInstall",
+  );
+  assert.ok(!/\[auto-update\] error:/.test(restoredLog), "恢复态显式安装不得失败");
+  stopApp();
+
   console.log(
     JSON.stringify({
       pass: true,
@@ -209,6 +292,8 @@ try {
       downloadedAndVerified: true,
       tamperedArtifactRejected: true,
       missingPlatformEntryTreatedAsNoUpdate: true,
+      restoredReadyShownBeforeLogin: true,
+      explicitRestageInstallsWithAutoDownloadOff: true,
     }),
   );
 } finally {

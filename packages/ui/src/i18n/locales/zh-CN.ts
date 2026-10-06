@@ -1442,6 +1442,7 @@ const zhCN: Record<string, string> = {
   "updateDialog.downloadingAction": "下载中",
   "updateDialog.downloadProgress": "下载进度",
   "updateDialog.restartToUpdate": "重启以更新",
+  "updateDialog.restartingToUpdate": "正在准备更新…",
   "updateDialog.skipVersion": "跳过此版本",
   "updateDialog.later": "稍后",
   "update.toast.upToDate": "已是最新版本 v{version}",

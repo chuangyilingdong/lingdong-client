@@ -212,7 +212,10 @@ import {
   setBrowserUseGuestWebContentsIdsProvider,
 } from "./resourceManagerWindow.js";
 import { createDesktopHelpConfigReader } from "./desktopHelpConfig.js";
-import { registerPlatformIpcHandlers } from "./desktopMainIpcPlatform.js";
+import {
+  registerDesktopUpdateWindowIpcHandlers,
+  registerPlatformIpcHandlers,
+} from "./desktopMainIpcPlatform.js";
 import {
   loadCliMcpFromUserDirectory,
   migrateLegacyCommonMcp,
@@ -1582,13 +1585,16 @@ function waitForUpdateStatusWindowClose(): Promise<void> {
  *
  * - 有更新（update-available / download-progress / update-downloaded）→ 先把更新窗弹出来，
  *   等用户处理完（关掉窗口）再继续 —— 学生不该先被要求登录、才发现要更新。
- * - 确认没有更新（checking → idle）→ 立刻放行。
- * - 超时（网络慢/平台不可达）→ 放行，绝不把启动卡死。
+ * - 检查 Promise 已收口且确认没有更新 / 失败 → 放行。
+ * - 检查超过兜底时间（网络慢/平台不可达）→ 放行，绝不把启动卡死。
  */
-function waitForStartupUpdateDecision(timeoutMs = 8000): Promise<void> {
+function waitForStartupUpdateDecision(
+  startupUpdateCheck: Promise<unknown> | undefined,
+  timeoutMs = 20_000,
+): Promise<void> {
   return new Promise((resolve) => {
     let settled = false;
-    let sawChecking = false;
+    let waitingForUser = false;
     const finish = () => {
       if (settled) return;
       settled = true;
@@ -1596,29 +1602,41 @@ function waitForStartupUpdateDecision(timeoutMs = 8000): Promise<void> {
       clearTimeout(timer);
       resolve();
     };
-    const onState = (state: UpdateStatePayload) => {
+    const dispose = onAutoUpdaterStateChanged((state) => {
       if (settled) return;
-      if (state.kind === "checking") {
-        sawChecking = true;
-        return;
-      }
       const hasPendingUpdate =
         state.kind === "update-available" ||
         state.kind === "download-progress" ||
         state.kind === "update-downloaded";
       if (hasPendingUpdate) {
         // 超时只用来约束「检查」这一段。一旦确实有更新，就进入「等用户处理」阶段：
-        // 必须把计时器停掉，否则 8 秒一到就会把登录门放出来，变成更新窗与登录门同时挂着。
+        // 必须把计时器停掉，否则兜底时间一到就会把登录门放出来，变成更新窗与登录门同时挂着。
+        waitingForUser = true;
         clearTimeout(timer);
         openUpdateStatusWindow();
         void waitForUpdateStatusWindowClose().then(finish);
-        return;
       }
-      if (state.kind === "idle" && sawChecking) finish();
-    };
-    const dispose = onAutoUpdaterStateChanged(onState);
+    });
     const timer = setTimeout(finish, timeoutMs);
-    onState(getAutoUpdaterState());
+    void startupUpdateCheck?.finally(() => {
+      // 首次检查本身已经失败/完成时，不能继续把启动门挂在初始 idle 快照上。
+      // 如果检查已发现更新，waitingForUser 会保持 true，直到更新窗关闭才放行。
+      if (!settled && !waitingForUser) finish();
+    });
+    // 先读当前快照，覆盖 hydrate / 检查早于监听器完成的竞态。
+    // 初始 idle 不能放行：必须等 startupUpdateCheck 收口或兜底计时器到点。
+    if (settled) return;
+    const initialState = getAutoUpdaterState();
+    const hasPendingUpdate =
+      initialState.kind === "update-available" ||
+      initialState.kind === "download-progress" ||
+      initialState.kind === "update-downloaded";
+    if (hasPendingUpdate) {
+      waitingForUser = true;
+      clearTimeout(timer);
+      openUpdateStatusWindow();
+      void waitForUpdateStatusWindowClose().then(finish);
+    }
   });
 }
 
@@ -2086,10 +2104,26 @@ app.whenReady().then(async () => {
     // 读取失败不影响启动，使用默认 homedir
   }
 
+  // 待安装状态来自上一次进程写下的 pending release notes，必须在启动更新门和登录门之前恢复。
+  // 否则“已下载但未安装”的版本只能在登录完成后才显示，用户会误以为更新要等到登录后才检查。
+  await hydratePendingPostUpdateReleaseNotes(mainSettingService);
+
+  // 更新窗可能先于登录门出现，它依赖的读状态、活动查询和自动下载设置 handler
+  // 必须在创建窗口前可用；完整平台 IPC 仍会在登录完成后幂等重挂这些 handler。
+  registerDesktopUpdateWindowIpcHandlers({
+    getUpdateState: getAutoUpdaterState,
+    openUpdateStatusWindow,
+    getDesktopSessionActivity: () => ({
+      runningAgentSessionCount: getRunningAgentSessionCount(),
+    }),
+    getAutoUpdatePreferences,
+    setAutoDownloadAndInstallUpdates,
+  });
+
   // 启动更新门：更新检查必须排在登录门**之前**。
   // 旧顺序把 initAutoUpdater 放在登录之后，于是「有更新」这件事只在登录成功后才看得到；
   // 登录本身失败/被挡住时，用户永远看不到更新提示。
-  void initAutoUpdater({
+  const startupUpdateCheck = initAutoUpdater({
     enabled: ZCODE_PRODUCT_FLAVOR === "production",
     onBeforeQuitAndInstall: async () => {
       notifyStabilityLifecycle("update_install");
@@ -2106,8 +2140,10 @@ app.whenReady().then(async () => {
       argv: process.argv,
       env: process.env,
     }),
+  }).catch((error) => {
+    logger.error("[auto-update] startup initialization failed:", error);
   });
-  await waitForStartupUpdateDecision();
+  await waitForStartupUpdateDecision(startupUpdateCheck);
 
   // 灵动ai 平台登录与课堂上下文必须先于首个 Host/Agent 启动。
   // ZCode 的 managed provider 配置、课堂 workspace 与平台网关凭据都由这里注入。
@@ -2190,7 +2226,6 @@ app.whenReady().then(async () => {
     logger.warn("[desktop-network] Chromium network policy bootstrap failed:", error);
   }
 
-  await hydratePendingPostUpdateReleaseNotes(mainSettingService);
   logWindowsBundledRuntimeIntegrityDiagnostic();
 
   // 自动更新检查已提前到登录门之前（见 waitForStartupUpdateDecision 调用点）：

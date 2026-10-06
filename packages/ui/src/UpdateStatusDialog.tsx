@@ -229,7 +229,9 @@ export function UpdateStatusDialog({
                 disabled={isUpdateActionPending}
                 onClick={() => void onRestartUpdate()}
               >
-                {intl.formatMessage({ id: "updateDialog.restartToUpdate" })}
+                {isUpdateActionPending
+                  ? intl.formatMessage({ id: "updateDialog.restartingToUpdate" })
+                  : intl.formatMessage({ id: "updateDialog.restartToUpdate" })}
               </Button>
             ) : isDownloading ? (
               <Button

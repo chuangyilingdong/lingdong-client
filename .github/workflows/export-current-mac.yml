@@ -1,4 +1,4 @@
-# Release trigger: macOS 0.2.6 branding release.
+# Release trigger: macOS 0.2.7 update recovery release.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 
@@ -18,8 +18,8 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ github.sha }}
-      SOURCE_ARTIFACT: lingdong-client-0.2.6-mac-arm64
-      TARGET_VERSION: 0.2.6
+      SOURCE_ARTIFACT: lingdong-client-0.2.7-mac-arm64
+      TARGET_VERSION: 0.2.7
       TARGET_BRANCH: ci/zcode-current-mac
     steps:
       - uses: actions/checkout@v4

@@ -61,7 +61,8 @@ const enUS: Record<string, string> = {
   "occupationOnboarding.migration": "Migrate conversations",
   "occupationOnboarding.migrationDescription": "Migrate conversation history from Claude Code",
   "occupationOnboarding.memory": "Enable Workspace Memory",
-  "occupationOnboarding.memoryDescription": "Let Lingdong AI remember your preferences and work context.",
+  "occupationOnboarding.memoryDescription":
+    "Let Lingdong AI remember your preferences and work context.",
   "occupationOnboarding.suggestions": "Enable proactive task suggestions",
   "occupationOnboarding.suggestionsDescription":
     "Show suggestions in new conversations. Click to fill the composer.",
@@ -1557,6 +1558,7 @@ const enUS: Record<string, string> = {
   "updateDialog.downloadingAction": "Downloading",
   "updateDialog.downloadProgress": "Download progress",
   "updateDialog.restartToUpdate": "Restart to update",
+  "updateDialog.restartingToUpdate": "Preparing update…",
   "updateDialog.skipVersion": "Skip this version",
   "updateDialog.later": "Later",
   "update.toast.upToDate": "You're on the latest version (v{version})",
@@ -2422,7 +2424,8 @@ const enUS: Record<string, string> = {
   "settings.embeddedBrowserAllowInsecureCertificatesSavedHint":
     "Certificate setting saved. Restart the app to take effect.",
   "settings.browser.data.section": "Browser data",
-  "settings.browser.desktopOnly": "Browser data can only be managed in the Lingdong AI desktop app.",
+  "settings.browser.desktopOnly":
+    "Browser data can only be managed in the Lingdong AI desktop app.",
   "settings.browser.import.title": "Import Chrome sign-in state",
   "settings.browser.import.description":
     "Bring your Chrome sign-in state into the built-in browser once, so the AI can open sites you are already signed in to and work more smoothly.",
@@ -3553,7 +3556,8 @@ const enUS: Record<string, string> = {
   "sidebar.usage.plan.toolCalls": "Tool calls",
   "sidebar.usage.plan.mcp": "Lingdong AI MCP",
   "sidebar.usage.plan.zcodeMcp": "Lingdong AI MCP",
-  "sidebar.usage.plan.zcodeMcpDescription": "Daily aggregate quota for Lingdong AI built-in plugin MCPs",
+  "sidebar.usage.plan.zcodeMcpDescription":
+    "Daily aggregate quota for Lingdong AI built-in plugin MCPs",
   "chat.planUsage.title": "Plan usage",
   "chat.planUsage.titleWithPlan": "{plan} Plan usage",
   "chat.planUsage.providerFallback": "Current provider",

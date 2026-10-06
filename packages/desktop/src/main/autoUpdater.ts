@@ -35,6 +35,7 @@ const DEV_AUTO_UPDATE_VERSION_SWITCH = "--zcode-auto-update-dev-version";
 let readyUpdateVersion: string | null = null;
 let readyUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let readyUpdateRestoredFromPendingReleaseNotes = false;
+let installAfterRestage = false;
 let menuLocale: Locale = DEFAULT_LOCALE;
 let manualCheckWebContentsId: number | null = null;
 let pendingPostUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
@@ -45,6 +46,8 @@ let autoUpdateCheckGeneration = 0;
 let activeAutoUpdateCheckId: number | null = null;
 let activeAutoUpdateCheckChannel: ElectronReleaseChannel | null = null;
 let settlingAutoUpdateCheckId: number | null = null;
+let autoUpdateCheckSettlement: Promise<void> = Promise.resolve();
+let resolveAutoUpdateCheckSettlement: (() => void) | null = null;
 let availableUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let availableUpdateChannel: ElectronReleaseChannel = "stable";
 let downloadingUpdateVersion: string | null = null;
@@ -162,7 +165,14 @@ function shouldRelaunchForDevAutoUpdateInstall(): boolean {
 }
 
 function getCurrentAppVersionForUpdate(): string {
-  return devAutoUpdateVersionOverride ?? app.getVersion();
+  if (devAutoUpdateVersionOverride) {
+    return devAutoUpdateVersionOverride;
+  }
+  // pending release notes 在 initAutoUpdater 之前恢复；开发态此时还未写入 override，
+  // 仍要按产品版本判断“待安装版本是否高于当前版本”，否则测试态会误丢待安装状态。
+  return !app.isPackaged && isDevAutoUpdateEnabled()
+    ? (resolveDevAutoUpdateVersion() ?? app.getVersion())
+    : app.getVersion();
 }
 
 function resolveDevAutoUpdateVersion(): string | null {
@@ -254,6 +264,9 @@ function beginAutoUpdateCheck(): number {
   activeAutoUpdateCheckId = autoUpdateCheckGeneration;
   activeAutoUpdateCheckChannel = availableUpdateChannel;
   settlingAutoUpdateCheckId = null;
+  autoUpdateCheckSettlement = new Promise((resolve) => {
+    resolveAutoUpdateCheckSettlement = resolve;
+  });
   return activeAutoUpdateCheckId;
 }
 
@@ -266,6 +279,8 @@ function completeAutoUpdateCheck(reason: string, checkId: number | null): void {
   activeAutoUpdateCheckId = null;
   activeAutoUpdateCheckChannel = null;
   settlingAutoUpdateCheckId = null;
+  resolveAutoUpdateCheckSettlement?.();
+  resolveAutoUpdateCheckSettlement = null;
 
   const pendingChannel = pendingManifestReleaseChannelRefresh;
   if (!pendingChannel) {
@@ -408,12 +423,15 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
     );
     clearReadyUpdateState();
     availableUpdateReleaseNotes = restoredReleaseNotes;
+    // pending release notes 只能恢复“用户曾下载过”的展示，不能重建 electron-updater
+    // 当前进程的 downloadedUpdateHelper。用户明确点击“重启以更新”时，必须无条件
+    // 重新 stage 一次，不能再受自动下载偏好的影响；下载完成后由 update-downloaded
+    // 事件继续进入真正的 quitAndInstall。
+    installAfterRestage = true;
     setAutoUpdaterMenuState(
       buildUpdateAvailableState(restoredVersion, restoredReleaseNotes, restoredChannel),
     );
-    if (await shouldAutoDownloadAndInstallUpdates(autoUpdaterSettingService)) {
-      downloadAvailableUpdate("restored-pending-install");
-    }
+    downloadAvailableUpdate("restored-pending-install");
     return;
   }
 
@@ -1022,6 +1040,8 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
   }
 
   logger.error(`[auto-update] ${source}:`, error);
+  // 重新 stage 失败后不能保留自动安装意图，否则用户下次重试时会被旧命令误触发。
+  installAfterRestage = false;
   if (menuState.kind === "update-downloaded" && readyUpdateVersion) {
     const failedReadyVersion = readyUpdateVersion;
     // macOS Squirrel 可能在 update-downloaded 后才发现包无法 stage。
@@ -1262,6 +1282,7 @@ function cancelDownloadingUpdate(reason = "renderer") {
   const releaseNotes = downloadingUpdateReleaseNotes;
   const channel = downloadingUpdateChannel ?? availableUpdateChannel;
   const cancellationToken = downloadCancellationToken;
+  installAfterRestage = false;
   markCancelledDownload(cancellationToken);
   cancellationToken.cancel();
   logger.info(
@@ -1524,6 +1545,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   pendingManifestReleaseChannelRefresh = null;
   devAutoUpdateVersionOverride = null;
   availableUpdateChannel = "stable";
+  installAfterRestage = false;
   clearAvailableUpdateState();
   clearDownloadingUpdateState();
   applyDevAutoUpdateRuntimeOverrides();
@@ -1541,10 +1563,10 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   autoUpdater.logger = logger;
   applyManifestUpdateProvider(options);
 
-  const triggerCheckForUpdates = (reason: string) => {
+  const triggerCheckForUpdates = (reason: string): Promise<void> => {
     if (checkForUpdatesInFlight) {
       logger.info(`[auto-update] skip ${reason}: check already in flight`);
-      return;
+      return Promise.resolve();
     }
 
     // 发布链路即使改成“安装包先、latest 后”，CDN 生效仍可能晚于客户端的轮询节奏。
@@ -1553,10 +1575,11 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     // update-downloaded 态进入；后者继续轮询是为了发现取代已下载版本的新版本。
     if (reason === "poll" && !canPollForUpdatesFromState(menuState)) {
       logger.info(`[auto-update] skip ${reason}: state=${menuState.kind}`);
-      return;
+      return Promise.resolve();
     }
 
     const checkId = beginAutoUpdateCheck();
+    const checkSettlement = autoUpdateCheckSettlement;
     const checkForUpdatesPromise = options.settingService
       ? (async () => {
           await syncAutoUpdateCheckChannelFromSettings(checkId, options.settingService, reason);
@@ -1564,14 +1587,17 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
         })()
       : autoUpdater.checkForUpdates();
 
-    checkForUpdatesPromise
+    return checkForUpdatesPromise
       .catch((err) => {
         // 强更弹窗可能复用启动期后台检查；如果 checkForUpdates 直接 reject 且没有后续 error 事件，
         // 只写日志会让弹窗停在 checking。这里复用失败收敛逻辑，把状态恢复并反馈给强更监听。
         handleAutoUpdateFailure(err, `${reason} check failed`);
       })
-      .finally(() => {
+      .finally(async () => {
         finishAutoUpdateCheck(reason, checkId);
+        // 事件监听器异步处理 update-available / not-available；调用方必须等状态真正写完，
+        // 否则启动更新门会在“检查 Promise 已返回、状态还没广播”的空窗里提前放行登录。
+        await checkSettlement;
       });
   };
 
@@ -1593,6 +1619,22 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     }
 
     void settleAutoUpdateCheckResult("update available", async () => {
+      if (
+        readyUpdateRestoredFromPendingReleaseNotes &&
+        readyUpdateVersion &&
+        !isVersionGreaterThan(info.version, readyUpdateVersion)
+      ) {
+        // 启动时刚从 pending release notes 恢复出的 ready 状态只缺当前进程的 staging
+        // 上下文，不代表远端已经发布了更高版本。首次后台检查确认还是同一版本时要保留
+        // ready，让启动更新门能先展示“已准备就绪”；用户点击重启再重新 stage。
+        logger.info(
+          `[auto-update] keep restored pending update version=${readyUpdateVersion} remote=${info.version}`,
+        );
+        setAutoUpdaterMenuState(buildUpdateDownloadedState(readyUpdateVersion));
+        sendManualCheckResult({ kind: "ready", version: readyUpdateVersion });
+        return;
+      }
+
       if (!shouldDownloadAvailableUpdate(info.version)) {
         const readyVersion = readyUpdateVersion ?? info.version;
         logger.info(
@@ -1724,6 +1766,12 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     setAutoUpdaterMenuState(buildUpdateDownloadedState(info.version));
     notifyForceAutoUpdate({ kind: "ready", version: info.version });
 
+    if (installAfterRestage) {
+      installAfterRestage = false;
+      logger.info(`[auto-update] restage completed for explicit install version=${info.version}`);
+      void quitAndInstallUpdate();
+    }
+
     if (activeForceAutoUpdateListener) {
       notifyForceAutoUpdate({ kind: "installing" });
       void quitAndInstallUpdate();
@@ -1788,12 +1836,14 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     await skipAvailableUpdateVersion(validatedVersion, options.settingService);
   });
 
-  triggerCheckForUpdates("startup");
+  const startupUpdateCheck = triggerCheckForUpdates("startup");
 
   autoUpdatePollTimer = setInterval(() => {
-    triggerCheckForUpdates("poll");
+    void triggerCheckForUpdates("poll");
   }, AUTO_UPDATE_POLL_INTERVAL_MS);
   autoUpdatePollTimer.unref?.();
+
+  return startupUpdateCheck;
 }
 
 export function requestForceAutoUpdate(
