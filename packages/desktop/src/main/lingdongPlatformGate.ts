@@ -8,6 +8,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
+import { shouldRefreshRuntimeKey } from "./lingdongRuntimeKey.js";
 import type { ClassroomWorkspaceSubmitPreview } from "@zcode/shared";
 
 type LingdongUser = {
@@ -70,13 +71,16 @@ const CLASSROOM_END_REASONS = new Set([
   "CLASSROOM_MODE_MISMATCH",
 ]);
 const CLASSROOM_POLL_DEFAULT_MS = 5_000;
+// 平台运行时密钥默认 6 小时过期；轮询拿到的新 key 必须在临近过期时写回 Provider 配置。
+const RUNTIME_KEY_REFRESH_MARGIN_MS = 60 * 60 * 1000;
+const RUNTIME_KEY_REFRESH_FALLBACK_MS = 30 * 60 * 1000;
 let classroomPollTimer: NodeJS.Timeout | null = null;
 let classroomExitInFlight = false;
+let lastRuntimeKeyRefreshAt = 0;
 
 /** 深链 `lingdong://open?prep=1&lesson=<id>` 的落点；null 表示回到学生路径。 */
 export function setLingdongPrepLessonId(lessonId: string | null): void {
-  pendingPrepLessonId =
-    typeof lessonId === "string" && lessonId.trim() ? lessonId.trim() : null;
+  pendingPrepLessonId = typeof lessonId === "string" && lessonId.trim() ? lessonId.trim() : null;
 }
 
 export function getLingdongPrepLessonId(): string | null {
@@ -150,7 +154,10 @@ async function checkClassroomStillActive(): Promise<void> {
     const context = unwrap<LingdongContext>(
       await apiRequest("/api/student/runtime/client-context", {}, state.session.token),
     );
-    if (context.classroom) return;
+    if (context.classroom) {
+      await refreshRuntimeKeyIfNeeded(context);
+      return;
+    }
     if (!CLASSROOM_END_REASONS.has(String(context.reason || ""))) return;
     classroomExitInFlight = true;
     await writeGateNotice("课堂已结束，请重新登录。").catch(() => {});
@@ -165,7 +172,10 @@ async function checkClassroomStillActive(): Promise<void> {
 function startClassroomPolling(): void {
   stopClassroomPolling();
   if (!activeState || isPrepContext(activeState.context)) return;
-  classroomPollTimer = setInterval(() => void checkClassroomStillActive(), classroomPollIntervalMs());
+  classroomPollTimer = setInterval(
+    () => void checkClassroomStillActive(),
+    classroomPollIntervalMs(),
+  );
   classroomPollTimer.unref?.();
 }
 
@@ -192,9 +202,32 @@ function resolvePrepWorkspace(context: LingdongContext, user: LingdongUser | und
   const lesson =
     String(context.lesson?.title ?? "备课")
       .trim()
-      .replace(/[<>:"/\\|?*]+/gu, "-") ||
-    "备课";
+      .replace(/[<>:"/\\|?*]+/gu, "-") || "备课";
   return join(app.getPath("documents"), "灵动ai创作", `${display}-备课-${lesson}`);
+}
+
+async function refreshRuntimeKeyIfNeeded(context: LingdongContext): Promise<void> {
+  const state = activeState;
+  if (!state || isPrepContext(state.context)) return;
+  const now = Date.now();
+  if (
+    !shouldRefreshRuntimeKey({
+      key: state.context.gateway?.key,
+      now,
+      lastRefreshAt: lastRuntimeKeyRefreshAt,
+      refreshMarginMs: RUNTIME_KEY_REFRESH_MARGIN_MS,
+      fallbackIntervalMs: RUNTIME_KEY_REFRESH_FALLBACK_MS,
+    })
+  ) {
+    return;
+  }
+  // 平台这次 client-context 已经签发了新 key；只做一次原子落盘，Host 会按既有文件轮询刷新 Provider。
+  await buildProviderConfig(context, state.providerConfigPath);
+  await createLingdongQuotaLedger(state.quotaFilePath).sync(context.sends ?? {});
+  process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
+  process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
+  activeState = { ...state, context };
+  lastRuntimeKeyRefreshAt = now;
 }
 
 async function buildProviderConfig(context: LingdongContext, targetPath?: string): Promise<string> {
@@ -225,7 +258,9 @@ async function readSubmissionRecord(
   entryRelativePath: string,
 ): Promise<SubmittedWorkRecord | null> {
   try {
-    const raw = JSON.parse(await readFile(submissionStatePath(workspaceIdentity), "utf8")) as unknown;
+    const raw = JSON.parse(
+      await readFile(submissionStatePath(workspaceIdentity), "utf8"),
+    ) as unknown;
     if (!record<unknown>(raw) || !record<unknown>(raw.records)) return null;
     const value = raw.records[entryRelativePath];
     if (!record<unknown>(value)) return null;
@@ -282,7 +317,8 @@ async function consumeGateNotice(): Promise<string | null> {
 
 function classroomPollIntervalMs(): number {
   const configured = Number(process.env.LINGDONG_CLASSROOM_POLL_MS || 0);
-  const wanted = Number.isFinite(configured) && configured > 0 ? configured : CLASSROOM_POLL_DEFAULT_MS;
+  const wanted =
+    Number.isFinite(configured) && configured > 0 ? configured : CLASSROOM_POLL_DEFAULT_MS;
   return Math.max(1_000, Math.min(60_000, wanted));
 }
 
@@ -320,11 +356,22 @@ async function handleLogin(
     const contextPath = prepLessonId
       ? `/api/student/runtime/client-context?prep=1&lessonId=${encodeURIComponent(prepLessonId)}`
       : "/api/student/runtime/client-context";
-    const context = unwrap<LingdongContext>(await apiRequest(contextPath, {}, session.token));
-    // 备课上下文 classroom 恒为 null —— 那是正常形态，不能按「还没开课」拦下来。
+    let context = unwrap<LingdongContext>(await apiRequest(contextPath, {}, session.token));
+    // 登录时若平台返回的运行时密钥已进入续签窗口，立即再取一次；避免带着马上过期的 key 启动 Host。
     const prep = isPrepContext(context);
-    if (!context.classroom && !prep)
-      throw new Error(context.message || "当前没有正在进行的课堂。");
+    if (
+      !prep &&
+      shouldRefreshRuntimeKey({
+        key: context.gateway?.key,
+        now: Date.now(),
+        lastRefreshAt: Date.now(),
+        refreshMarginMs: RUNTIME_KEY_REFRESH_MARGIN_MS,
+        fallbackIntervalMs: Number.POSITIVE_INFINITY,
+      })
+    ) {
+      context = unwrap<LingdongContext>(await apiRequest(contextPath, {}, session.token));
+    }
+    if (!context.classroom && !prep) throw new Error(context.message || "当前没有正在进行的课堂。");
     const workspacePath = prep
       ? resolvePrepWorkspace(context, session.user)
       : resolveWorkspace(context, session.user);
@@ -354,6 +401,7 @@ async function handleLogin(
     process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY = activeState.workspaceIdentity;
     process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom?.id ?? "";
     process.env.ZCODE_LINGDONG_QUOTA_FILE = prep ? "" : quotaFilePath;
+    lastRuntimeKeyRefreshAt = Date.now();
     startClassroomPolling();
     // 登录成功后关闭登录窗，但 platformGatePending 会一直保持到主窗口就绪：
     // 应用进入"零窗口"瞬间时 window-all-closed 会被 pending 拦住，不会误退出。
@@ -589,14 +637,7 @@ const HTML_STYLE_BLOCK_PATTERN = /<style\b[^>]*>([\s\S]*?)<\/style>/giu;
 const HTML_SCRIPT_BLOCK_PATTERN = /<script\b[^>]*>([\s\S]*?)<\/script>/giu;
 const JS_QUOTED_REFERENCE_PATTERN = /["'`]([^"'`\n]{1,120})["'`]/gu;
 const JS_REFERENCE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".json"]);
-const RECURSIVE_REFERENCE_EXTENSIONS = new Set([
-  ".css",
-  ".js",
-  ".mjs",
-  ".cjs",
-  ".json",
-  ".svg",
-]);
+const RECURSIVE_REFERENCE_EXTENSIONS = new Set([".css", ".js", ".mjs", ".cjs", ".json", ".svg"]);
 
 function firstReferenceGroup(match: RegExpMatchArray): string | undefined {
   return match[1] ?? match[2] ?? match[3];
@@ -655,7 +696,12 @@ function extractLocalReferences(
 /** 素材名按「入口文件所在目录」算，才能和 HTML 里写的相对引用逐字一致。 */
 function toEntryRelativeName(entryDir: string, absolute: string): string | null {
   const relativeName = relative(entryDir, absolute);
-  if (!relativeName || relativeName === "." || relativeName.startsWith("..") || isAbsolute(relativeName)) {
+  if (
+    !relativeName ||
+    relativeName === "." ||
+    relativeName.startsWith("..") ||
+    isAbsolute(relativeName)
+  ) {
     return null;
   }
   return relativeName.replaceAll("\\", "/");
@@ -837,9 +883,7 @@ async function findLatestPlatformSubmission(
   }
 }
 
-async function prepareSubmitFiles(
-  items: readonly SubmitItem[],
-): Promise<{
+async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<{
   readonly files: WorkFilePayload[];
   readonly entryPath: string;
   readonly entryName: string;
@@ -1137,6 +1181,7 @@ function registerPlatformHandlers(): void {
     process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
     process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
     activeState = { ...activeState, context };
+    lastRuntimeKeyRefreshAt = Date.now();
     return getLingdongPlatformSnapshot();
   });
 }
@@ -1247,4 +1292,5 @@ export async function disposeLingdongPlatformGate(): Promise<void> {
   providerBinding = null;
   await binding?.dispose();
   activeState = null;
+  lastRuntimeKeyRefreshAt = 0;
 }
