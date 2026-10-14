@@ -1037,12 +1037,13 @@ async function captureHtmlCover(
       height: 720,
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false },
     });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
     try {
       await Promise.race([
         window.loadURL(`http://127.0.0.1:${address.port}/${relativeEntry}`),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("cover timeout")), COVER_TIMEOUT_MS),
-        ),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("cover timeout")), COVER_TIMEOUT_MS);
+        }),
       ]);
       await new Promise((resolveReady) => setTimeout(resolveReady, 450));
       let image = await window.webContents.capturePage({ x: 0, y: 0, width: 1280, height: 720 });
@@ -1051,20 +1052,28 @@ async function captureHtmlCover(
         png = image.resize({ width: 1024, height: 576 }).toPNG();
       return png.byteLength <= COVER_MAX_BYTES ? { content: png.toString("base64") } : undefined;
     } finally {
+      if (timeout) clearTimeout(timeout);
       window.destroy();
     }
-  } catch {
+  } catch (error) {
+    // 封面失败不阻断提交，但必须留痕：不然用户只看到长时间“处理中”。
+    console.warn("[lingdong-gate] 封面截图失败，改为无封面提交。", error);
     return undefined;
   } finally {
+    // 页面留下的 keep-alive 连接会让 server.close() 一直等；先强制收掉所有连接。
+    server.closeAllConnections?.();
+    server.closeIdleConnections?.();
     await new Promise<void>((resolveClosed) => server.close(() => resolveClosed()));
   }
 }
 
 async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
+  const submitStartedAt = Date.now();
   const input = record<unknown>(payload) ? payload : {};
   const rawItems = Array.isArray(input.items) ? (input.items as SubmitItem[]) : [];
   const prepared = await prepareSubmitFiles(rawItems);
+  const preparedMs = Date.now() - submitStartedAt;
   const files = prepared.files;
   const entry = files.find((file) =>
     SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.name).toLowerCase()),
@@ -1079,17 +1088,26 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
     copyrightConfirmed: input.copyrightConfirmed === true,
     files,
   };
+  const coverStartedAt = Date.now();
   const cover = await captureHtmlCover(prepared.entryPath);
+  const coverMs = Date.now() - coverStartedAt;
   if (cover) body.cover = cover;
   if (Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_WORK_REQUEST_BYTES) {
     throw new Error("作品编码后太大，请减少素材后再提交。");
   }
   // 平台新版在提交响应里直接回 works（形状同 GET /student/works）；解包后交给 renderer。
+  const uploadStartedAt = Date.now();
   const result = unwrap<Record<string, unknown>>(
     await callPlatform("/api/student/runtime/submit-upload", {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  );
+  const uploadMs = Date.now() - uploadStartedAt;
+  // 平台 submit-upload 已返回分阶段 timings；没有这行日志时只能看到“处理中”，
+  // 没法判断时间花在客户端封面采集、请求传输还是平台落盘/入库。
+  console.info(
+    `[lingdong-gate] submit-upload done preparedMs=${preparedMs} coverMs=${coverMs} uploadMs=${uploadMs} totalMs=${Date.now() - submitStartedAt} timings=${JSON.stringify(record<unknown>(result) ? (result.timings ?? null) : null)}`,
   );
   try {
     await writeSubmissionRecord(activeState.workspaceIdentity, prepared.entryRelativePath, {

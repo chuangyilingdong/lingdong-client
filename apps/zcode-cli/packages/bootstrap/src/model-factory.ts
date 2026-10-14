@@ -14,6 +14,8 @@ interface CreateModelAdapterBaseOptions {
   modelIoFullRetentionEnabled?: boolean;
   streamIdleTimeoutMs?: number;
   statusSink?: ModelStatusSink;
+  resolveProviderApiKey?: (providerId: string) => string | undefined;
+  refreshProviderRegistry?: (reason: string) => Promise<void>;
 }
 
 export type CreateModelAdapterOptions = CreateModelAdapterBaseOptions & {
@@ -32,5 +34,11 @@ export function createModelAdapter(options: CreateModelAdapterOptions): AiSdkMod
     modelIoFullRetentionEnabled: options.modelIoFullRetentionEnabled,
     streamIdleTimeoutMs: options.streamIdleTimeoutMs,
     statusSink: options.statusSink,
+    ...(options.resolveProviderApiKey
+      ? { resolveProviderApiKey: options.resolveProviderApiKey }
+      : {}),
+    ...(options.refreshProviderRegistry
+      ? { refreshProviderRegistry: options.refreshProviderRegistry }
+      : {}),
   });
 }

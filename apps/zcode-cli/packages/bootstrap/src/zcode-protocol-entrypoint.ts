@@ -262,6 +262,9 @@ export async function runZCodeProtocolAgent(
               selectionIssue: view.selectionIssue,
             };
           },
+          refreshProviderRegistry: async (reason) => {
+            await activeProviderRegistryRuntime.runtime.registryService.refresh(reason);
+          },
           env: {
             ...telemetryEnv,
             ...appOptions.env,

@@ -138,6 +138,8 @@ export interface ZCodeAppOptions {
   modelAdapter?: AiSdkModelAdapter;
   /** Worker 进程拥有的 Registry；App 只借用，不负责释放。 */
   providerRegistry: ProviderRegistryModelSource;
+  /** 请求层 401 时刷新 Registry；缺省时模型请求不做鉴权重试。 */
+  refreshProviderRegistry?: (reason: string) => Promise<void>;
   resolveEffectiveModelSelection?: (selection: ModelSelection) => EffectiveModelSelectionResult;
   /** 新 Session 使用的 Environment 默认选择；仅在没有显式 runtime modelSelection 时参与初始化。 */
   configuredDefaultModelSelection?: ModelSelection;

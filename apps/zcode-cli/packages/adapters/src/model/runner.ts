@@ -65,6 +65,10 @@ export interface AiSdkModelAdapterOptions {
   statusSink?: ModelStatusSink;
   streamIdleTimeoutMs?: number;
   modelIoFullRetentionEnabled?: boolean;
+  /** 请求发送时读取注册表里的最新 API Key。 */
+  resolveProviderApiKey?: (providerId: string) => string | undefined;
+  /** 401 时刷新 Provider Registry，供请求层用新 key 重试一次。 */
+  refreshProviderRegistry?: (reason: string) => Promise<void>;
 }
 
 export interface CreateAiSdkModelOptions {
@@ -97,6 +101,15 @@ export class AiSdkModelAdapter {
       },
       {
         ...(options.logger ? { logger: options.logger } : {}),
+        ...(options.resolveProviderApiKey
+          ? { resolveApiKey: options.resolveProviderApiKey }
+          : {}),
+        ...(options.refreshProviderRegistry
+          ? {
+              refreshApiKey: async () =>
+                options.refreshProviderRegistry!('model-auth-refresh'),
+            }
+          : {}),
       },
     );
     this.runtime = options.runtime ?? defaultRuntime;

@@ -52,6 +52,8 @@ export interface AiSdkModelExecutionConfig {
 export interface AiSdkModelExecutionOptions {
   logger?: Logger;
   transport?: ProviderFetch;
+  resolveApiKey?: (providerId: string) => string | undefined;
+  refreshApiKey?: (providerId: string) => Promise<void>;
 }
 
 export interface AiSdkNetworkConfig {
@@ -91,6 +93,10 @@ export interface ProviderBusinessErrorFetchOptions {
   fetch?: ProviderFetch;
   httpProxy?: string;
   noProxy?: string;
+  /** 请求发送时读取当前 Provider API Key；平台网关 key 会在课堂轮询中更新。 */
+  resolveApiKey?: () => string | undefined;
+  /** 401 时强制刷新 Registry，之后用最新 key 重试一次。 */
+  refreshApiKey?: () => Promise<void>;
 }
 
 export interface ProviderBusinessErrorOptions {
@@ -157,6 +163,8 @@ export class AiSdkModelExecution {
   private readonly network: AiSdkNetworkConfig;
   private readonly logger?: Logger;
   private readonly baseTransport?: ProviderFetch;
+  private readonly resolveProviderApiKey?: (providerId: string) => string | undefined;
+  private readonly refreshProviderApiKey?: (providerId: string) => Promise<void>;
   private readonly providerTransports = new Map<string, ProviderFetch>();
 
   constructor(config: AiSdkModelExecutionConfig = {}, options: AiSdkModelExecutionOptions = {}) {
@@ -165,6 +173,8 @@ export class AiSdkModelExecution {
     this.network = { ...config.network };
     this.logger = options.logger;
     this.baseTransport = options.transport;
+    this.resolveProviderApiKey = options.resolveApiKey;
+    this.refreshProviderApiKey = options.refreshApiKey;
   }
 
   /**
@@ -263,10 +273,19 @@ export class AiSdkModelExecution {
     const apiKey = this.resolveApiKey(providerConfig);
     const headers = providerConfig.headers;
     const providerTransport = this.resolveProviderTransport(providerId);
+    // 只有注册表当前确实能给出 API Key 的 Provider 才启用请求期换 key/401 重试；
+    // 其它 Provider 的鉴权错误保持原语义，不发无意义的第二次请求。
+    const canRefreshApiKey = Boolean(this.resolveProviderApiKey?.(providerId)?.trim());
     const fetch = createProviderBusinessErrorFetch({
       fetch: providerTransport,
       providerId,
       providerKind: providerConfig.kind,
+      ...(canRefreshApiKey && this.resolveProviderApiKey
+        ? { resolveApiKey: () => this.resolveProviderApiKey!(providerId) }
+        : {}),
+      ...(canRefreshApiKey && this.refreshProviderApiKey
+        ? { refreshApiKey: () => this.refreshProviderApiKey!(providerId) }
+        : {}),
     });
     const optionFetch =
       optionMaps && optionValues
@@ -440,11 +459,33 @@ export function createProviderBusinessErrorFetch(
   const baseFetch = createProviderProxyFetch(options);
 
   return async (input, init) => {
+    // 保留一份未被消费的请求模板，401 重试时才能再次克隆 body。
+    const requestTemplate = input instanceof Request ? input.clone() : new Request(input, init);
     let response: Response;
     try {
-      response = await baseFetch(input, init);
+      response = await baseFetch(
+        withResolvedApiKey(requestTemplate.clone(), options.resolveApiKey?.()),
+      );
     } catch (error) {
       throw normalizeModelTlsFailure(error);
+    }
+
+    if (response.status === 401 && options.refreshApiKey) {
+      // 平台运行时 key 过期是 401；刷新 Registry 后再试一次。
+      // 只重试 401，且最多一次，避免把真实鉴权错误变成请求风暴。
+      await response.body?.cancel().catch(() => undefined);
+      try {
+        await options.refreshApiKey();
+      } catch {
+        return response;
+      }
+      try {
+        response = await baseFetch(
+          withResolvedApiKey(requestTemplate.clone(), options.resolveApiKey?.()),
+        );
+      } catch (error) {
+        throw normalizeModelTlsFailure(error);
+      }
     }
 
     // zcode-plan 安全校验拒绝（3007）等场景返回 HTTP 403 + JSON，但未必带
@@ -469,6 +510,15 @@ export function createProviderBusinessErrorFetch(
     }
     return response;
   };
+}
+
+function withResolvedApiKey(request: Request, apiKey: string | undefined): Request {
+  const key = apiKey?.trim();
+  if (!key) return request;
+  const headers = new Headers(request.headers);
+  headers.set("authorization", `Bearer ${key}`);
+  headers.set("x-api-key", key);
+  return new Request(request, { headers });
 }
 
 async function consumeBusinessErrorResponseBodyBestEffort(response: Response): Promise<void> {

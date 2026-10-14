@@ -34,7 +34,11 @@ import {
   type ExecutionShellSelection,
   type MessageId,
 } from "@zcode/contracts";
-import { isRemoteWorkspaceIdentity, resolveZCodeRuntimeEnv } from "@zcode/shared";
+import {
+  isRemoteWorkspaceIdentity,
+  LINGDONG_PLATFORM_PROVIDER_ID,
+  resolveZCodeRuntimeEnv,
+} from "@zcode/shared";
 import {
   ZCODE_ATTACHMENT_FAULT_CODES,
   ZCodeAttachmentFaultError,
@@ -535,6 +539,16 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         executionConfig: modelExecutionConfig,
         statusSink: modelTelemetry.statusSink,
         streamIdleTimeoutMs: configResult.config.modelStream.idleTimeoutMs,
+        // 课堂网关 key 由 Main 轮询续签并写入 Personal Provider Config；
+        // 请求层每发一次都读 Registry 当前 key，401 时再强制刷新一次 Registry。
+        resolveProviderApiKey: (providerId) => {
+          if (providerId !== LINGDONG_PLATFORM_PROVIDER_ID) return undefined;
+          const access = options.providerRegistry.getProvider(providerId)?.config.access;
+          return access?.type === "api-key" ? access.apiKey : undefined;
+        },
+        ...(options.refreshProviderRegistry
+          ? { refreshProviderRegistry: options.refreshProviderRegistry }
+          : {}),
       });
     if (options.modelAdapter && modelTelemetry.statusSink) {
       modelAdapter.addStatusSink(modelTelemetry.statusSink);
