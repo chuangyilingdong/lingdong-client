@@ -151,6 +151,7 @@ export class AgentRuntime {
   private modelFactory: AgentRuntimeDeps["modelFactory"];
   private modelIoDir?: string;
   private providerRuntimeHeadersPort?: AgentRuntimeDeps["providerRuntimeHeadersPort"];
+  private webSearchPort?: AgentRuntimeDeps["webSearchPort"];
   private browserControlPort?: AgentRuntimeDeps["browserControlPort"];
   /** 模型请求准入端口；随每次模型请求进调用上下文。 */
   private modelRequestAdmission?: AgentRuntimeDeps["modelRequestAdmission"];
@@ -269,6 +270,7 @@ export class AgentRuntime {
     this.modelFactory = deps.modelFactory;
     this.modelIoDir = deps.modelIoDir;
     this.providerRuntimeHeadersPort = deps.providerRuntimeHeadersPort;
+    this.webSearchPort = deps.webSearchPort;
     this.browserControlPort = deps.browserControlPort;
     this.modelRequestAdmission = deps.modelRequestAdmission;
     // 旧会话的选择缺失不能阻断历史恢复；不在这里制造默认模型。

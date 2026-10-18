@@ -17,6 +17,7 @@ import {
   type AgentRuntimeConfig,
   type AgentRuntimeDeps,
   type PermissionService,
+  type WebSearchPort,
   type WorkflowAgentRunner,
 } from "@zcode/core";
 import {
@@ -54,6 +55,7 @@ interface CreateWorkflowFacadeDeps {
   executionPort?: ExecutionPort;
   fileSystemPort?: FileSystemPort;
   httpClientPort?: HttpClientPort;
+  webSearchPort?: WebSearchPort;
   imageProcessorPort: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
   logger: Logger;
@@ -321,6 +323,7 @@ function createWorkflowChildRuntime(
           noProxy: deps.configResult.config.network.noProxy,
           caCertFile: deps.configResult.config.network.caCertFile,
         }),
+      webSearchPort: deps.webSearchPort,
       imageProcessorPort: deps.imageProcessorPort,
       pdfDocumentPort: deps.pdfDocumentPort,
       artifactStore: deps.artifactStore,

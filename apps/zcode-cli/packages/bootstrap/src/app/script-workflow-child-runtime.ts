@@ -11,6 +11,7 @@ import {
   type AgentRuntimeDeps,
   type ChildClientPortsContext,
   type PermissionService,
+  type WebSearchPort,
 } from "@zcode/core";
 import {
   type AgentExecutionTelemetryPort,
@@ -44,6 +45,7 @@ export interface ScriptWorkflowAgentRuntimeDeps {
   contextSourcePort?: ContextSourcePort;
   fileSystemPort: FileSystemPort;
   httpClientPort?: HttpClientPort;
+  webSearchPort?: WebSearchPort;
   imageProcessorPort: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
   logger: Logger;
@@ -212,6 +214,7 @@ function createRuntimeDeps(
         caCertFile: deps.configResult.config.network.caCertFile,
         timeoutMs: deps.configResult.config.network.timeout,
       }),
+    webSearchPort: deps.webSearchPort,
     imageProcessorPort: deps.imageProcessorPort,
     pdfDocumentPort: deps.pdfDocumentPort,
     logger: deps.logger,

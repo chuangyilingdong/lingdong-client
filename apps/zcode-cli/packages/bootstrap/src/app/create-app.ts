@@ -88,6 +88,7 @@ import { createModelCatalogPort } from "./model-catalog-port.js";
 import { createDynamicWorkflowRunProgressSink } from "./dynamic-workflow-run-progress-sink.js";
 import { createScriptWorkflowAgentRuntime } from "./script-workflow-child-runtime.js";
 import { workflowActorModelPolicy } from "./workflow-actor-model.js";
+import { createPlatformWebSearchPort } from "./platform-web-search-port.js";
 import { workflowActorToolPolicy } from "./workflow-actor-tools.js";
 import {
   createNodeReplBrowserBroker,
@@ -419,6 +420,22 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         noProxy: configResult.config.network.noProxy,
         caCertFile: configResult.config.network.caCertFile,
       });
+    // 课堂 WebSearch：平台已有 Anthropic 搜索网关，客户端只负责读取当前运行时 key 并调用。
+    const webSearchPort = createPlatformWebSearchPort({
+      searchUrl: (options.env ?? process.env).PLATFORM_SEARCH_URL,
+      enabled: (options.env ?? process.env).PLATFORM_WEB_SEARCH_ENABLED !== "0",
+      baseUrl: (options.env ?? process.env).PLATFORM_GATEWAY_BASE_URL,
+      httpClientPort,
+      getRuntimeKey: () => {
+        const provider = options.providerRegistry.getProvider(LINGDONG_PLATFORM_PROVIDER_ID);
+        const access = provider?.config.access;
+        return access?.type === "api-key" ? access.apiKey : undefined;
+      },
+      refreshRuntimeKey: options.refreshProviderRegistry
+        ? () => options.refreshProviderRegistry!("websearch-auth-refresh")
+        : undefined,
+      logger,
+    });
     markMcpAdapterInitialized({
       configuredMcpServers,
       hasInjectedMcpPort: options.mcpPort !== undefined,
@@ -576,6 +593,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       configResult,
       fileSystemPort,
       httpClientPort,
+      webSearchPort,
       imageProcessorPort,
       pdfDocumentPort,
       logger,
@@ -646,6 +664,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
                   configResult,
                   fileSystemPort,
                   httpClientPort,
+                  webSearchPort,
                   imageProcessorPort,
                   logger,
                   mcpPort,
@@ -751,6 +770,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       browserControlPort,
       fileSystemPort,
       httpClientPort,
+      webSearchPort,
       imageProcessorPort,
       pdfDocumentPort,
       artifactStore,
@@ -844,6 +864,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       configResult,
       eventSink: options.eventSink,
       imageProcessorPort,
+      webSearchPort,
       pdfDocumentPort,
       logger,
       mcpPort,

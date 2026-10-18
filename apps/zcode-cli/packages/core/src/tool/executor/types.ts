@@ -46,6 +46,7 @@ import type {
   BackgroundTaskControlPort,
   ToolExecutionResult,
   ToolRuntimeScope,
+  WebSearchPort,
 } from "../types.js";
 
 export interface BackgroundTaskNotificationCommand {
@@ -95,6 +96,7 @@ export interface ToolExecutorOptions {
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
   model?: Model;
+  webSearchPort?: WebSearchPort;
   embeddedSearchBackend?: EmbeddedSearchBackend;
   nativeSearchEnhancementsEnabled?: boolean;
   skillPort?: SkillPort;
@@ -201,6 +203,7 @@ export interface ToolExecutorDeps {
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
   model?: Model;
+  webSearchPort?: WebSearchPort;
   embeddedSearchBackend?: EmbeddedSearchBackend;
   nativeSearchEnhancementsEnabled?: boolean;
   skillPort?: SkillPort;

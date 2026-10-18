@@ -60,6 +60,8 @@ import type {
   PersistedReadFileStateTool,
 } from "./read-file-state-metadata.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
+import type { WebSearchPort } from "./web-search-port.js";
+export type { WebSearchPort } from "./web-search-port.js";
 
 // -----------------------------------------------
 // Tool Metadata
@@ -155,6 +157,8 @@ export interface ToolExecutionContext {
   imageProcessorPort?: ImageProcessorPort;
   pdfDocumentPort?: PdfDocumentPort;
   model?: Model;
+  /** 客户端搜索后端；存在时，不支持原生搜索的模型也能使用 WebSearch。 */
+  webSearchPort?: WebSearchPort;
   /** Core Server 对前台 child 的 Selection override。 */
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
   skillPort?: SkillPort;

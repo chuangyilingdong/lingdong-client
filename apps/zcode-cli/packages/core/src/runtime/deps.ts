@@ -274,6 +274,7 @@ export type {
   ToolExecutionResult,
   ToolExecutor,
   ToolRegistry,
+  WebSearchPort,
 } from "../tool/index.js";
 export type {
   ContextBuilder,

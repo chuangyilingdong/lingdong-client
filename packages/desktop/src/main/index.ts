@@ -125,6 +125,7 @@ import {
   runLingdongPlatformGate,
   setLingdongPrepLessonId,
 } from "./lingdongPlatformGate.js";
+import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
 import { flushMainE2ECoverage } from "./e2eCoverage.js";
 import { resolveStartupWindowBootstrap, type StartupWindowBootstrap } from "./startupWorkspace.js";
@@ -2155,10 +2156,13 @@ app.whenReady().then(async () => {
     app.quit();
     return;
   }
+  const lingdongWebSearch = resolveLingdongWebSearchSettings(lingdongPlatform.context);
   Object.assign(hostProcessLocalEnv, {
     LINGDONG_API_BASE: process.env.LINGDONG_API_BASE,
     PLATFORM_GATEWAY_KEY: String(lingdongPlatform.context.gateway?.key || ""),
     PLATFORM_GATEWAY_BASE_URL: lingdongPlatform.context.gateway?.baseUrl ?? "",
+    PLATFORM_SEARCH_URL: lingdongWebSearch.url,
+    PLATFORM_WEB_SEARCH_ENABLED: lingdongWebSearch.enabled ? "1" : "0",
     ZCODE_LINGDONG_WORKSPACE_PATH: lingdongPlatform.workspacePath,
     ZCODE_LINGDONG_WORKSPACE_IDENTITY: lingdongPlatform.workspaceIdentity,
     // 备课模式没有课堂（classroom 恒 null），这里不能直接读 .id。

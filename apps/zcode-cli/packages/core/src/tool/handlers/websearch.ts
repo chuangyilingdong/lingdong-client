@@ -13,6 +13,7 @@ import {
   createCoreError,
   runWithModelInvocationContext,
   toWebSearchProviderNativeArgs,
+  type Model,
   type ModelStreamEvent,
   type ModelTextResult,
   type ModelToolCall,
@@ -28,7 +29,7 @@ import { webSearchTraceFromContext } from "./websearch-support.js";
 
 const WEBSEARCH_TOOL_NAME = "WebSearch";
 const PROVIDER_WEBSEARCH_TOOL_NAME = "web_search";
-const DEFAULT_TIMEOUT_MS = 60_000;
+const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_USES = 8;
 
 const WEBSEARCH_MONTH_NAMES = [
@@ -49,7 +50,7 @@ const WEBSEARCH_MONTH_NAMES = [
 function buildWebSearchProviderDescription(now: Date = new Date()): string {
   const currentMonth = `${WEBSEARCH_MONTH_NAMES[now.getMonth()]} ${now.getFullYear()}`;
   return [
-    "Search the web. Returns result blocks with titles and URLs. US-only.",
+    "Search the web. Returns result blocks with titles and URLs. Availability depends on the active provider.",
     "",
     `- The current month is ${currentMonth} — use this when searching for recent information.`,
     "- `allowed_domains` / `blocked_domains` filter results.",
@@ -59,6 +60,7 @@ function buildWebSearchProviderDescription(now: Date = new Date()): string {
 
 const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (input, context) => {
   const startedAt = Date.now();
+  const parsed = WebSearchInputSchema.parse(input);
   const model = context.model;
 
   if (!model) {
@@ -68,10 +70,15 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
     });
   }
 
-  if (!model.properties.supportsNativeWebSearch) {
+  if (model.properties.supportsNativeWebSearch) {
+    return runNativeWebSearch(parsed, context, model, startedAt);
+  }
+
+  const port = context.webSearchPort;
+  if (!port?.supportsModel(model)) {
     throw createCoreError(
       CoreErrorType.ConfigurationError,
-      "Current model does not support native WebSearch",
+      "Current model does not support native WebSearch and no client search backend is configured",
       {
         context: { toolCallId: context.toolCallId, toolName: WEBSEARCH_TOOL_NAME },
         recoverable: true,
@@ -79,6 +86,31 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
     );
   }
 
+  const result = await port.search({
+    input: parsed,
+    model,
+    sessionId: context.sessionId,
+    traceContext: context.traceContext,
+    abortSignal: context.abortSignal,
+  });
+
+  return {
+    query: parsed.query,
+    results: result.results,
+    sources: result.sources,
+    summary: result.summary,
+    durationMs: Math.max(0, Date.now() - startedAt),
+    webSearchRequests: result.webSearchRequests,
+    modelUsage: result.modelUsage,
+  };
+};
+
+async function runNativeWebSearch(
+  input: WebSearchInput,
+  context: Parameters<ToolHandler>[1],
+  model: Model,
+  startedAt: number,
+): Promise<WebSearchOutput> {
   const request: Parameters<typeof model.streamText>[0] = {
     messages: [
       {
@@ -124,7 +156,7 @@ const webSearchHandler: ToolHandler<WebSearchInput, WebSearchOutput> = async (in
   });
 
   return buildWebSearchOutput(input, result, startedAt);
-};
+}
 
 export const webSearchToolEntry: ToolEntry = {
   ...WEBSEARCH_TOOL_CONTRACT,

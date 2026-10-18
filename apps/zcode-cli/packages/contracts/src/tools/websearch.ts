@@ -128,7 +128,7 @@ export const WEBSEARCH_TOOL_CONTRACT: ToolContractDeclaration = {
   permission: {
     permission: "websearch",
     reason:
-      "WebSearch performs read-only provider-native web searches through an internal model request",
+      "WebSearch performs read-only web searches through the active provider or platform search gateway",
     riskLevel: "low",
     sideEffectScope: "network",
     needsApproval: false,
@@ -145,7 +145,7 @@ export const WEBSEARCH_TOOL_CONTRACT: ToolContractDeclaration = {
     },
   },
   timeout: {
-    defaultMs: 60_000,
+    defaultMs: 90_000,
     maxMs: 120_000,
     allowCallOverride: true,
   },

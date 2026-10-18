@@ -395,6 +395,7 @@ async function executeToolCallImpl(
         model,
         createToolModelStatusSink({ emitEvent, sessionId: deps.sessionId, turnId, traceId }),
       ),
+      webSearchPort: deps.webSearchPort,
       subagentModelOverride: options?.subagentModelOverride,
       embeddedSearch: {
         ...(deps.embeddedSearchBackend ? { backend: deps.embeddedSearchBackend } : {}),

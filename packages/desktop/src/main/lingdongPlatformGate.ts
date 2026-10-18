@@ -8,6 +8,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
+import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
 import { shouldRefreshRuntimeKey } from "./lingdongRuntimeKey.js";
 import type { ClassroomWorkspaceSubmitPreview } from "@zcode/shared";
 
@@ -27,7 +28,12 @@ type LingdongClassroom = {
 };
 type LingdongContext = {
   readonly classroom: LingdongClassroom | null;
-  readonly gateway?: { readonly baseUrl?: string; readonly key?: string };
+  readonly gateway?: {
+    readonly baseUrl?: string;
+    readonly key?: string;
+    readonly searchUrl?: string;
+  };
+  readonly features?: { readonly webSearch?: boolean };
   readonly models?: readonly { readonly id?: unknown; readonly displayName?: unknown }[];
   readonly defaultModel?: unknown;
   readonly presets?: readonly { readonly title?: unknown; readonly text?: unknown }[];
@@ -226,6 +232,9 @@ async function refreshRuntimeKeyIfNeeded(context: LingdongContext): Promise<void
   await createLingdongQuotaLedger(state.quotaFilePath).sync(context.sends ?? {});
   process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
   process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
+  const webSearch = resolveLingdongWebSearchSettings(context);
+  process.env.PLATFORM_SEARCH_URL = webSearch.url;
+  process.env.PLATFORM_WEB_SEARCH_ENABLED = webSearch.enabled ? "1" : "0";
   activeState = { ...state, context };
   lastRuntimeKeyRefreshAt = now;
 }
@@ -395,8 +404,13 @@ async function handleLogin(
       quotaFilePath,
     };
     process.env.LINGDONG_API_BASE = API_BASE;
+    const webSearch = prep
+      ? { url: "", enabled: false }
+      : resolveLingdongWebSearchSettings(context);
     process.env.PLATFORM_GATEWAY_KEY = prep ? "" : String(context.gateway?.key || "");
     process.env.PLATFORM_GATEWAY_BASE_URL = prep ? "" : String(context.gateway?.baseUrl || "");
+    process.env.PLATFORM_SEARCH_URL = webSearch.url;
+    process.env.PLATFORM_WEB_SEARCH_ENABLED = webSearch.enabled ? "1" : "0";
     process.env.ZCODE_LINGDONG_WORKSPACE_PATH = workspacePath;
     process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY = activeState.workspaceIdentity;
     process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom?.id ?? "";
@@ -1198,6 +1212,9 @@ function registerPlatformHandlers(): void {
     await createLingdongQuotaLedger(activeState.quotaFilePath).sync(context.sends ?? {});
     process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
     process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
+    const webSearch = resolveLingdongWebSearchSettings(context);
+    process.env.PLATFORM_SEARCH_URL = webSearch.url;
+    process.env.PLATFORM_WEB_SEARCH_ENABLED = webSearch.enabled ? "1" : "0";
     activeState = { ...activeState, context };
     lastRuntimeKeyRefreshAt = Date.now();
     return getLingdongPlatformSnapshot();
