@@ -85,6 +85,7 @@ export class ContextBuilder {
       ? this.config.outputStyle
       : undefined;
     const customSystemPrompt = this.config.customSystemPrompt?.trim();
+    const platformSystemPrompt = this.config.platformSystemPrompt?.trim();
     const hasCustomSystemPrompt = Boolean(customSystemPrompt);
     // 工作流子代理身份：第三条路径。与
     // customSystemPrompt 互斥——两者同在只可能是接线错误（persona 该经 workflowActor 进来，
@@ -170,6 +171,19 @@ export class ContextBuilder {
       if (gitSystemContextSection) {
         sections.push(gitSystemContextSection);
       }
+    }
+
+    // 平台约束始终追加在完整内置 system prompt 之后，不能像 customSystemPrompt 一样替换安全边界。
+    if (platformSystemPrompt) {
+      sections.push(
+        createSection({
+          name: "Platform System Instructions",
+          source: "platform_system_prompt",
+          injectionTarget: "system",
+          cacheHint: "stable",
+          content: `\n\n<platform_system_instructions>\n${platformSystemPrompt}\n</platform_system_instructions>`,
+        }),
+      );
     }
 
     // 4. Skills appear as a meta user system-reminder, matching provider block layout.

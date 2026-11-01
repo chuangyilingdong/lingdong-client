@@ -24,6 +24,9 @@ DMG 背景图中央也仍写着 `ZCODE`。
 5. `build/icon.icns`、`build/icon_installer.icns` 不是品牌源，也不再作为 macOS 打包
    输入保留。
 6. Windows 的 `icon_installer.ico` 与 Windows 运行时图标逻辑不变。
+7. About 窗口必须从运行时资源读取灵动 ai 方形图标：打包态使用
+   `resources/icon_lingdong.png`，开发态使用 `build/icon_installer.png`，并以 data URL
+   嵌入自绘 HTML。不得继续内联 ZCode 的黑色 Z 字 SVG。
 
 ## 所有者与边界
 
@@ -46,4 +49,5 @@ DMG 背景图中央也仍写着 `ZCODE`。
    `resources/gate/app-icon-1024.png` 完全一致。
 3. DMG 未配置独立 `.icns`，挂载卷图标显示灵动 ai，而不是 ZCode。
 4. DMG 背景图显示灵动 ai 品牌，不包含 `ZCODE`。
-5. `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed` 通过。
+5. About 窗口在所有平台显示灵动 ai 方形图标，不含 ZCode 字标。
+6. `pnpm typecheck`、`pnpm lint`、`pnpm architecture:check --changed` 通过。

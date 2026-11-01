@@ -6,6 +6,7 @@ import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs
 import { createServer } from "node:http";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
+import { atomicWritePrivateTextFile } from "@zcode/shared/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
@@ -43,6 +44,8 @@ type LingdongContext = {
     readonly remaining?: number | null;
   } | null;
   readonly workspacePath?: string;
+  readonly globalSystemPrompt?: unknown;
+  readonly globalSystemPromptRevision?: unknown;
   readonly message?: string;
   readonly prep?: unknown;
   readonly reason?: unknown;
@@ -61,6 +64,7 @@ export type LingdongPlatformState = Readonly<{
   workspacePath: string;
   workspaceIdentity: string;
   quotaFilePath: string;
+  systemPromptFilePath: string;
 }>;
 
 const API_BASE = String(process.env.LINGDONG_API_BASE || "https://aicyld.com").replace(/\/+$/u, "");
@@ -80,6 +84,8 @@ const CLASSROOM_POLL_DEFAULT_MS = 5_000;
 // 平台运行时密钥默认 6 小时过期；轮询拿到的新 key 必须在临近过期时写回 Provider 配置。
 const RUNTIME_KEY_REFRESH_MARGIN_MS = 60 * 60 * 1000;
 const RUNTIME_KEY_REFRESH_FALLBACK_MS = 30 * 60 * 1000;
+const PLATFORM_SYSTEM_PROMPT_MAX_BYTES = 32 * 1024;
+const syncedPlatformSystemPrompt = new Map<string, string>();
 let classroomPollTimer: NodeJS.Timeout | null = null;
 let classroomExitInFlight = false;
 let lastRuntimeKeyRefreshAt = 0;
@@ -215,6 +221,12 @@ function resolvePrepWorkspace(context: LingdongContext, user: LingdongUser | und
 async function refreshRuntimeKeyIfNeeded(context: LingdongContext): Promise<void> {
   const state = activeState;
   if (!state || isPrepContext(state.context)) return;
+  // 每次成功轮询都同步平台投影；运行时 key 只在临近过期时重写 Provider。
+  await syncPlatformSystemPromptFile(
+    state.systemPromptFilePath,
+    resolvePlatformSystemPrompt(context),
+  );
+  await createLingdongQuotaLedger(state.quotaFilePath).sync(context.sends ?? {});
   const now = Date.now();
   if (
     !shouldRefreshRuntimeKey({
@@ -252,6 +264,41 @@ async function buildProviderConfig(context: LingdongContext, targetPath?: string
 function quotaFilePathForIdentity(identity: string): string {
   const key = createHash("sha256").update(identity).digest("hex");
   return join(getAppConfigDir(), "runtime", "lingdong-quota", `${key}.json`);
+}
+
+function systemPromptFilePathForIdentity(identity: string): string {
+  const key = createHash("sha256").update(identity).digest("hex");
+  return join(getAppConfigDir(), "runtime", "lingdong-system-prompt", `${key}.txt`);
+}
+
+/** 平台提示词只进入 Agent system context，不写日志正文；超限时整段忽略而不是截断。 */
+function resolvePlatformSystemPrompt(context: LingdongContext): string {
+  if (typeof context.globalSystemPrompt !== "string") return "";
+  const prompt = context.globalSystemPrompt.trim();
+  if (!prompt) return "";
+  const bytes = Buffer.byteLength(prompt, "utf8");
+  if (bytes > PLATFORM_SYSTEM_PROMPT_MAX_BYTES) {
+    console.warn("[lingdong-gate] 平台全局提示词超过 32 KiB，已忽略", {
+      bytes,
+      revision: String(context.globalSystemPromptRevision || ""),
+    });
+    return "";
+  }
+  return prompt;
+}
+
+async function syncPlatformSystemPromptFile(filePath: string, prompt: string): Promise<void> {
+  if (syncedPlatformSystemPrompt.get(filePath) === prompt) return;
+  try {
+    await mkdir(dirname(filePath), { recursive: true });
+    await atomicWritePrivateTextFile(filePath, prompt);
+    syncedPlatformSystemPrompt.set(filePath, prompt);
+  } catch (error) {
+    // 提示词投影失败不能阻断课堂额度同步或退出课堂；正文不进入日志。
+    console.warn("[lingdong-gate] 平台全局提示词写入失败", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 type SubmittedWorkRecord = Readonly<{ revision: string; submittedAt: string }>;
@@ -389,6 +436,8 @@ async function handleLogin(
       ? `${session.user?.id || session.user?.login || login}:prep:${prepLessonId ?? String(context.lesson?.id ?? "")}`
       : `${session.user?.id || session.user?.login || login}:${context.classroom?.id}`;
     const quotaFilePath = quotaFilePathForIdentity(workspaceIdentity);
+    const systemPromptFilePath = systemPromptFilePathForIdentity(workspaceIdentity);
+    await syncPlatformSystemPromptFile(systemPromptFilePath, resolvePlatformSystemPrompt(context));
     if (!prep) {
       // 登录基线以平台 used 为准：换课堂换桶，同一课堂重新登录时对齐平台账目。
       await createLingdongQuotaLedger(quotaFilePath).sync(context.sends ?? {}, true);
@@ -402,6 +451,7 @@ async function handleLogin(
       workspacePath,
       workspaceIdentity,
       quotaFilePath,
+      systemPromptFilePath,
     };
     process.env.LINGDONG_API_BASE = API_BASE;
     const webSearch = prep
@@ -415,6 +465,7 @@ async function handleLogin(
     process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY = activeState.workspaceIdentity;
     process.env.ZCODE_LINGDONG_CLASSROOM_ID = context.classroom?.id ?? "";
     process.env.ZCODE_LINGDONG_QUOTA_FILE = prep ? "" : quotaFilePath;
+    process.env.ZCODE_PLATFORM_SYSTEM_PROMPT_FILE = systemPromptFilePath;
     lastRuntimeKeyRefreshAt = Date.now();
     startClassroomPolling();
     // 登录成功后关闭登录窗，但 platformGatePending 会一直保持到主窗口就绪：
@@ -1210,6 +1261,11 @@ function registerPlatformHandlers(): void {
     await buildProviderConfig(context, activeState.providerConfigPath);
     // 刷新只把本机投影向平台已用量收敛，不因较旧响应降低已接受的计数。
     await createLingdongQuotaLedger(activeState.quotaFilePath).sync(context.sends ?? {});
+    await syncPlatformSystemPromptFile(
+      activeState.systemPromptFilePath,
+      resolvePlatformSystemPrompt(context),
+    );
+    process.env.ZCODE_PLATFORM_SYSTEM_PROMPT_FILE = activeState.systemPromptFilePath;
     process.env.PLATFORM_GATEWAY_BASE_URL = String(context.gateway?.baseUrl || "");
     process.env.PLATFORM_GATEWAY_KEY = String(context.gateway?.key || "");
     const webSearch = resolveLingdongWebSearchSettings(context);

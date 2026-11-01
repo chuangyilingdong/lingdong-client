@@ -215,6 +215,10 @@ export interface AgentRuntimeConfig {
 
   // Context Builder config
   systemPrompt?: string;
+  /** 平台下发的只读全局系统提示词；由 runtime 从受控文件读取后冻结到本次会话。 */
+  platformSystemPrompt?: string;
+  /** Main 下发的平台提示词文件；新 runtime 创建 context 时异步读取。 */
+  platformSystemPromptFile?: string;
   /**
    * 动态工作流子代理的身份输入：在场即让
    * context builder 走「基座 + 工作流子代理契约 + persona 叠加」路径，而不是把 persona 当

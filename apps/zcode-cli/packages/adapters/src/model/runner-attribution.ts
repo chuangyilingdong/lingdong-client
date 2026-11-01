@@ -20,6 +20,8 @@ const MODEL_QUERY_HEADER = "x-query-id";
 // Coding Plan 服务端使用该请求级 Header 区分 main/subagent/other 来源。
 // 它不是 Provider 静态能力或鉴权材料，必须由调用上下文生成并覆盖同名静态 Header。
 const MODEL_SESSION_TYPE_HEADER = "x-zcode-session-type";
+// 同一次学生发送下的所有工具轮/重试共享该值；平台据此幂等扣次。
+const MODEL_SEND_ID_HEADER = "x-zcode-send-id";
 const SESSION_ID_INTERNAL_PREFIX = "sess_";
 const SESSION_ID_SUBAGENT_PREFIX = "subagent_agent_";
 const QUERY_ID_INTERNAL_PREFIX = "query_";
@@ -39,6 +41,7 @@ export function createModelRequestAttributionHeaders(
       ? statusContext.modelRequestSessionType
       : ModelRequestSessionType.Other,
     [MODEL_TRACE_HEADER]: statusContext.traceId,
+    ...(statusContext.turnId ? { [MODEL_SEND_ID_HEADER]: statusContext.turnId } : {}),
     ...(queryHeaderValue ? { [MODEL_QUERY_HEADER]: queryHeaderValue } : {}),
     ...(sessionHeaderValue ? { [MODEL_SESSION_HEADER]: sessionHeaderValue } : {}),
     ...(openCodeSessionHeaderValue ? { "x-opencode-session": openCodeSessionHeaderValue } : {}),

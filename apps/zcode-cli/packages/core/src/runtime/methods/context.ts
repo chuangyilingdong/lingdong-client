@@ -4,6 +4,7 @@ import {
   traceContextToLogContext,
   createContextBuilder,
   createSubagentContextBuilder,
+  isFileSystemPortError,
 } from "../deps.js";
 import type {
   Model,
@@ -65,6 +66,7 @@ export async function ensureContextInitialized(
   this.skillLoadOutcome = await this.discoverSkillsForContext(traceContext);
   this.memoryRoot = await this.loadProjectMemoryRoot(traceContext);
   this.memoryIndexContent = await loadProjectMemoryIndexContent(this, this.memoryRoot);
+  this.config.platformSystemPrompt = await loadPlatformSystemPrompt(this, traceContext);
   this.contextBuilder = this.createContextBuilderFromSnapshot(snapshot, this.memoryRoot, {
     memoryIndexContent: this.memoryIndexContent,
     model,
@@ -93,6 +95,55 @@ export async function getSkillCatalog(
   };
 }
 
+async function loadPlatformSystemPrompt(
+  runtime: AgentRuntimeInternal,
+  traceContext: TraceContext,
+): Promise<string | undefined> {
+  const filePath = runtime.config.platformSystemPromptFile?.trim();
+  if (!filePath) return undefined;
+  if (!runtime.fileSystemPort) {
+    runtime.logger?.warn("Platform system prompt file unavailable", {
+      ...traceContextToLogContext(traceContext),
+      event: "platform.system_prompt.unavailable",
+      reason: "missing_file_system_port",
+    });
+    return undefined;
+  }
+  try {
+    const result = await runtime.fileSystemPort.readTextFile({
+      path: filePath,
+      encoding: "utf8",
+      maxBytes: 32 * 1024,
+      trace: traceContext,
+    });
+    if (result.truncated) {
+      runtime.logger?.warn("Platform system prompt exceeds 32 KiB and was ignored", {
+        ...traceContextToLogContext(traceContext),
+        event: "platform.system_prompt.too_large",
+        bytesRead: result.bytesRead,
+        sizeBytes: result.sizeBytes,
+      });
+      return undefined;
+    }
+    const prompt = result.content.trim();
+    if (!prompt) return undefined;
+    runtime.logger?.info("Platform system prompt loaded", {
+      ...traceContextToLogContext(traceContext),
+      event: "platform.system_prompt.loaded",
+      bytes: Buffer.byteLength(prompt, "utf8"),
+    });
+    return prompt;
+  } catch (error) {
+    if (isFileSystemPortError(error) && error.code === "not_found") return undefined;
+    runtime.logger?.warn("Platform system prompt file could not be loaded", {
+      ...traceContextToLogContext(traceContext),
+      event: "platform.system_prompt.load_failed",
+      reason: isFileSystemPortError(error) ? error.code : "read_error",
+    });
+    return undefined;
+  }
+}
+
 export function createContextBuilderFromSnapshot(
   this: AgentRuntimeInternal,
   snapshot: ContextSourceSnapshot,
@@ -116,6 +167,7 @@ export function createContextBuilderFromSnapshot(
       skillMetadataBudget: this.config.skillMetadataBudget,
       skills: this.skillLoadOutcome,
       userInstructions: this.config.subagentContext.userInstructions,
+      platformSystemPrompt: this.config.platformSystemPrompt,
     });
   }
 
@@ -134,6 +186,7 @@ export function createContextBuilderFromSnapshot(
     embeddedSearchEnabled: resolveRuntimeEmbeddedSearchEnabled(this),
     skillMetadataBudget: this.config.skillMetadataBudget,
     customSystemPrompt: this.config.systemPrompt,
+    platformSystemPrompt: this.config.platformSystemPrompt,
     workflowActor: this.config.workflowActor,
     language: this.config.language,
     outputStyle: this.config.outputStyle,

@@ -135,6 +135,9 @@ export function resolveAppRuntimeConfig(input: {
       }),
     runtimeFeatures: pluginRuntimeFeatures,
     language: options.runtimeConfig?.language,
+    platformSystemPromptFile:
+      options.runtimeConfig?.platformSystemPromptFile ??
+      options.env?.ZCODE_PLATFORM_SYSTEM_PROMPT_FILE?.trim(),
     titleGeneration,
     workingDirectory,
     userInstructions: {

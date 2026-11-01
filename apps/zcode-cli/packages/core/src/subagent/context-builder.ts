@@ -23,6 +23,7 @@ export interface SubagentContextBuilderConfig {
   skillMetadataBudget?: number;
   skills?: ContextBuilderConfig["skills"];
   userInstructions?: ContextBuilderConfig["userInstructions"];
+  platformSystemPrompt?: ContextBuilderConfig["platformSystemPrompt"];
 }
 
 const EPHEMERAL_CACHE_CONTROL = { type: "ephemeral" as const };
@@ -119,6 +120,18 @@ function buildSubagentContextSections(config: SubagentContextBuilderConfig): Con
     );
   }
 
+  const platformSystemPrompt = config.platformSystemPrompt?.trim();
+  if (platformSystemPrompt) {
+    sections.push(
+      createSubagentSection({
+        name: "Platform System Instructions",
+        source: "platform_system_prompt",
+        cacheHint: "stable",
+        content: `\n\n<platform_system_instructions>\n${platformSystemPrompt}\n</platform_system_instructions>`,
+      }),
+    );
+  }
+
   sections.push(
     createSubagentSection({
       name: "Subagent Notes",
@@ -192,5 +205,6 @@ function toBaseContextBuilderConfig(config: SubagentContextBuilderConfig): Conte
     currentDate: config.currentDate,
     skillMetadataBudget: config.skillMetadataBudget,
     skills: config.skills,
+    platformSystemPrompt: config.platformSystemPrompt,
   };
 }

@@ -2168,6 +2168,7 @@ app.whenReady().then(async () => {
     // 备课模式没有课堂（classroom 恒 null），这里不能直接读 .id。
     ZCODE_LINGDONG_CLASSROOM_ID: lingdongPlatform.context.classroom?.id ?? "",
     ZCODE_LINGDONG_QUOTA_FILE: lingdongPlatform.quotaFilePath,
+    ZCODE_PLATFORM_SYSTEM_PROMPT_FILE: lingdongPlatform.systemPromptFilePath,
   });
   Object.assign(process.env, hostProcessLocalEnv);
   markMainLaunchAppReady();

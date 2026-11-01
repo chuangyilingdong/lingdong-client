@@ -210,8 +210,18 @@ function formatAboutOptimizationLine(
 
 function resolveAboutIconPath(isPackaged: boolean): string {
   return isPackaged
-    ? join(process.resourcesPath, "icon.png")
-    : join(import.meta.dirname, "../../build/icon.png");
+    ? join(process.resourcesPath, "icon_lingdong.png")
+    : join(import.meta.dirname, "../../build/icon_installer.png");
+}
+
+/** About 自绘窗口只能通过 CSP 允许的 data URL 读取图片；禁止再内联旧 ZCode SVG。 */
+function readAboutIconDataUrl(iconPath: string): string {
+  try {
+    if (!existsSync(iconPath)) return "";
+    return `data:image/png;base64,${readFileSync(iconPath).toString("base64")}`;
+  } catch {
+    return "";
+  }
 }
 
 export async function showAboutDialog(
@@ -228,6 +238,7 @@ export async function showAboutDialog(
   // 问题原因：各平台原生消息框的排版、图标和按钮样式差异很大，无法复用 macOS 参考样式。
   // 这里统一使用自绘 modal，保证 About 的品牌展示和多语言文案在三端一致。
   const iconPath = resolveAboutIconPath(app.isPackaged);
+  const appIconDataUrl = readAboutIconDataUrl(iconPath);
   const aboutWindow = new BrowserWindow({
     width: ABOUT_WINDOW_WIDTH,
     height: ABOUT_WINDOW_HEIGHT,
@@ -256,6 +267,7 @@ export async function showAboutDialog(
     `data:text/html;charset=utf-8,${encodeURIComponent(
       createCustomAboutDialogHtml({
         applicationName: ABOUT_APPLICATION_NAME,
+        appIconDataUrl,
         appVersion: snapshot.appVersion,
         copyright: formatAboutCopyright(undefined, locale),
         optimizationLine: formatAboutOptimizationLine(snapshot, locale),

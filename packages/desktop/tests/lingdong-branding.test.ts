@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { desktopMenuMessages } from "../../shared/src/desktopMenu.js";
+import { createCustomAboutDialogHtml } from "../src/main/aboutWindow.js";
 
 const repoRoot = resolve(import.meta.dirname, "../../..");
 const literalPattern = /("(?:\\.|[^"\\])*")|('(?:\\.|[^'\\])*')|(`(?:\\.|[^`\\])*`)/g;
@@ -81,4 +82,19 @@ test("Agent 身份提示词明确是小灵且禁止自称 ZCode", () => {
   assert.match(prompt, /Xiaoling \(小灵\)/);
   assert.match(prompt, /Never identify yourself as ZCode/);
   assert.equal(/You are ZCode/.test(prompt), false);
+});
+
+test("About 使用灵动ai方形图标且不再内联 ZCode 字标", () => {
+  const html = createCustomAboutDialogHtml({
+    applicationName: "灵动ai创作客户端",
+    appIconDataUrl: "data:image/png;base64,lingdong",
+    appVersion: "0.2.11",
+    copyright: "版权所有 © 2026 灵动ai。",
+    optimizationLine: "",
+    versionLabel: "版本",
+    okButtonLabel: "确定",
+  });
+  assert.match(html, /<img src="data:image\/png;base64,lingdong" alt="" class="app-logo" \/>/);
+  assert.equal(html.includes('viewBox="0 0 256 218"'), false);
+  assert.equal(html.includes("M256 0.130127L102.401 217.732H0"), false);
 });
