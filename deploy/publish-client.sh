@@ -38,7 +38,9 @@ file_size() {
 }
 file_sha256() {
   if command -v sha256sum >/dev/null 2>&1; then
-    sha256sum "$1" | cut -d' ' -f1
+    # Windows Git Bash 传入反斜杠路径时，GNU sha256sum 会为了转义文件名给整行加 `\` 前缀；
+    # manifest 只接受 64 位十六进制，因此这里剥掉该前缀，避免本地校验值污染发布清单。
+    sha256sum "$1" | cut -d' ' -f1 | sed 's/^\\//'
   else
     shasum -a 256 "$1" | cut -d' ' -f1
   fi
