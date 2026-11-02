@@ -93,7 +93,32 @@ function isLingdongDownloadManifestUrl(value: string | undefined): boolean {
   return Boolean(value?.trim() && new URL(value).pathname.endsWith("/downloads/manifest.json"));
 }
 
-function parseLingdongDownloadManifest(raw: string, manifestUrl: URL, releasePlatform: string): UpdateInfo | null {
+export type LingdongManifestTarget = "win-x64" | "mac-arm64" | "mac-x64";
+
+/**
+ * 客户端更新目标必须由当前运行的 CPU 架构精确决定。
+ * 缺失目标时由调用方返回“无更新”，不能回退到另一种 macOS 架构。
+ */
+export function resolveLingdongManifestTarget(
+  releasePlatform: string,
+): LingdongManifestTarget | null {
+  switch (releasePlatform) {
+    case "windows-x86_64":
+      return "win-x64";
+    case "darwin-aarch64":
+      return "mac-arm64";
+    case "darwin-x86_64":
+      return "mac-x64";
+    default:
+      return null;
+  }
+}
+
+export function parseLingdongDownloadManifest(
+  raw: string,
+  manifestUrl: URL,
+  releasePlatform: string,
+): UpdateInfo | null {
   let parsed: LingdongDownloadManifest;
   try {
     parsed = JSON.parse(raw) as LingdongDownloadManifest;
@@ -101,7 +126,7 @@ function parseLingdongDownloadManifest(raw: string, manifestUrl: URL, releasePla
     return null;
   }
   const version = typeof parsed.version === "string" ? parsed.version : "";
-  const target = releasePlatform === "windows-x86_64" ? "win-x64" : releasePlatform === "darwin-aarch64" ? "mac-arm64" : null;
+  const target = resolveLingdongManifestTarget(releasePlatform);
   const file = target ? parsed.files?.[target] : undefined;
   const name = typeof file?.name === "string" ? file.name : "";
   const sha256 = typeof file?.sha256 === "string" ? file.sha256 : "";
@@ -292,8 +317,14 @@ export class ManifestUpdateProvider extends Provider<UpdateInfo> {
     if (!isRecord(parsed) || typeof parsed.version !== "string") {
       throw new Error(`Invalid electron update manifest: ${manifestUrl.toString()}`);
     }
-    if (lingdong && typeof (lingdong as { lingdongManifestBaseUrl?: unknown }).lingdongManifestBaseUrl === "string") {
-      this.resolveBaseUrl = new URL((lingdong as { lingdongManifestBaseUrl: string }).lingdongManifestBaseUrl);
+    if (
+      lingdong &&
+      typeof (lingdong as { lingdongManifestBaseUrl?: unknown }).lingdongManifestBaseUrl ===
+        "string"
+    ) {
+      this.resolveBaseUrl = new URL(
+        (lingdong as { lingdongManifestBaseUrl: string }).lingdongManifestBaseUrl,
+      );
     }
 
     return {

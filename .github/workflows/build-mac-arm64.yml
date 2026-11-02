@@ -1,4 +1,4 @@
-# Release trigger: macOS 0.2.11 classroom quota and global prompt release.
+# Release trigger: macOS 0.2.12 three-platform release.
 # macOS Apple Silicon (arm64) 构建：push 即出未签名测试包（ad-hoc 签名），workflow_dispatch 可出正式签名包。
 name: Build macOS Apple Silicon (ZCode)
 
@@ -57,6 +57,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Read package version
+        id: package
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - name: Build unsigned macOS DMG/ZIP
         run: |
           set -o pipefail
@@ -112,7 +118,7 @@ jobs:
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lingdong-client-0.2.11-mac-arm64
+          name: lingdong-client-${{ steps.package.outputs.version }}-mac-arm64
           path: |
             dist-mac/*.dmg
             dist-mac/*.zip

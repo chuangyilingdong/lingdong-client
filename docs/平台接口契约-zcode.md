@@ -263,12 +263,18 @@ https://aicyld.com/downloads/manifest.json
       "name": "lingdong-client-0.2.0-zcode.1-mac-arm64.dmg",
       "size": 0,
       "sha256": "..."
+    },
+    "mac-x64": {
+      "version": "0.2.0-zcode.1",
+      "name": "lingdong-client-0.2.0-zcode.1-mac-x64.dmg",
+      "size": 0,
+      "sha256": "..."
     }
   }
 }
 ```
 
-ZCode 的更新 Provider 会按当前平台选择 `win-x64` / `mac-arm64`，把 `sha256` 映射为 electron-updater 的 SHA-256 校验字段，下载路径相对 `https://aicyld.com/downloads/` 解析。平台清单的双端版本仍必须保持一致。
+客户端更新 Provider 会按当前平台与 CPU 架构精确选择 `win-x64` / `mac-arm64` / `mac-x64`：`windows-x86_64` → `win-x64`，`darwin-aarch64` → `mac-arm64`，`darwin-x86_64` → `mac-x64`。对应目标缺失时返回无更新，不会跨架构回退。`sha256` 映射为 electron-updater 的 SHA-256 校验字段，下载路径相对 `https://aicyld.com/downloads/` 解析；三个平台版本必须保持一致。
 
 ### 更新联动的平台侧要求（2026-09-29 客户端已验证）
 
@@ -278,7 +284,7 @@ ZCode 的更新 Provider 会按当前平台选择 `win-x64` / `mac-arm64`，把 
 2. `size` 与 `sha256` 必须与实际字节严格一致；客户端按 `sha256` 校验，不一致会直接失败且不会进入可安装状态。
 3. `version` 必须递增且与安装包内版本一致，否则 `electron-updater` 会认为没有更新或反复提示。
 4. 未配置强更时 `mandatory=false`、`minVersion=""`；客户端不会因此拦截启动（详见「平台强制更新门」）。
-5. 发布必须原子：先上传两个平台的安装包，再一次性写回 `manifest.json`，避免用户拿到“新清单 + 旧安装包”。
+5. 发布必须原子：先上传三个平台的安装包并逐个校验大小与 SHA256，再一次性写回 `manifest.json`，避免用户拿到“新清单 + 旧安装包”，也避免缺包或版本不一致时提前切换清单。
 
 ## Windows Provider 注入与启动门（2026-09-29）
 
@@ -463,7 +469,7 @@ Windows 已验证（独立测试数据根 + localhost mock，2026-09-29）：
 ### 安装包命名（已定）
 
 - 客户端**不校验**安装包文件名：更新器直接取 `files[<target>].name` 当下载路径，只校验 `version + name + sha256` 非空与 sha256 值，没有文件名正则。
-- 但客户端统一采用**规范名**发布：`deploy/publish-client.sh` 接受带 `-unsigned` 的构建产物，上传前归一化为 `lingdong-client-<版本>-win-x64.exe` / `lingdong-client-<版本>-mac-arm64.dmg`。
+- 但客户端统一采用**规范名**发布：`deploy/publish-client.sh` 接受带 `-unsigned` 的构建产物，上传前归一化为 `lingdong-client-<版本>-win-x64.exe` / `-mac-arm64.dmg` / `-mac-x64.dmg`。
 - 因此平台上传口的严格正则**不需要放宽**（与平台「我们放宽正则 / 你们去后缀」中的「去后缀」一致）。
 
 ### 历史截断标记（平台已定，客户端已接入）

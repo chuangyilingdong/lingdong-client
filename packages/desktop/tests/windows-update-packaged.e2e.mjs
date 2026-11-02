@@ -76,19 +76,15 @@ for (let attempt = 0; attempt < 60 && !browser; attempt++) {
 }
 assert.ok(browser, "无法连接打包态调试端口");
 try {
+  // 更新检查先于登录门；这里只要求启动后能连到一个窗口，不依赖登录窗出现。
   const context = browser.contexts()[0];
-  let gate;
+  let initialWindow;
   for (let i = 0; i < 60; i++) {
-    gate = context
-      .pages()
-      .find((p) => /login\.html/.test(p.url()) || p.url().startsWith("data:text/html"));
-    if (gate) break;
+    initialWindow = context.pages()[0];
+    if (initialWindow) break;
     await new Promise((r) => setTimeout(r, 500));
   }
-  assert.ok(gate, "登录窗未出现（打包态可能被强更门拦截）");
-  await gate.locator("#login").fill("mock");
-  await gate.locator("#password").fill("mock");
-  await gate.locator("#submit").click();
+  assert.ok(initialWindow, "打包态启动后没有创建任何窗口");
 } finally {
   await browser.close().catch(() => {});
 }
@@ -108,6 +104,7 @@ assert.ok(
 );
 assert.ok(log.includes(`[auto-update] initializing, current version: ${APP_VERSION}`));
 assert.ok(log.includes(`[auto-update] new version available: ${NEXT_VERSION}`));
+assert.ok(log.includes("[auto-update] update status window shown"), "更新窗口没有先于登录门出现");
 const state = await (await fetch(`${mock}/__test/state`)).json();
 assert.ok(state.updateDownloads.length >= 1, "mock 未收到安装包下载请求");
 console.log(
@@ -115,6 +112,7 @@ console.log(
     pass: true,
     packaged: true,
     forceUpdateGateNotBlocking: true,
+    updateWindowShown: true,
     downloadedAndVerified: true,
   }),
 );

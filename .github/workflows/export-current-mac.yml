@@ -1,4 +1,4 @@
-# Release trigger: macOS 0.2.11 classroom quota and global prompt release.
+# Release trigger: macOS 0.2.12 three-platform release.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 
@@ -18,8 +18,6 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
       SOURCE_SHA: ${{ github.sha }}
-      SOURCE_ARTIFACT: lingdong-client-0.2.11-mac-arm64
-      TARGET_VERSION: 0.2.11
       TARGET_BRANCH: ci/zcode-current-mac
     steps:
       - uses: actions/checkout@v4
@@ -28,6 +26,9 @@ jobs:
         run: |
           set -euo pipefail
           api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          target_version=$(jq -r '.version' package.json)
+          source_artifact="lingdong-client-${target_version}-mac-arm64"
+          test "$target_version" != "null"
           run_id=""
           for attempt in $(seq 1 360); do
             curl -fsSL --retry 3 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H 'Accept: application/vnd.github+json' "${api}/actions/workflows/build-mac-arm64.yml/runs?head_sha=${SOURCE_SHA}&per_page=20" > runs.json
@@ -47,14 +48,14 @@ jobs:
           done
           test -n "$run_id" && test "$run_id" != "null"
           curl -fsSL --retry 3 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H 'Accept: application/vnd.github+json' "${api}/actions/runs/${run_id}/artifacts" > artifacts.json
-          artifact_id=$(jq -r --arg name "$SOURCE_ARTIFACT" '.artifacts[] | select(.name == $name) | .id' artifacts.json | head -n 1)
+          artifact_id=$(jq -r --arg name "$source_artifact" '.artifacts[] | select(.name == $name) | .id' artifacts.json | head -n 1)
           test -n "$artifact_id" && test "$artifact_id" != "null"
           curl -fsSL --retry 3 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H 'Accept: application/vnd.github+json' "${api}/actions/artifacts/${artifact_id}/zip" -o artifact.zip
           rm -rf downloaded chunks; mkdir -p downloaded chunks
           unzip -q artifact.zip -d downloaded
           dmg=$(find downloaded -type f -name '*.dmg' -print -quit); test -n "$dmg"
-          cp "$dmg" "chunks/lingdong-client-${TARGET_VERSION}-mac-arm64.dmg"
-          split -b 64m "chunks/lingdong-client-${TARGET_VERSION}-mac-arm64.dmg" chunks/dmg-part-
+          cp "$dmg" "chunks/lingdong-client-${target_version}-mac-arm64.dmg"
+          split -b 64m "chunks/lingdong-client-${target_version}-mac-arm64.dmg" chunks/dmg-part-
           git config user.name 'github-actions[bot]'; git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git checkout -B "$TARGET_BRANCH"; rm -rf ".ci/$TARGET_BRANCH"; mkdir -p ".ci/$TARGET_BRANCH"
           printf 'started source_run=%s source_sha=%s artifact=%s\n' "$run_id" "$SOURCE_SHA" "$artifact_id" > ".ci/$TARGET_BRANCH/status.txt"

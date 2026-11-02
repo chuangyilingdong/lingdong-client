@@ -24,13 +24,22 @@ function runChecked(command, args) {
 }
 
 const plistPath = join(appPath, "Contents", "Info.plist");
-const executableName = runChecked("plutil", ["-extract", "CFBundleExecutable", "raw", plistPath]).trim();
+const executableName = runChecked("plutil", [
+  "-extract",
+  "CFBundleExecutable",
+  "raw",
+  plistPath,
+]).trim();
 assert.ok(executableName, "Info.plist 缺少 CFBundleExecutable");
 const executablePath = join(appPath, "Contents", "MacOS", executableName);
 runChecked("codesign", ["--verify", "--deep", "--strict", appPath]);
 const fileOutput = runChecked("file", [executablePath]);
-assert.match(fileOutput, /Mach-O 64-bit executable arm64/u, `主程序不是 arm64 Mach-O：${fileOutput}`);
-
+const expectedMachOArch = process.arch === "arm64" ? "arm64" : "x86_64";
+assert.match(
+  fileOutput,
+  new RegExp(`Mach-O 64-bit executable ${expectedMachOArch}`, "u"),
+  `主程序不是 ${expectedMachOArch} Mach-O：${fileOutput}`,
+);
 async function waitForHttp(url, timeoutMs = 90_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -108,6 +117,7 @@ try {
       platform: process.platform,
       app: basename(appPath),
       executable: executableName,
+      machOArch: expectedMachOArch,
       signed: "ad-hoc or release",
       launched: true,
       mainWindow: true,

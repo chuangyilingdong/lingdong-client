@@ -65,11 +65,13 @@ Windows：
 bash scripts/build-win.sh
 ```
 
-macOS Apple Silicon：
+macOS（两个架构分别构建，不生成 universal 包）：
 
 ```bash
 bash scripts/build-mac-arm64.sh
 bash scripts/build-mac-arm64.sh --unsigned
+bash scripts/build-mac-x64.sh
+bash scripts/build-mac-x64.sh --unsigned
 ```
 
 底层打包入口是：
@@ -77,15 +79,18 @@ bash scripts/build-mac-arm64.sh --unsigned
 ```bash
 pnpm --filter @zcode/desktop run bundle -- --os win --arch x64
 pnpm --filter @zcode/desktop run bundle -- --os mac --arch arm64
+pnpm --filter @zcode/desktop run bundle -- --os mac --arch x64
 ```
 
 ## 发布
 
-发布仍然保持现有下载 manifest 和原子双端发布机制：
+正式发布要求三平台同版本，并一次性原子写入下载 manifest：
 
 ```bash
-bash deploy/publish-client.sh <Windows exe> <macOS dmg>
+bash deploy/publish-client.sh <Windows x64 exe> <macOS arm64 dmg> <macOS x64 dmg>
 ```
+
+单平台应急恢复使用 `--single-platform`，会在同一次原子写中移除另外两个平台条目。旧的普通双平台发布模式已移除。
 
 发布前必须由用户明确确认；当前迁移分支不会自动发布。
 

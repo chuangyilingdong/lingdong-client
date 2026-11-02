@@ -88,7 +88,7 @@ test("About 使用灵动ai方形图标且不再内联 ZCode 字标", () => {
   const html = createCustomAboutDialogHtml({
     applicationName: "灵动ai创作客户端",
     appIconDataUrl: "data:image/png;base64,lingdong",
-    appVersion: "0.2.11",
+    appVersion: "0.2.12",
     copyright: "版权所有 © 2026 灵动ai。",
     optimizationLine: "",
     versionLabel: "版本",

@@ -1,0 +1,127 @@
+# Release trigger: macOS 0.2.12 three-platform release.
+# macOS Intel (x64) 构建：push 即出未签名测试包（ad-hoc 签名），workflow_dispatch 可出正式签名包。
+name: Build macOS Intel (ZCode)
+
+on:
+  workflow_dispatch:
+    inputs:
+      unsigned:
+        description: Build an unsigned local-test DMG/ZIP instead of signed release
+        required: true
+        default: true
+        type: boolean
+  push:
+    branches:
+      - codex/zcode-migration
+      - main
+    paths:
+      - ".github/workflows/build-mac-x64.yml"
+      - ".github/workflows/export-current-mac-x64.yml"
+      - "packages/**"
+      - "apps/**"
+      - "config/**"
+      - "scripts/**"
+      - "public/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build:
+    # GitHub 标准 Intel runner；若该标签退役，回退到仍可用的 macos-13。
+    runs-on: macos-15-intel
+    timeout-minutes: 240
+    env:
+      ZCODE_ENV: production
+      ZCODE_PREVIEW_IDENTITY: "0"
+      ZCODE_ENABLE_MAC_SIGN: "0"
+      ZCODE_DESKTOP_DIST_DIR: ${{ github.workspace }}/dist/mac-x64
+      LINGDONG_API_BASE: https://aicyld.com
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Read package version
+        id: package
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build unsigned macOS DMG/ZIP
+        run: |
+          set -o pipefail
+          pnpm --filter @zcode/desktop run bundle -- --os mac --arch x64 2>&1 | tee mac-x64-build.log
+
+      - name: Smoke launch macOS app
+        run: |
+          set -euo pipefail
+          app="$(find dist/mac-x64 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          node scripts/macos-packaged-smoke.mjs "$app"
+
+      - name: Verify macOS icon branding
+        run: |
+          set -euo pipefail
+          app="$(find dist/mac-x64 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          node packages/desktop/scripts/verify-brand-icons.mjs --app "$app"
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p dist-mac
+          cp dist/mac-x64/*.dmg dist-mac/ 2>/dev/null || true
+          cp dist/mac-x64/*.zip dist-mac/ 2>/dev/null || true
+          ls -lh dist-mac
+
+      - name: Report build status to branch
+        # 上报只是为了在没有 API 权限时也能看到失败原因；它绝不该有权力把构建判红。
+        continue-on-error: true
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          BRANCH=ci/mac-x64-build-report
+          mkdir -p .ci-report
+          {
+            echo "sha=${GITHUB_SHA}"
+            echo "status=${JOB_STATUS}"
+            echo "run=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > .ci-report/status.txt
+          if [ -f mac-x64-build.log ]; then
+            tail -c 40000 mac-x64-build.log > .ci-report/build-tail.log || true
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -f .ci-report
+          git commit -m "ci: mac build report ${JOB_STATUS} ${GITHUB_RUN_ID}"
+          git push --force origin "HEAD:refs/heads/${BRANCH}"
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lingdong-client-${{ steps.package.outputs.version }}-mac-x64
+          path: |
+            dist-mac/*.dmg
+            dist-mac/*.zip
+          if-no-files-found: error
+          retention-days: 14

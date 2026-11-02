@@ -1,25 +1,27 @@
 #!/usr/bin/env bash
-# 把新打出来的客户端安装包发布出去（2026-09-19；2026-09-27 增补 macOS）。
+# 把新打出来的客户端安装包发布出去（2026-09-19；2026-11-02 增补 macOS Intel）。
 #
 # 用法：
-#   bash deploy/publish-client.sh <安装包> [--dry-run]
-#   bash deploy/publish-client.sh <Windows 安装包> <macOS DMG> [--dry-run]
-#   bash deploy/publish-client.sh <Windows 安装包> --single-platform [--dry-run]
+#   bash deploy/publish-client.sh <Windows 安装包> <macOS arm64 DMG> <macOS x64 DMG> [--dry-run]
+#   bash deploy/publish-client.sh <安装包> --single-platform [--dry-run]
 #
-# 单平台发布（--single-platform）：本次只发一个平台时使用。清单顶层 version 只有一个，
-# 另一平台仍是旧版本会造成"顶层说新、该平台文件却是旧包"的坏更新，因此本模式会
-# **移除另一平台的条目**（对方客户端只会看到"本平台暂无更新"，不会被推错包），
-# 并在输出里明确提示。等另一平台出包后，用双包一次发布即可恢复正常。
+# 正式发布必须一次传三个包：win-x64、mac-arm64、mac-x64。清单顶层 version 只有一个，
+# 三端必须同版本；脚本会先把三个包全部上传并核对大小/SHA256，最后只原子写一次
+# manifest.json。任意一个包失败都不会切换清单。
+#
+# 单平台发布（--single-platform）：只用于恢复/应急。本模式会更新一个平台，并在同一次
+# 原子写里移除另外两个平台的条目（旧平台客户端只会看到"本平台暂无更新"，不会被推错包）。
+# 单平台恢复后，下一次正式发布仍必须传齐三个包。
 #
 # 支持：
 #   lingdong-client-<版本>-win-x64.exe
 #   lingdong-client-<版本>-mac-arm64.dmg
+#   lingdong-client-<版本>-mac-x64.dmg
 # 也接受构建产物名（带 -unsigned 后缀），脚本会在上传前归一化成上面的规范名，
 # 因此平台上传口的严格正则不需要放宽。
 #
-# 为什么单平台发布要拦一道：平台清单目前只有一个顶层 manifest.version。若
-# Win/Mac 条目版本不一致，旧客户端会拿顶层新版本去下载本平台旧包，直接更新失败。
-# 因此双端必须同版本；一次传两个包会先全部上传校验，再原子写一次 manifest。
+# 旧的普通双平台发布模式已移除：两个包无法证明第三个平台也是同一版本，容易把旧包
+# 伪装成新版本。正式发布传三个包，单平台恢复显式加 --single-platform。
 set -euo pipefail
 
 KEY="${PUBLISH_CLIENT_SSH_KEY:-$HOME/.ssh/ai_kids_platform_ecs_temp_ed25519}"
@@ -47,6 +49,7 @@ artifact_target() {
   case "$1" in
     lingdong-client-*-win-x64.exe | lingdong-client-*-win-x64-unsigned.exe) echo win-x64 ;;
     lingdong-client-*-mac-arm64.dmg | lingdong-client-*-mac-arm64-unsigned.dmg) echo mac-arm64 ;;
+    lingdong-client-*-mac-x64.dmg | lingdong-client-*-mac-x64-unsigned.dmg) echo mac-x64 ;;
     *) return 1 ;;
   esac
 }
@@ -54,6 +57,7 @@ artifact_version() {
   case "$1" in
     lingdong-client-*-win-x64.exe | lingdong-client-*-win-x64-unsigned.exe) sed -E 's/^lingdong-client-(.*)-win-x64(-unsigned)?\.exe$/\1/' <<<"$1" ;;
     lingdong-client-*-mac-arm64.dmg | lingdong-client-*-mac-arm64-unsigned.dmg) sed -E 's/^lingdong-client-(.*)-mac-arm64(-unsigned)?\.dmg$/\1/' <<<"$1" ;;
+    lingdong-client-*-mac-x64.dmg | lingdong-client-*-mac-x64-unsigned.dmg) sed -E 's/^lingdong-client-(.*)-mac-x64(-unsigned)?\.dmg$/\1/' <<<"$1" ;;
     *) return 1 ;;
   esac
 }
@@ -62,11 +66,14 @@ canonical_artifact_name() {
   case "$1" in
     win-x64) echo "lingdong-client-${2}-win-x64.exe" ;;
     mac-arm64) echo "lingdong-client-${2}-mac-arm64.dmg" ;;
+    mac-x64) echo "lingdong-client-${2}-mac-x64.dmg" ;;
     *) return 1 ;;
   esac
 }
-other_target() {
-  [ "$1" = "win-x64" ] && echo mac-arm64 || echo win-x64
+other_targets() {
+  for target in win-x64 mac-arm64 mac-x64; do
+    [ "$target" != "$1" ] && echo "$target"
+  done
 }
 
 ARTIFACTS=()
@@ -79,9 +86,9 @@ for argument in "$@"; do
   esac
 done
 
-if [ "${#ARTIFACTS[@]}" -lt 1 ] || [ "${#ARTIFACTS[@]}" -gt 2 ]; then
-  echo "用法：bash $0 <安装包> [--dry-run]"
-  echo "      bash $0 <Windows 安装包> <macOS DMG> [--dry-run]"
+if [ "${#ARTIFACTS[@]}" -lt 1 ] || [ "${#ARTIFACTS[@]}" -gt 3 ]; then
+  echo "用法：bash $0 <Windows x64> <macOS arm64> <macOS x64> [--dry-run]"
+  echo "      bash $0 <安装包> --single-platform [--dry-run]"
   exit 2
 fi
 
@@ -105,17 +112,26 @@ for artifact in "${ARTIFACTS[@]}"; do
   SIZES+=("$(file_size "$artifact")"); SHAS+=("$(file_sha256 "$artifact")")
 done
 
-if [ "${#ARTIFACTS[@]}" -eq 2 ] && [ "$SINGLE" = "1" ]; then
+if [ "$SINGLE" = "1" ] && [ "${#ARTIFACTS[@]}" -ne 1 ]; then
   echo "!! --single-platform 只能传一个安装包"
   exit 2
 fi
 
-if [ "${#ARTIFACTS[@]}" -eq 2 ]; then
-  [ "${TARGETS[0]}" != "${TARGETS[1]}" ] || { echo "!! 两个安装包目标不能相同：${TARGETS[0]}"; exit 2; }
-  [ "${VERSIONS[0]}" = "${VERSIONS[1]}" ] || {
-    echo "!! Windows 与 macOS 必须同版本发布：${VERSIONS[0]} / ${VERSIONS[1]}"
-    exit 2
-  }
+if [ "$SINGLE" != "1" ] && [ "${#ARTIFACTS[@]}" -ne 3 ]; then
+  echo "!! 正式发布必须一次传齐 win-x64 / mac-arm64 / mac-x64 三个安装包"
+  echo "   只发一个平台请显式加 --single-platform；旧的普通双平台模式已移除。"
+  exit 2
+fi
+
+if [ "${#ARTIFACTS[@]}" -eq 3 ]; then
+  unique_targets=$(printf '%s\n' "${TARGETS[@]}" | sort -u | wc -l | tr -d ' ')
+  [ "$unique_targets" = "3" ] || { echo "!! 三个安装包必须分别对应 win-x64 / mac-arm64 / mac-x64"; exit 2; }
+  for index in 1 2; do
+    [ "${VERSIONS[$index]}" = "${VERSIONS[0]}" ] || {
+      echo "!! 三个平台必须同版本发布：${VERSIONS[0]} / ${VERSIONS[1]} / ${VERSIONS[2]}"
+      exit 2
+    }
+  done
 fi
 
 echo "待发布："
@@ -139,20 +155,6 @@ for index in "${!ARTIFACTS[@]}"; do
   fi
 done
 
-if [ "${#ARTIFACTS[@]}" -eq 1 ] && [ "$SINGLE" != "1" ]; then
-  target="${TARGETS[0]}"
-  version="${VERSIONS[0]}"
-  other="$(other_target "$target")"
-  other_name=$(ssh "${SSH_OPTS[@]}" -o ConnectTimeout=10 "$HOST" "jq -r --arg target '$other' '.files[\$target].name // \"\"' '$REMOTE_DIR/manifest.json'")
-  if [ -n "$other_name" ]; then
-    other_version="$(artifact_version "$other_name" || true)"
-    if [ "$other_version" != "$version" ]; then
-      echo "!! 平台清单两端版本不一致：${target}=${version}，${other}=${other_version}"
-      echo "   平台顶层的 manifest.version 只有一个；请把 Windows 与 macOS 两个包一次性传给本脚本。"
-      exit 1
-    fi
-  fi
-fi
 
 echo "=== ① 上传到 ${REMOTE_DIR}（发布目录之外，换代不冲） ==="
 for index in "${!ARTIFACTS[@]}"; do
@@ -169,7 +171,7 @@ for index in "${!ARTIFACTS[@]}"; do
   [ "$remote_sha" = "${SHAS[$index]}" ] || { echo "!! $name 远端 SHA256 与本地不一致，停止"; exit 1; }
 done
 
-echo "=== ③ 一次原子写回 manifest（保留另一平台和后台策略，先备份） ==="
+echo "=== ③ 一次原子写回 manifest（保留后台策略，先备份） ==="
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 FILTER=".version = \$version0 | .publishedAt = \$timestamp | .updatedAt = \$timestamp | .files = (.files // {})"
 JQ_ARGS=(--arg version0 "${VERSIONS[0]}" --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)")
@@ -178,9 +180,10 @@ for index in "${!ARTIFACTS[@]}"; do
   JQ_ARGS+=(--arg "version$index" "${VERSIONS[$index]}" --arg "name$index" "${NAMES[$index]}" --arg "sha$index" "${SHAS[$index]}" --argjson "size$index" "${SIZES[$index]}")
 done
 if [ "$SINGLE" = "1" ]; then
-  other="$(other_target "${TARGETS[0]}")"
-  FILTER="$FILTER | del(.files[\"$other\"])"
-  echo "[single-platform] 将移除 $other 条目（本次只发 ${TARGETS[0]}）"
+  while IFS= read -r other; do
+    FILTER="$FILTER | del(.files[\"$other\"])"
+    echo "[single-platform] 将移除 $other 条目（本次只发 ${TARGETS[0]}）"
+  done < <(other_targets "${TARGETS[0]}")
 fi
 FILTER="$FILTER | .enabled = (if has(\"enabled\") then .enabled else true end) | .mandatory = (if has(\"mandatory\") then .mandatory else false end) | .minVersion = (if has(\"minVersion\") then .minVersion else \"\" end) | .note = (if has(\"note\") then .note else \"灵动ai创作客户端新版本已发布。\" end) | .channel = (if has(\"channel\") then .channel else \"stable\" end)"
 
