@@ -184,6 +184,12 @@ export const hostInitLocalMessageSchema = z.object({
   deliveryKind: taskRealtimeHostDeliveryKindSchema.optional(),
   deviceMid: z.string().optional(),
   feedbackApiBase: z.string().url().optional(),
+  lingdongFeedback: z
+    .object({
+      apiBaseUrl: z.string().url(),
+      authToken: nonEmptyStringSchema,
+    })
+    .optional(),
   workspacePath: nonEmptyStringSchema.optional(),
   workspaceIdentity: nonEmptyStringSchema.optional(),
   agentWarmupTargets: z.array(hostAgentWarmupTargetSchema).max(3).optional(),

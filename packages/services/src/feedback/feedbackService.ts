@@ -44,7 +44,7 @@ function resolveApiBaseUrl(explicit?: string): string {
   );
 }
 
-function buildDeviceSnapshot(): FeedbackDeviceInfo {
+export function buildFeedbackDeviceSnapshot(): FeedbackDeviceInfo {
   return {
     appVersion: ZCODE_VERSION,
     buildCommitId: ZCODE_COMMIT,
@@ -119,7 +119,7 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
 
   return {
     create: async (input, createOptions) => {
-      const device = input.device ?? buildDeviceSnapshot();
+      const device = input.device ?? buildFeedbackDeviceSnapshot();
       const operationId = createOptions?.operationId?.trim();
       const controller = new AbortController();
       if (operationId) {
@@ -246,7 +246,7 @@ export function createFeedbackService(options: CreateFeedbackServiceOptions): IF
         await cleanupLogArchive(archive.path);
       }
     },
-    getDeviceSnapshot: async () => buildDeviceSnapshot(),
+    getDeviceSnapshot: async () => buildFeedbackDeviceSnapshot(),
     prepareCompactLogArchive: async (archiveOptions) => {
       const progressId = archiveOptions?.progressId;
       const progressEmitter = progressId ? getUploadProgressEmitter(progressId) : null;

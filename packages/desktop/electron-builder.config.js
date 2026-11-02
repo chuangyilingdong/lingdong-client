@@ -1,5 +1,16 @@
 /* eslint-disable max-lines -- Electron Builder config keeps related packaging hooks together so build order stays explicit. */
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import {
+  closeSync,
+  cpSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readdirSync,
+  readSync,
+  rmSync,
+} from "node:fs";
 import { readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -483,6 +494,108 @@ function assertPackagedNodePtyPrebuild(context) {
  * 调用点必须排在所有会改包内容的 afterPack 步骤（asar 注入、sourcemap 清理）之后，
  * 否则后写入会破坏签名。
  */
+function copyBundledRuntimeToolchain(context) {
+  const productFilename =
+    context.packager?.appInfo?.productFilename ?? desktopProductIdentity.productName;
+  const resourcesDir =
+    context.electronPlatformName === "darwin"
+      ? resolve(context.appOutDir, `${productFilename}.app`, "Contents", "Resources")
+      : resolve(context.appOutDir, "resources");
+  const sourceRoot = resolve(desktopPackageRoot, "bundled-tools", targetPlatform.key);
+  for (const tool of ["node", "git"]) {
+    const source = resolve(sourceRoot, tool);
+    const destination = resolve(resourcesDir, "tools", tool);
+    if (!existsSync(source)) {
+      throw new Error(`bundled runtime toolchain missing: ${source}`);
+    }
+    rmSync(destination, { recursive: true, force: true });
+    mkdirSync(dirname(destination), { recursive: true });
+    // extraResources 的默认 file matcher 会排除 node_modules，导致 Node 存在但 npm 缺文件。
+    // afterPack 直接复制可以保留 npm 依赖树和 tar 解包后的软链接。
+    cpSync(source, destination, {
+      recursive: true,
+      force: true,
+      verbatimSymlinks: true,
+      filter: (entryPath) => !entryPath.endsWith(".DS_Store"),
+    });
+  }
+  const nodeBinary =
+    targetPlatform.os === "win32"
+      ? resolve(resourcesDir, "tools", "node", "node.exe")
+      : resolve(resourcesDir, "tools", "node", "bin", "node");
+  const gitBinary =
+    targetPlatform.os === "win32"
+      ? resolve(resourcesDir, "tools", "git", "cmd", "git.exe")
+      : resolve(resourcesDir, "tools", "git", "bin", "git");
+  if (!existsSync(nodeBinary) || !existsSync(gitBinary)) {
+    throw new Error(`bundled runtime toolchain verification failed: ${nodeBinary}; ${gitBinary}`);
+  }
+  console.log(`[afterPack] copied runtime toolchain Node + Git for ${targetPlatform.key}`);
+}
+
+function isMachOFile(filePath) {
+  let fd = null;
+  try {
+    fd = openSync(filePath, "r");
+    const header = Buffer.alloc(4);
+    if (readSync(fd, header, 0, 4, 0) < 4) return false;
+    return new Set([
+      0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe, 0xbebafeca, 0xcafebabf,
+      0xbfbafeca,
+    ]).has(header.readUInt32BE(0));
+  } catch {
+    return false;
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+}
+
+function collectMachOFiles(rootDir) {
+  const files = [];
+  const walk = (directory) => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const entryPath = join(directory, entry.name);
+      if (entry.isSymbolicLink()) continue;
+      if (entry.isDirectory()) {
+        walk(entryPath);
+      } else if (entry.isFile() && isMachOFile(entryPath)) {
+        files.push(entryPath);
+      }
+    }
+  };
+  if (existsSync(rootDir) && lstatSync(rootDir).isDirectory()) walk(rootDir);
+  return files.sort((left, right) => right.length - left.length);
+}
+
+/**
+ * `Contents/Resources/tools` 在 signIgnore 中，electron-builder 不会自动签。
+ * Node/Git 的 Mach-O 必须先用同一 Developer ID 和 runtime entitlements 签名，
+ * 再由 electron-builder 完成外层 app 签名。
+ */
+function signMacRuntimeToolchain(context) {
+  const productFilename =
+    context.packager?.appInfo?.productFilename ?? desktopProductIdentity.productName;
+  const appPath = resolve(context.appOutDir, `${productFilename}.app`);
+  const resourcesDir = resolve(appPath, "Contents", "Resources", "tools");
+  const entitlements = resolve(desktopPackageRoot, "build/entitlements.mac.inherit.plist");
+  const files = ["node", "git"].flatMap((tool) => collectMachOFiles(join(resourcesDir, tool)));
+  if (files.length === 0) return;
+  console.log(`[mac-sign] signing ${files.length} runtime toolchain binaries`);
+  for (const filePath of files) {
+    runCommand("codesign", [
+      "--force",
+      "--options",
+      "runtime",
+      "--timestamp",
+      "--entitlements",
+      entitlements,
+      "--sign",
+      macSigningIdentity,
+      filePath,
+    ]);
+  }
+}
+
 function adHocSignUnsignedMacApp(context) {
   const productFilename =
     context.packager?.appInfo?.productFilename ?? desktopProductIdentity.productName;
@@ -601,6 +714,9 @@ export default {
     await runTimedAsync("afterPack:stripPackagedSourcemapReferences", () =>
       stripPackagedSourcemapReferences(context),
     );
+    await runTimedAsync("afterPack:copyBundledRuntimeToolchain", () =>
+      copyBundledRuntimeToolchain(context),
+    );
     runTimedSync("afterPack:assertPackagedNativeResourcePolicy", () =>
       assertPackagedNativeResourcePolicy(context),
     );
@@ -619,6 +735,11 @@ export default {
     }
     // 未签名的 mac 构建必须补 ad-hoc 签名，否则 Apple Silicon 直接判「已损坏」。
     // 放在这里是因为上面的 asar 注入 / sourcemap 清理都会改包内容。
+    if (context.electronPlatformName === "darwin" && shouldEnableMacSigning) {
+      await runTimedAsync("afterPack:signMacRuntimeToolchain", () =>
+        signMacRuntimeToolchain(context),
+      );
+    }
     if (context.electronPlatformName === "darwin" && !shouldEnableMacSigning) {
       await runTimedAsync("afterPack:adHocSignUnsignedMacApp", () =>
         adHocSignUnsignedMacApp(context),
@@ -700,6 +821,7 @@ export default {
       to: "glm",
       filter: ["**/*", "!**/*.map"],
     },
+
     {
       // agent shell 之前完全依赖宿主系统 PATH，GUI 启动时经常拿不到用户自己装的 rg。
       // 这里把 ripgrep 作为桌面端内置 runtime tool 打进 resources/tools，

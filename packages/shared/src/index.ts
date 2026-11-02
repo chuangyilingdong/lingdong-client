@@ -224,6 +224,7 @@ export type {
   ClassroomWorkspaceFile,
   ClassroomWorkspaceScan,
   ClassroomWorkspaceSubmitPreview,
+  ClassroomWorkspaceScanOptions,
   OpenInEditorRemoteTarget,
   OpenInEditorOptions,
   PostUpdateReleaseNotesPayload,
@@ -237,6 +238,13 @@ export type {
   WSLDistro,
   ZCodeStdioTapDevState,
 } from "./platform.js";
+export {
+  buildLingdongSubmissionRecordKey,
+  LINGDONG_MAX_TASK_ID_LENGTH,
+  LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS,
+  normalizeLingdongEntryPaths,
+  toLingdongWorkspaceRelativePath,
+} from "./lingdong-work-submission.js";
 export type {
   CuaAccessibilitySettingsResult,
   CuaPermissionKind,
@@ -321,6 +329,5 @@ export * from "./clientConfig.js";
 export * from "./pluginStoreOrdering.js";
 export * from "./session-debug.js";
 export { redactFeedbackText } from "./feedbackPrivacy.js";
-
 
 export * from "./lingdong-web-search.js";

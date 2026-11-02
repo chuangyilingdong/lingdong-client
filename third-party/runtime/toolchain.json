@@ -1,0 +1,42 @@
+{
+  "node": {
+    "version": "22.16.0",
+    "minimumSystemVersion": "22.13.0",
+    "defaultBaseUrl": "https://cdn.npmmirror.com/binaries/node/v22.16.0",
+    "platforms": {
+      "win32-x64": {
+        "fileName": "node-v22.16.0-win-x64.zip",
+        "sha256": "21c2d9735c80b8f86dab19305aa6a9f6f59bbc808f68de3eef09d5832e3bfbbd"
+      },
+      "darwin-x64": {
+        "fileName": "node-v22.16.0-darwin-x64.tar.gz",
+        "sha256": "838d400f7e66c804e5d11e2ecb61d6e9e878611146baff69d6a2def3cc23f4ac"
+      },
+      "darwin-arm64": {
+        "fileName": "node-v22.16.0-darwin-arm64.tar.gz",
+        "sha256": "1d7f34ec4c03e12d8b33481e5c4560432d7dc31a0ef3ff5a4d9a8ada7cf6ecc9"
+      }
+    }
+  },
+  "git": {
+    "version": "2.56.0",
+    "distribution": "dugite-native-v2.56.0-2",
+    "platforms": {
+      "win32-x64": {
+        "fileName": "dugite-native-v2.56.0-a44aeca-windows-x64.tar.gz",
+        "url": "https://github.com/desktop/dugite-native/releases/download/v2.56.0-2/dugite-native-v2.56.0-a44aeca-windows-x64.tar.gz",
+        "sha256": "f1e17876337d7be143e5d51976da36643d65528125cfbc14d57f171de0fd5f14"
+      },
+      "darwin-x64": {
+        "fileName": "dugite-native-v2.56.0-a44aeca-macOS-x64.tar.gz",
+        "url": "https://github.com/desktop/dugite-native/releases/download/v2.56.0-2/dugite-native-v2.56.0-a44aeca-macOS-x64.tar.gz",
+        "sha256": "52cc663281e1ec2f1d76ba781193ca4847e62dbbf767f6c99ec9ec5b978a7659"
+      },
+      "darwin-arm64": {
+        "fileName": "dugite-native-v2.56.0-a44aeca-macOS-arm64.tar.gz",
+        "url": "https://github.com/desktop/dugite-native/releases/download/v2.56.0-2/dugite-native-v2.56.0-a44aeca-macOS-arm64.tar.gz",
+        "sha256": "1110de343de11cc6f469b782b60f36217b9199b5e06875dd65baa26dd60563c7"
+      }
+    }
+  }
+}

@@ -24,12 +24,33 @@ const TINY_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
   "base64",
 );
+function classroomHtml(item, taskWriteMarker = "") {
+  return [
+    "<!doctype html><html><head>",
+    "<link rel='stylesheet' href='style.css'>",
+    "</head><body>",
+    `<h1>Mock ${item.id}</h1>`,
+    "<img src='assets/hero.png' alt='hero'>",
+    "<video src='assets/clip.mp4'></video>",
+    "<script src='app.js'></script>",
+    taskWriteMarker ? `<p data-mock-task-write='${taskWriteMarker}'>task output</p>` : "",
+    "<!--",
+    "<img src='https://example.com/remote.png'>",
+    "<img src='data:image/png;base64,AAAA'>",
+    "<a href='#top'>top</a>",
+    "-->",
+    "</body></html>",
+  ].join("");
+}
 for (const item of CLASSROOMS) {
   await mkdir(join(item.workspace, "assets"), { recursive: true });
   await writeFile(join(item.workspace, "assets", "hero.png"), TINY_PNG);
   await writeFile(join(item.workspace, "assets", "bg.png"), TINY_PNG);
   await writeFile(join(item.workspace, "assets", "clip.mp4"), Buffer.from("MOCK_MP4_BYTES"));
-  await writeFile(join(item.workspace, "assets", "guide.pdf"), Buffer.from("%PDF-1.4\nMOCK_PDF_BYTES"));
+  await writeFile(
+    join(item.workspace, "assets", "guide.pdf"),
+    Buffer.from("%PDF-1.4\nMOCK_PDF_BYTES"),
+  );
   await writeFile(join(item.workspace, "assets", "report.docx"), Buffer.from("MOCK_DOCX_BYTES"));
   await writeFile(
     join(item.workspace, "style.css"),
@@ -42,22 +63,7 @@ for (const item of CLASSROOMS) {
   // 入口 HTML：三条本地引用（css / img / video）必须在清单里；三条外部/无效引用必须在清单外。
   // ⚠️ 过滤样本放进 HTML 注释：客户端扫的是原始文本（照样能覆盖过滤规则），
   //    但浏览器不会去加载它们——否则封面截图窗口会卡在外网请求上直到超时。
-  const html = [
-    "<!doctype html><html><head>",
-    "<link rel='stylesheet' href='style.css'>",
-    "</head><body>",
-    `<h1>Mock ${item.id}</h1>`,
-    "<img src='assets/hero.png' alt='hero'>",
-    "<video src='assets/clip.mp4'></video>",
-    "<script src='app.js'></script>",
-    "<!--",
-    "<img src='https://example.com/remote.png'>",
-    "<img src='data:image/png;base64,AAAA'>",
-    "<a href='#top'>top</a>",
-    "-->",
-    "</body></html>",
-  ].join("");
-  await writeFile(join(item.workspace, "index.html"), html);
+  await writeFile(join(item.workspace, "index.html"), classroomHtml(item));
   await writeFile(join(item.workspace, "notes.txt"), `MOCK_CLASSROOM_FILE ${item.id}\n`);
 }
 // 课堂可用性形态（对齐平台契约）：
@@ -106,13 +112,14 @@ const json = (res, status, value) => {
 };
 // 平台成功响应统一是 {success, ok, data}；错误体是 {error:{code,message}}。
 const ok = (res, data) => json(res, 200, { success: true, ok: true, data });
-const fail = (res, status, code, message) =>
-  json(res, status, { error: { code, message } });
+const fail = (res, status, code, message) => json(res, status, { error: { code, message } });
 // 平台资源名白名单：≤6 段、单段 ≤64、整名 ≤120；段首中英文/数字，段内可含 . _ -；
 // 禁 .. 与隐藏文件、绝对路径、盘符、反斜杠。
 const WORK_ASSET_SEGMENT_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N}._-]*$/u;
 function isValidWorkAssetName(raw) {
-  const name = String(raw ?? "").trim().replaceAll("\\", "/");
+  const name = String(raw ?? "")
+    .trim()
+    .replaceAll("\\", "/");
   if (!name || name.length > 120) return false;
   if (name.startsWith("/") || /^[A-Za-z]:/.test(name)) return false;
   const segments = name.split("/");
@@ -190,7 +197,7 @@ function context(sessionId) {
   }
   const available = CLASSROOMS.slice(0, activeClassroomCount);
   const selected = sessionId
-    ? available.find((item) => item.id === sessionId) ?? null
+    ? (available.find((item) => item.id === sessionId) ?? null)
     : available[0];
   if (!selected) {
     return {
@@ -234,18 +241,21 @@ const server = http.createServer(async (req, res) => {
       const data = await body(req);
       if (typeof data.omitWorkspacePath === "boolean") omitWorkspacePath = data.omitWorkspacePath;
       if (typeof data.sessionSuperseded === "boolean") sessionSuperseded = data.sessionSuperseded;
-      if (typeof data.submitIncludesWorks === "boolean") submitIncludesWorks = data.submitIncludesWorks;
+      if (typeof data.submitIncludesWorks === "boolean")
+        submitIncludesWorks = data.submitIncludesWorks;
       return json(res, 200, { omitWorkspacePath, sessionSuperseded, submitIncludesWorks });
     }
     if (pathname === "/__test/classrooms" && req.method === "POST") {
       const data = await body(req);
-      classroomMode =
-        data.mode === "none" || data.mode === "canvas" ? data.mode : "active";
+      classroomMode = data.mode === "none" || data.mode === "canvas" ? data.mode : "active";
       activeClassroomCount = data.count === 2 ? 2 : 1;
       return json(res, 200, {
         classroomMode,
         activeClassroomCount,
-        classrooms: CLASSROOMS.slice(0, activeClassroomCount).map(({ id, title }) => ({ id, title })),
+        classrooms: CLASSROOMS.slice(0, activeClassroomCount).map(({ id, title }) => ({
+          id,
+          title,
+        })),
       });
     }
     if (pathname === "/__test/mode" && req.method === "POST") {
@@ -322,6 +332,8 @@ const server = http.createServer(async (req, res) => {
           return fail(res, 400, "INVALID_WORK_ASSET_NAME", `作品文件名不合法：${file?.name}`);
         }
       }
+      if (typeof data.taskId === "string" && data.taskId.trim().length > 200)
+        return fail(res, 400, "INVALID_TASK_ID", "taskId 过长");
       works.push({
         id: "work-" + (works.length + 1),
         name: data.name,
@@ -329,6 +341,10 @@ const server = http.createServer(async (req, res) => {
         classSessionId: activeClassroom.id,
         source: "VIBECODING",
         submittedAt: new Date().toISOString(),
+        title: data.title,
+        ...(typeof data.taskId === "string" && data.taskId.trim()
+          ? { taskId: data.taskId.trim() }
+          : {}),
         files: data.files?.map((f) => ({ name: f.name, binary: !!f.binary })),
         cover: !!data.cover,
       });
@@ -418,15 +434,21 @@ const server = http.createServer(async (req, res) => {
       };
       if (mode === "tools" && data.stream && toolRound < 2) {
         toolRound++;
+        const isWrite = toolRound === 2;
         const call = {
           index: 0,
-          id: "mock-read-" + toolRound,
+          id: (isWrite ? "mock-write-" : "mock-read-") + toolRound,
           type: "function",
           function: {
-            name: "Read",
-            arguments: JSON.stringify({
-              file_path: join(activeClassroom.workspace, toolRound === 1 ? "notes.txt" : "index.html"),
-            }),
+            name: isWrite ? "Write" : "Read",
+            arguments: JSON.stringify(
+              isWrite
+                ? {
+                    file_path: join(activeClassroom.workspace, "index.html"),
+                    content: classroomHtml(activeClassroom, "round-2"),
+                  }
+                : { file_path: join(activeClassroom.workspace, "index.html") },
+            ),
           },
         };
         res.writeHead(200, { "content-type": "text/event-stream", ...historyHeaders });
@@ -440,9 +462,14 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (mode === "tools" && data.stream)
-        completion.choices[0].message.content = "MOCK_TWO_TOOL_ROUNDS_OK：两个文件已读取。";
+        completion.choices[0].message.content =
+          "MOCK_TWO_TOOL_ROUNDS_OK：index.html 已读取并更新。";
       if (data.stream) {
-        res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", ...historyHeaders });
+        res.writeHead(200, {
+          "content-type": "text/event-stream",
+          "cache-control": "no-cache",
+          ...historyHeaders,
+        });
         for (const delta of [
           { role: "assistant" },
           { content: completion.choices[0].message.content },

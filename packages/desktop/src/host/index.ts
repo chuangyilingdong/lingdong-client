@@ -2855,6 +2855,14 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
                 getDeviceMid: () => msg.deviceMid,
                 apiBaseUrl: msg.feedbackApiBase,
                 createFullLogArchive: createFullFeedbackLogArchiveViaMain,
+                ...(msg.lingdongFeedback
+                  ? {
+                      platform: {
+                        apiBaseUrl: msg.lingdongFeedback.apiBaseUrl,
+                        authToken: msg.lingdongFeedback.authToken,
+                      },
+                    }
+                  : {}),
               },
               forwardSessionMessageSendRequested: (request) => {
                 parentPort?.postMessage({

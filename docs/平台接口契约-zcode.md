@@ -110,6 +110,10 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 - `files[]`，每项为 `{ name, content, binary }`；文本文件 `content` 为 UTF-8，二进制文件 `content` 为 base64
 - `cover`（可选 PNG base64 或平台已有文件引用）
 - `copyrightConfirmed`
+- `taskId`（可选 string，trim 后 ≤200；有当前 ZCode 任务时必带，草稿态不传）
+
+平台按 `(conversation_id, client_task_id, entry_file)` 判重：同一任务同一入口覆盖并递增 round，
+不同任务同名入口为独立作品。提交响应顶层和 `works[]`、以及 `GET /student/works` 每条都必须回显 `taskId`。
 
 **客户端会带上入口 HTML 引用的本地素材**（2026-09-30 起，见 `docs/specs/lingdong-work-asset-bundle.md`）：
 
@@ -187,12 +191,12 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂能力统一收敛为
 `IPlatformService.classroom`（`IClassroomPlatformService`）：
 
-| 方法                   | 用途                           | 说明                                                     |
-| ---------------------- | ------------------------------ | -------------------------------------------------------- |
-| `getPresets()`         | 当前课堂提示词预设             | 插入草稿，不自动发送                                     |
-| `scanWorkspaceFiles()` | 扫描课堂工作区候选与主作品预览 | 返回候选元数据，以及唯一主作品和自动引用文件的 `preview` |
-| `submitWork(payload)`  | 提交作品                       | `copyrightConfirmed` 必须来自用户显式确认                |
-| `listWorks()`          | 查询历史作品                   | 提交后回显                                               |
+| 方法                           | 用途                           | 说明                                                                             |
+| ------------------------------ | ------------------------------ | -------------------------------------------------------------------------------- |
+| `getPresets()`                 | 当前课堂提示词预设             | 插入草稿，不自动发送                                                             |
+| `scanWorkspaceFiles(options?)` | 扫描课堂工作区候选与主作品预览 | 可带当前 `taskId` 与任务已应用文件路径，返回唯一主作品和自动引用文件的 `preview` |
+| `submitWork(payload)`          | 提交作品                       | `copyrightConfirmed` 必须来自用户显式确认；有任务时带 `taskId` / `taskTitle`     |
+| `listWorks()`                  | 查询历史作品                   | 提交后回显                                                                       |
 
 约束：
 
@@ -208,7 +212,7 @@ Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂�
 - 登录会话、课堂上下文、运行时网关凭据：`packages/desktop/src/main/lingdongPlatformGate.ts`（Electron Main 单一所有者）。
 - 当前课堂工作区：平台上下文初始化后由 `startupWorkspace` 启动参数与 ZCode workspace/session store 共同消费；Main 只注入 canonical path/identity，不复制任务状态。
 - 发送次数：`packages/services/src/zcode-agent/lingdongQuotaLedger.ts` 在 Service 的实际命令入口（V4 `sendText`、`createSession.firstInput`、附件兼容 `session/send`）预留与结算，按 workspace identity + sessionId + commandId 幂等；UI 不作为最终事实来源，平台 sends / 网关 429 仍是最终门禁。
-- 作品候选：renderer 读取当前 workspace 文件服务得到派生候选；提交命令只经过 `window.lingdong.submitWork` 回 Main，由 Main 使用平台 token 调用 `submit-upload`。
+- 作品候选：renderer 通过 `IZCodeTaskService` 读取当前 task 的标题与 `fileState=applied` 文件，再交给 workspace 扫描做路径校验和预览；提交命令只经过 `window.lingdong.submitWork` 回 Main，由 Main 使用平台 token 调用 `submit-upload`。
 
 ### 事件顺序
 
@@ -219,9 +223,10 @@ Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂�
   → 计算 classroom workspace identity
   → 启动 ZCode Host
   → UI 读取 platform snapshot
-  → 文件服务扫描候选
+  → 读取当前 task 的标题与已应用文件
+  → 文件服务扫描并按 task 候选过滤
   → 用户确认作品
-  → Main submit-upload
+  → Main submit-upload（带 taskId）
   → 刷新 GET /student/works
 ```
 

@@ -246,10 +246,13 @@ window.addEventListener("DOMContentLoaded", updateRendererProcessTitle, {
  */
 contextBridge.exposeInMainWorld("lingdong", {
   getPlatformSnapshot: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-snapshot"),
-  refreshPlatformContext: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-refresh-context"),
+  refreshPlatformContext: (): Promise<unknown> =>
+    ipcRenderer.invoke("lingdong:platform-refresh-context"),
   listWorks: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-works"),
-  scanWorkspaceFiles: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-scan-workspace"),
-  submitWork: (payload: unknown): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-submit-work", payload),
+  scanWorkspaceFiles: (options?: unknown): Promise<unknown> =>
+    ipcRenderer.invoke("lingdong:platform-scan-workspace", options),
+  submitWork: (payload: unknown): Promise<unknown> =>
+    ipcRenderer.invoke("lingdong:platform-submit-work", payload),
   logout: (): Promise<void> => ipcRenderer.invoke("lingdong:platform-logout"),
 });
 

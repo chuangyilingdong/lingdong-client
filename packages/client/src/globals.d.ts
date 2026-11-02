@@ -50,6 +50,7 @@ import type {
   ClassroomSubmitResult,
   ClassroomWorksList,
   ClassroomWorkspaceScan,
+  ClassroomWorkspaceScanOptions,
   ClassroomWorkSubmission,
 } from "@zcode/shared";
 
@@ -73,7 +74,7 @@ declare global {
       } | null>;
       refreshPlatformContext(): Promise<unknown>;
       listWorks(): Promise<ClassroomWorksList>;
-      scanWorkspaceFiles(): Promise<ClassroomWorkspaceScan>;
+      scanWorkspaceFiles(options?: ClassroomWorkspaceScanOptions): Promise<ClassroomWorkspaceScan>;
       submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
       logout(): Promise<void>;
     };

@@ -23,6 +23,10 @@
 4. 用户点击提交时，renderer 只发送主作品一项；宿主在提交前用同一份解析结果重新打包
    主作品和引用素材。
 5. 若没有可提交主作品，显示空状态并禁用提交；若入口名不合法，显示宿主返回的具体原因。
+6. 有当前任务时，renderer 通过 V4 `conversation/rowsRange` 找到当前分支的 turnHeader，
+   再逐轮读取 `conversation/fileChanges`；只取 state 非 reverted 的文件，并按可提交扩展名过滤。
+   多个候选仍按最近更新时间选主作品。草稿态没有 taskId 时才沿用工作区最近入口。
+7. 提交标题默认使用当前任务标题；草稿态或任务标题为空时回退到入口文件名。
 
 ## 客户端契约（提交给平台的形状）
 
@@ -58,9 +62,22 @@
 ### 所有者与状态
 
 - 唯一所有者：`packages/desktop/src/main/lingdongPlatformGate.ts`。
-- 指纹键：`workspaceIdentity + 主作品工作区相对路径`。
+- 有 taskId 时指纹键：`workspaceIdentity + taskId + 主作品工作区相对路径`；
+  无 taskId 的草稿/旧链路继续使用 `workspaceIdentity + 主作品工作区相对路径`。
 - 指纹内容：最终清单中每个文件的提交资源名、原始大小、mtime；任一变化都会产生新指纹。
 - 成功提交后由 Main 持久化指纹；renderer 只消费 `submitted` 与 `hasNewOutput`，不自行缓存事实。
+
+### 任务归属
+
+- `taskId` 是 ZCode taskId，由 renderer 从当前任务状态读取；草稿态不传。入口过滤必须读取
+  V4 conversation 的 active turn fileChanges，不能依赖 `ZCodeTaskSnapshot.fileChanges`（V4 下为空）。
+- 平台请求顶层 `taskId` 去空白后必须非空且不超过 200 字符；不传或空串保持旧行为。
+- 平台去重身份为 `(conversation_id, client_task_id, entry_file)`：
+  - 同一任务、同一入口重复提交由平台覆盖并递增 round；
+  - 不同任务写同名入口是两件独立作品；
+  - 本地预览与平台历史兜底都必须带 taskId，不能仅按入口名判断“已提交”。
+- 两个任务先后写同一路径时，平台只收到提交瞬间的磁盘内容；客户端按当前 taskId 归属作品，
+  不尝试从磁盘内容反推历史任务。
 
 ### 事件顺序
 
@@ -73,11 +90,12 @@ scanWorkspaceFiles()
   → UI 决定按钮是否置灰
 
 submitWork()
-  → 平台提交成功
-  → 写入 currentRevision
+  → 平台提交成功（body 带 taskId、title=任务标题）
+  → 按 taskId + entryRelativePath 写入 currentRevision
   → 重新 scan 同一工作区
   → UI 按钮转为“已提交，无新产出”
 ```
+
 ## 预览契约
 
 `scanWorkspaceFiles()` 在扫描元数据之外返回一个权威预览：

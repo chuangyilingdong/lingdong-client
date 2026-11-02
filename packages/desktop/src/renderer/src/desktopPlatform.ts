@@ -18,7 +18,7 @@ export function createDesktopPlatform(options: {
         getSnapshot: async () =>
           (await window.lingdong!.getPlatformSnapshot()) as ClassroomPlatformSnapshot | null,
         getPresets: async () => (await window.lingdong!.getPlatformSnapshot())?.presets ?? [],
-        scanWorkspaceFiles: () => window.lingdong!.scanWorkspaceFiles(),
+        scanWorkspaceFiles: (options) => window.lingdong!.scanWorkspaceFiles(options),
         submitWork: (payload) => window.lingdong!.submitWork(payload),
         listWorks: () => window.lingdong!.listWorks(),
         logout: () => window.lingdong!.logout(),

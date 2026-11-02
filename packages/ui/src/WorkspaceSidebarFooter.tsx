@@ -462,7 +462,13 @@ export const WorkspaceSidebarFooter = memo(function WorkspaceSidebarFooterCompon
           </div>
         ) : null}
       </footer>
-      <LingdongWorksDialog open={worksOpen} onOpenChange={setWorksOpen} />
+      <LingdongWorksDialog
+        open={worksOpen}
+        onOpenChange={setWorksOpen}
+        workspacePath={workspacePath}
+        workspaceIdentity={workspaceIdentity}
+        activeTaskId={activeTaskId}
+      />
       <LingdongPresetsDialog
         open={presetsOpen}
         onOpenChange={setPresetsOpen}

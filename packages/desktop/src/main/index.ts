@@ -119,6 +119,7 @@ import {
   disposeLingdongPlatformGate,
   finishLingdongPlatformGate,
   focusLingdongPlatformGateWindow,
+  getLingdongPlatformFeedbackHostConfig,
   isLingdongGateWindow,
   isLingdongPlatformGateLoginPending,
   isLingdongPlatformGatePending,
@@ -1787,6 +1788,7 @@ function openUpdateStatusWindow() {
 
 function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
   const runtimeProcessEnvPreparation = takeRuntimeProcessEnvPreparation();
+  const lingdongFeedbackHostConfig = getLingdongPlatformFeedbackHostConfig();
   const win = createWindow({
     iconPath,
     preloadPath,
@@ -1818,6 +1820,7 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
         label,
         {
           ...initMessage,
+          ...(lingdongFeedbackHostConfig ? { lingdongFeedback: lingdongFeedbackHostConfig } : {}),
           zcodeBuiltinProviderConfigFilePath: resolveZCodeBuiltinProviderConfigFilePath({
             env: { ...hostProcessLocalEnv, ...process.env },
           }),

@@ -69,7 +69,24 @@ function isNativeSearchReady() {
   }
 }
 
+function isRuntimeToolchainReady() {
+  const nodePath =
+    target.os === "win32"
+      ? join(bundledToolsRoot, "node", "node.exe")
+      : join(bundledToolsRoot, "node", "bin", "node");
+  const gitPath =
+    target.os === "win32"
+      ? join(bundledToolsRoot, "git", "cmd", "git.exe")
+      : join(bundledToolsRoot, "git", "bin", "git");
+  return existsSync(nodePath) && existsSync(gitPath);
+}
+
 const REQUIRED_LOCAL_RUNTIME_ASSETS = [
+  {
+    label: "bundled runtime toolchain",
+    script: "prepare:runtime-toolchain",
+    isReady: isRuntimeToolchainReady,
+  },
   ...(nativeSearchReleasePlan.enabled
     ? [
         {

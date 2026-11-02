@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { delimiter } from "node:path";
 import { buildZCodeToolEnvPassthroughEnv, sanitizeZCodeRuntimeEnvInPlace } from "@zcode/shared";
 import { appendPathEntries, buildRuntimeToolEnvPatch } from "./runtimeToolResolver.js";
+import { resolveRuntimeToolchain } from "./runtimeToolchain.js";
 import {
   buildShellBootstrapPath,
   captureLoginShellEnvSnapshot,
@@ -157,7 +158,9 @@ export function buildRuntimeProcessEnvPatch(
   loginShellSnapshot: Record<string, string> | null = captureLoginShellEnvSnapshotSync(baseEnv),
   options: {
     platform?: NodeJS.Platform;
+    arch?: string;
     windowsNodePaths?: readonly string[];
+    bundledToolchainRoot?: string;
   } = {},
 ): Record<string, string> {
   const platform = options.platform ?? process.platform;
@@ -190,24 +193,25 @@ export function buildRuntimeProcessEnvPatch(
     ...PYTHON_UTF8_ENV_PATCH,
   };
 
-  if (platform === "win32") {
-    const windowsNodePaths = options.windowsNodePaths ?? resolveWindowsNodePaths(normalizedBaseEnv);
-    runtimeToolPathEntries.push(...windowsNodePaths);
-  }
+  const windowsNodePaths =
+    platform === "win32"
+      ? (options.windowsNodePaths ?? resolveWindowsNodePaths(normalizedBaseEnv))
+      : [];
+  const toolchainLookupPath = appendPathEntries(pathBase, windowsNodePaths);
+  const toolchain = resolveRuntimeToolchain({
+    baseEnv: { ...normalizedBaseEnv, PATH: toolchainLookupPath },
+    platform,
+    arch: options.arch,
+    bundledToolchainRoot: options.bundledToolchainRoot,
+  });
+  const toolchainPath = toolchain.envPatch.PATH ?? toolchainLookupPath;
+  const nextPath = appendPathEntries(toolchainPath, runtimeToolPathEntries);
 
-  const shouldSetPath =
-    Boolean(loginShellPath) ||
-    runtimeToolPathEntries.length > 0 ||
-    (platform === "win32" && Boolean(normalizedBaseEnv.PATH)) ||
-    (platform !== "win32" && pathBase !== normalizedBaseEnv.PATH);
-  if (shouldSetPath) {
-    const nextPath = appendPathEntries(pathBase, runtimeToolPathEntries);
-    if (nextPath) {
-      envPatch.PATH = nextPath;
-    }
-  }
-
-  return envPatch;
+  return {
+    ...envPatch,
+    ...toolchain.envPatch,
+    ...(nextPath ? { PATH: nextPath } : {}),
+  };
 }
 
 export async function prepareRuntimeProcessEnvPatch(

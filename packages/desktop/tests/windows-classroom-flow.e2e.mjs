@@ -82,8 +82,14 @@ try {
   await fetch(`${mock}/__test/mode`, { method: "POST", body: JSON.stringify({ mode: "tools" }) });
   await page
     .locator('[data-testid="v4-composer-input"]')
-    .fill("请读取课堂目录中的 notes.txt 和 index.html，然后总结。");
+    .fill("请读取并更新 index.html，然后总结。");
   await page.getByRole("button", { name: "发送", exact: true }).click();
+  // 本轮 mock 用 Write 制造当前任务的 fileChanges；首次写入需要测试实例授权。
+  const allowProjectWrites = page.locator('button[aria-label="始终允许本项目"]');
+  await allowProjectWrites
+    .waitFor({ state: "visible", timeout: 10_000 })
+    .then(() => allowProjectWrites.click())
+    .catch(() => {});
   await page
     .getByText("MOCK_TWO_TOOL_ROUNDS_OK", { exact: false })
     .last()
@@ -112,7 +118,7 @@ try {
   await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
   const dialog = page.getByRole("dialog");
   // 对话框只让学生选择一个主作品；引用素材必须由客户端顺着入口自动解析并只读展示。
-  await dialog.getByText("主作品 ·", { exact: false }).waitFor({ timeout: 10_000 });
+  await dialog.getByText("任务 ·", { exact: false }).waitFor({ timeout: 10_000 });
   await dialog.getByText("index.html", { exact: true }).waitFor({ timeout: 10_000 });
   await dialog.getByText("自动包含 7 个引用文件", { exact: true }).waitFor({ timeout: 10_000 });
   assert.equal(await dialog.getByText("notes.txt", { exact: true }).count(), 0);
@@ -130,6 +136,9 @@ try {
   const submitted = result.works.at(-1);
   assert.ok(submitted, "必须有一条提交记录");
   assert.equal(submitted.name, "index.html");
+  assert.ok(submitted.taskId, "任务态提交必须带上当前 ZCode taskId");
+  assert.notEqual(submitted.title, "index.html", "作品默认标题必须使用任务标题");
+  assert.ok(submitted.title, "作品默认标题不能为空");
   assert.equal(submitted.cover, true);
   // 入口 HTML 引用的本地素材必须一起提交，name 与 HTML 里写的相对路径逐字一致；
   // css 走文本（平台内联），图片/视频走二进制；外链、data:、页内锚点一条都不能带。
@@ -170,9 +179,13 @@ try {
   // 再产出后按钮必须重新可用：改入口文件会让最终打包指纹变化。
   await page.keyboard.press("Escape");
   await dialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
-  await writeFile(resolve(".tmp/windows-platform-e2e/classroom/index.html"), "<!-- new output -->\n", {
-    flag: "a",
-  });
+  await writeFile(
+    resolve(".tmp/windows-platform-e2e/classroom/index.html"),
+    "<!-- new output -->\n",
+    {
+      flag: "a",
+    },
+  );
   await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
   const refreshedDialog = page.getByRole("dialog");
   const newVersionButton = refreshedDialog.getByRole("button", {

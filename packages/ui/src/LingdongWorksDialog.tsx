@@ -10,12 +10,69 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { cn } from "@/components/lib/utils.js";
-import type { ClassroomWorkspaceScan } from "@zcode/shared";
+import { normalizeLingdongEntryPaths, type ClassroomWorkspaceScan } from "@zcode/shared";
+import { PROTOCOL_V4_LIMITS } from "@zcode/shared/zcode-protocol-v4";
 import { usePlatform } from "@/hooks/usePlatform.js";
+import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
+import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
+import { createAgentConversationTransport } from "@/v4/agentConversationTransport.js";
+import type { ConversationTransport } from "@/v4/transport.js";
 
 // 平台单次提交的整单上限（base64 解码后合计，封面另算）：现在是 100MB。
 // 平台侧可调（RUNTIME_UPLOAD_MAX_BYTES），这里必须跟它保持一致。
 const MAX_SUBMIT_TOTAL_BYTES = 100 * 1024 * 1024;
+const MAX_TASK_ROW_PAGES = 50;
+
+// V4 任务的 ZCodeTaskSnapshot.fileChanges 为空；作品入口必须从 conversation 的
+// turnHeader + fileChanges 读取，否则会把“已写文件”的任务误判成没有可提交作品。
+async function readTaskEntryPaths(
+  transport: ConversationTransport,
+  taskId: string,
+  workspacePath: string,
+): Promise<string[]> {
+  const rows = new Map<
+    number,
+    Awaited<ReturnType<ConversationTransport["rowsRange"]>>["rows"][number]
+  >();
+  let beforeRowId: number | undefined;
+  let authority: { revision: number; logEpoch: string } | null = null;
+  for (let page = 0; page < MAX_TASK_ROW_PAGES; page += 1) {
+    const result = await transport.rowsRange({
+      sessionId: taskId,
+      limit: PROTOCOL_V4_LIMITS.rowsRangeMaxLimit,
+      ...(beforeRowId !== undefined ? { beforeRowId } : {}),
+    });
+    if (
+      authority &&
+      (authority.revision !== result.atRevision || authority.logEpoch !== result.atLogEpoch)
+    ) {
+      throw new Error("当前任务仍在更新，请稍后重新打开作品提交。");
+    }
+    authority ??= { revision: result.atRevision, logEpoch: result.atLogEpoch };
+    for (const row of result.rows) rows.set(row.rowId, row);
+    if (!result.hasMore || result.rows.length === 0) break;
+    const nextBeforeRowId = result.rows[0]?.rowId;
+    if (nextBeforeRowId === undefined || nextBeforeRowId === beforeRowId) break;
+    beforeRowId = nextBeforeRowId;
+  }
+
+  if (!authority) throw new Error("无法读取当前任务的对话投影。");
+  const filePaths: string[] = [];
+  for (const row of rows.values()) {
+    if (row.kind !== "turnHeader" || row.fileChanges?.state === "reverted") continue;
+    if (!row.fileChanges || row.fileChanges.files <= 0) continue;
+    if (!row.entityId) continue;
+    const result = await transport.fileChanges({
+      sessionId: taskId,
+      target: { rowId: row.rowId, entityId: row.entityId },
+      baseRevision: authority.revision,
+      baseLogEpoch: authority.logEpoch,
+    });
+    if (result.state === "reverted") continue;
+    for (const item of result.items) filePaths.push(item.path);
+  }
+  return normalizeLingdongEntryPaths(filePaths, workspacePath);
+}
 
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
@@ -26,12 +83,22 @@ function formatBytes(size: number): string {
 export function LingdongWorksDialog({
   open,
   onOpenChange,
+  workspacePath,
+  workspaceIdentity,
+  activeTaskId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  workspacePath?: string;
+  workspaceIdentity?: string;
+  activeTaskId?: string | null;
 }) {
   const classroom = usePlatform().classroom;
+  const workspaceServices = useWorkspaceServices(workspacePath, null, workspaceIdentity);
+  const taskService = useZCodeTaskService(workspacePath, null, workspaceIdentity);
   const [scan, setScan] = useState<ClassroomWorkspaceScan | null>(null);
+  const [taskTitle, setTaskTitle] = useState("");
+  const [taskFilePaths, setTaskFilePaths] = useState<readonly string[] | undefined>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
@@ -40,16 +107,50 @@ export function LingdongWorksDialog({
     setMessage("");
     try {
       if (!classroom) throw new Error("当前环境不支持课堂作品提交。");
-      const result = await classroom.scanWorkspaceFiles();
+      let nextTaskTitle = "";
+      let nextTaskFilePaths: string[] | undefined;
+      let scanOptions: Parameters<typeof classroom.scanWorkspaceFiles>[0];
+      if (activeTaskId) {
+        if (!workspacePath) throw new Error("当前任务缺少工作区信息，无法提交作品。");
+        const snapshot = await taskService.getTaskSnapshot({
+          taskId: activeTaskId,
+          workspacePath,
+          workspaceIdentity,
+          messageLimit: 1,
+        });
+        if (!snapshot) throw new Error("无法读取当前任务，请重新打开对话框后再试。");
+        nextTaskTitle = snapshot.meta.title.trim();
+        const transport = createAgentConversationTransport(workspaceServices.zcodeAgentService, {
+          workspacePath,
+          workspaceIdentity,
+        });
+        nextTaskFilePaths = await readTaskEntryPaths(transport, activeTaskId, workspacePath);
+        scanOptions = {
+          taskId: activeTaskId,
+          taskFilePaths: nextTaskFilePaths,
+        };
+      }
+      const result = await classroom.scanWorkspaceFiles(scanOptions);
       if (!result?.ok) throw new Error(result.message || "无法扫描课堂工作区。");
+      setTaskTitle(nextTaskTitle);
+      setTaskFilePaths(nextTaskFilePaths);
       setScan(result);
     } catch (error) {
       setScan(null);
+      setTaskTitle("");
+      setTaskFilePaths(undefined);
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
-  }, [classroom]);
+  }, [
+    activeTaskId,
+    classroom,
+    taskService,
+    workspaceIdentity,
+    workspacePath,
+    workspaceServices.zcodeAgentService,
+  ]);
 
   useEffect(() => {
     if (open) void refresh();
@@ -65,6 +166,10 @@ export function LingdongWorksDialog({
 
   const submit = async () => {
     if (!preview) return;
+    if (activeTaskId && preview.taskId !== activeTaskId) {
+      setMessage("当前任务已切换，请重新打开作品提交。");
+      return;
+    }
     setBusy(true);
     setMessage("");
     try {
@@ -73,6 +178,8 @@ export function LingdongWorksDialog({
       const result = await classroom.submitWork({
         copyrightConfirmed: true,
         items: [{ path: preview.entry.path, name: preview.entry.relativePath }],
+        ...(preview.taskId ? { taskId: preview.taskId } : {}),
+        ...(taskTitle ? { taskTitle } : {}),
       });
       if (result?.ok === false) throw new Error(result.message || "提交失败。");
       const submitted = Array.isArray(result?.works) ? result.works : null;
@@ -88,7 +195,9 @@ export function LingdongWorksDialog({
             : null;
       }
       try {
-        const nextScan = await classroom.scanWorkspaceFiles();
+        const nextScan = await classroom.scanWorkspaceFiles(
+          preview.taskId && taskFilePaths ? { taskId: preview.taskId, taskFilePaths } : undefined,
+        );
         if (nextScan?.ok) setScan(nextScan);
       } catch {
         // 提交已经成功；重扫失败只影响按钮状态，不能把成功改判成失败。
@@ -141,8 +250,10 @@ export function LingdongWorksDialog({
                   <div className="truncate text-ui-sm font-medium">
                     {preview.entry.relativePath}
                   </div>
-                  <div className="mt-0.5 text-ui-xs text-foreground-subtle">
-                    主作品 · {formatBytes(preview.entry.size)}
+                  <div className="mt-0.5 truncate text-ui-xs text-foreground-subtle">
+                    {taskTitle
+                      ? `任务 · ${taskTitle} · ${formatBytes(preview.entry.size)}`
+                      : `主作品 · ${formatBytes(preview.entry.size)}`}
                   </div>
                 </div>
               </div>

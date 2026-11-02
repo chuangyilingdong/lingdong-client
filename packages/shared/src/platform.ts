@@ -588,6 +588,8 @@ export interface ClassroomWorkspaceSubmitPreview {
   readonly entry: ClassroomWorkspaceFile;
   readonly files: readonly ClassroomWorkspaceBundleFile[];
   readonly totalBytes: number;
+  /** 当前预览归属的 ZCode taskId；草稿态缺省。 */
+  readonly taskId?: string;
   /** 当前打包内容是否已有匹配的成功提交记录。 */
   readonly submitted: boolean;
   /** 相比最近一次成功提交，是否包含新产出。 */
@@ -606,6 +608,13 @@ export interface ClassroomWorkspaceScan {
   readonly previewError?: string;
 }
 
+/** 任务态扫描上下文；草稿态不传，保持工作区最近入口的旧行为。 */
+export interface ClassroomWorkspaceScanOptions {
+  readonly taskId?: string;
+  /** 当前任务 fileChanges 中 applied 的可提交工作区相对路径。 */
+  readonly taskFilePaths?: readonly string[];
+}
+
 export interface ClassroomWorkItem {
   readonly path: string;
   readonly name?: string;
@@ -615,11 +624,17 @@ export interface ClassroomWorkSubmission {
   /** 用户必须显式确认后才能为 true；UI 不得默认置真。 */
   readonly copyrightConfirmed: boolean;
   readonly items: readonly ClassroomWorkItem[];
+  /** 当前 ZCode taskId；草稿态不传。 */
+  readonly taskId?: string;
+  /** 当前任务标题，作为平台作品默认标题；空值由宿主回退到入口名。 */
+  readonly taskTitle?: string;
 }
 
 export interface ClassroomSubmitResult {
   readonly ok?: boolean;
   readonly message?: string;
+  /** 平台回显的提交任务 id；老平台缺省。 */
+  readonly taskId?: string;
   readonly warnings?: readonly unknown[];
   readonly missing?: readonly unknown[];
   readonly works?: readonly unknown[];
@@ -644,7 +659,7 @@ export interface IClassroomPlatformService {
   /** 平台下发的当前课堂提示词预设 */
   getPresets(): Promise<readonly ClassroomPreset[]>;
   /** 扫描当前课堂工作区候选文件 */
-  scanWorkspaceFiles(): Promise<ClassroomWorkspaceScan>;
+  scanWorkspaceFiles(options?: ClassroomWorkspaceScanOptions): Promise<ClassroomWorkspaceScan>;
   /** 提交课堂作品；封面由宿主在提交时采集，失败不阻断正文 */
   submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
   /** 查询历史作品，用于提交后回显 */

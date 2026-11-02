@@ -11,7 +11,14 @@ import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
 import { shouldRefreshRuntimeKey } from "./lingdongRuntimeKey.js";
-import type { ClassroomWorkspaceSubmitPreview } from "@zcode/shared";
+import {
+  buildLingdongSubmissionRecordKey,
+  LINGDONG_MAX_TASK_ID_LENGTH,
+  LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS,
+  toLingdongWorkspaceRelativePath,
+  type ClassroomWorkspaceScanOptions,
+  type ClassroomWorkspaceSubmitPreview,
+} from "@zcode/shared";
 
 type LingdongUser = {
   readonly id?: string;
@@ -304,6 +311,27 @@ async function syncPlatformSystemPromptFile(filePath: string, prompt: string): P
 type SubmittedWorkRecord = Readonly<{ revision: string; submittedAt: string }>;
 type SubmissionStateFile = { version: 1; records: Record<string, SubmittedWorkRecord> };
 
+function normalizeSubmissionTaskId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const taskId = value.trim();
+  if (!taskId) return null;
+  if (taskId.length > LINGDONG_MAX_TASK_ID_LENGTH) {
+    throw new Error(`任务 ID 不能超过 ${LINGDONG_MAX_TASK_ID_LENGTH} 个字符。`);
+  }
+  return taskId;
+}
+
+function normalizeTaskFilePaths(workspacePath: string, value: unknown): ReadonlySet<string> | null {
+  if (!Array.isArray(value)) return null;
+  const paths = new Set<string>();
+  for (const item of value.slice(0, 500)) {
+    if (typeof item !== "string") continue;
+    const relativePath = toLingdongWorkspaceRelativePath(workspacePath, item);
+    if (relativePath) paths.add(relativePath.toLowerCase());
+  }
+  return paths;
+}
+
 function submissionStatePath(workspaceIdentity: string): string {
   const key = createHash("sha256").update(workspaceIdentity).digest("hex");
   return join(getAppConfigDir(), "runtime", "lingdong-submissions", `${key}.json`);
@@ -311,6 +339,7 @@ function submissionStatePath(workspaceIdentity: string): string {
 
 async function readSubmissionRecord(
   workspaceIdentity: string,
+  taskId: string | null,
   entryRelativePath: string,
 ): Promise<SubmittedWorkRecord | null> {
   try {
@@ -318,7 +347,7 @@ async function readSubmissionRecord(
       await readFile(submissionStatePath(workspaceIdentity), "utf8"),
     ) as unknown;
     if (!record<unknown>(raw) || !record<unknown>(raw.records)) return null;
-    const value = raw.records[entryRelativePath];
+    const value = raw.records[buildLingdongSubmissionRecordKey(taskId, entryRelativePath)];
     if (!record<unknown>(value)) return null;
     return typeof value.revision === "string" && typeof value.submittedAt === "string"
       ? { revision: value.revision, submittedAt: value.submittedAt }
@@ -330,6 +359,7 @@ async function readSubmissionRecord(
 
 async function writeSubmissionRecord(
   workspaceIdentity: string,
+  taskId: string | null,
   entryRelativePath: string,
   recordValue: SubmittedWorkRecord,
 ): Promise<void> {
@@ -343,7 +373,7 @@ async function writeSubmissionRecord(
   } catch {
     // 首次提交或文件损坏时从空状态重建；提交成功事实已经在平台上。
   }
-  state.records[entryRelativePath] = recordValue;
+  state.records[buildLingdongSubmissionRecordKey(taskId, entryRelativePath)] = recordValue;
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, JSON.stringify(state, null, 2), "utf8");
 }
@@ -477,8 +507,22 @@ async function handleLogin(
   }
 }
 
-async function scanLingdongWorkspaceFiles(): Promise<unknown> {
+async function scanLingdongWorkspaceFiles(input?: unknown): Promise<unknown> {
   if (!activeState) return { ok: false, message: "平台登录尚未完成。", files: [] };
+  const options: ClassroomWorkspaceScanOptions = record<unknown>(input) ? input : {};
+  let taskId: string | null;
+  try {
+    taskId = normalizeSubmissionTaskId(options.taskId);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+      files: [],
+    };
+  }
+  const taskFilePaths = taskId
+    ? normalizeTaskFilePaths(activeState.workspacePath, options.taskFilePaths)
+    : null;
   const root = activeState.workspacePath;
   // 与作品提交白名单共用一份：以前这里只列图片和文档，
   // 视频/音频/CSS/JS 在提交对话框里根本看不到（学生以为客户端「识别不到视频」）。
@@ -524,13 +568,20 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
     }
   }
   files.sort((a, b) => b.updatedAt - a.updatedAt);
-  // 只选最近更新的可提交入口作为主作品；引用素材由 resolveSubmitPlan 自动解析。
+  // 有当前任务时只在该任务 applied 的可提交文件里选入口；草稿态保持工作区最近入口。
+  // 引用素材仍由 resolveSubmitPlan 从入口自动解析，不受任务过滤影响。
   // 该预览与真实提交共用解析函数，避免 UI 数字和实际包内容漂移。
-  const entry = files.find((file) =>
-    SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.relativePath).toLowerCase()),
+  const entryCandidates = files.filter((file) =>
+    LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.relativePath).toLowerCase()),
   );
+  const scopedEntryCandidates =
+    taskId && taskFilePaths
+      ? entryCandidates.filter((file) => taskFilePaths.has(file.relativePath.toLowerCase()))
+      : entryCandidates;
+  const entry = scopedEntryCandidates[0];
   let preview: ClassroomWorkspaceSubmitPreview | undefined;
-  let previewError: string | undefined;
+  let previewError: string | undefined =
+    taskId && taskFilePaths && !entry ? "当前任务还没有可提交的作品文件。" : undefined;
   if (entry) {
     try {
       const plan = await resolveSubmitPlan([
@@ -538,6 +589,7 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
       ]);
       const submissionRecord = await readSubmissionRecord(
         activeState.workspaceIdentity,
+        taskId,
         plan.entryRelativePath,
       );
       const platformSubmission =
@@ -545,6 +597,7 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
         (await findLatestPlatformSubmission(
           plan.entryName,
           activeState.context.classroom?.id ?? null,
+          taskId,
         ));
       const latestMtimeMs = Math.max(0, ...plan.files.map((file) => file.mtimeMs));
       const submitted = submissionRecord
@@ -563,6 +616,7 @@ async function scanLingdongWorkspaceFiles(): Promise<unknown> {
         totalBytes: plan.files.reduce((sum, file) => sum + file.size, 0),
         submitted,
         hasNewOutput: !submitted,
+        ...(taskId ? { taskId } : {}),
         ...(lastSubmittedAt ? { lastSubmittedAt } : {}),
       };
     } catch (error) {
@@ -655,7 +709,6 @@ const MAX_WORK_TOTAL_BYTES = 100 * 1024 * 1024;
 const MAX_WORK_REQUEST_BYTES = 140 * 1024 * 1024;
 const COVER_MAX_BYTES = Math.floor(1.5 * 1024 * 1024);
 const COVER_TIMEOUT_MS = 12_000;
-const SUBMITTABLE_ENTRY_EXTENSIONS = new Set([".htm", ".html", ".docx", ".xlsx", ".pptx"]);
 const HTML_ENTRY_EXTENSIONS = new Set([".htm", ".html"]);
 /**
  * 平台侧资源名白名单（服务端逐段校验，不合规整单 400、不静默改名）：
@@ -835,7 +888,7 @@ async function resolveSubmitPlan(items: readonly SubmitItem[]): Promise<WorkSubm
   if (candidates.length === 0) throw new Error("没有找到可以提交的作品文件。");
 
   const entryCandidate = candidates.find((candidate) =>
-    SUBMITTABLE_ENTRY_EXTENSIONS.has(candidate.extension),
+    LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS.has(candidate.extension),
   );
   if (!entryCandidate) throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
   const entryDir = dirname(entryCandidate.absolute);
@@ -919,6 +972,7 @@ type PlatformSubmissionRecord = Readonly<{ submittedAt: string; submittedAtMs: n
 async function findLatestPlatformSubmission(
   entryName: string,
   classroomId: string | null,
+  taskId: string | null,
 ): Promise<PlatformSubmissionRecord | null> {
   try {
     const payload = unwrap<Record<string, unknown>>(
@@ -934,6 +988,7 @@ async function findLatestPlatformSubmission(
       if (!record<unknown>(item)) continue;
       if (String(item.source || "").toUpperCase() !== "VIBECODING") continue;
       if (String(item.entryFile || "") !== entryName) continue;
+      if (taskId && String(item.taskId || "").trim() !== taskId) continue;
       if (classroomId && String(item.classSessionId || "") !== classroomId) continue;
       const submittedAt = String(item.submittedAt || "");
       const submittedAtMs = Date.parse(submittedAt);
@@ -1136,22 +1191,25 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const submitStartedAt = Date.now();
   const input = record<unknown>(payload) ? payload : {};
+  const taskId = normalizeSubmissionTaskId(input.taskId);
+  const taskTitle = typeof input.taskTitle === "string" ? input.taskTitle.trim() : "";
   const rawItems = Array.isArray(input.items) ? (input.items as SubmitItem[]) : [];
   const prepared = await prepareSubmitFiles(rawItems);
   const preparedMs = Date.now() - submitStartedAt;
   const files = prepared.files;
   const entry = files.find((file) =>
-    SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.name).toLowerCase()),
+    LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.name).toLowerCase()),
   );
   if (!entry || !prepared.entryPath)
     throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
   const body: Record<string, unknown> = {
     name: entry.name,
-    title: entry.name,
+    title: taskTitle || entry.name,
     classroomId: activeState.context.classroom?.id,
     workspaceIdentity: activeState.workspaceIdentity,
     copyrightConfirmed: input.copyrightConfirmed === true,
     files,
+    ...(taskId ? { taskId } : {}),
   };
   const coverStartedAt = Date.now();
   const cover = await captureHtmlCover(prepared.entryPath);
@@ -1175,7 +1233,7 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
     `[lingdong-gate] submit-upload done preparedMs=${preparedMs} coverMs=${coverMs} uploadMs=${uploadMs} totalMs=${Date.now() - submitStartedAt} timings=${JSON.stringify(record<unknown>(result) ? (result.timings ?? null) : null)}`,
   );
   try {
-    await writeSubmissionRecord(activeState.workspaceIdentity, prepared.entryRelativePath, {
+    await writeSubmissionRecord(activeState.workspaceIdentity, taskId, prepared.entryRelativePath, {
       revision: prepared.revision,
       submittedAt: new Date().toISOString(),
     });
@@ -1244,7 +1302,9 @@ function registerPlatformHandlers(): void {
   ipcMain.handle("lingdong:platform-works", async () =>
     unwrap<Record<string, unknown>>(await callPlatform("/api/student/works?page=1&limit=20")),
   );
-  ipcMain.handle("lingdong:platform-scan-workspace", () => scanLingdongWorkspaceFiles());
+  ipcMain.handle("lingdong:platform-scan-workspace", (_event, input: unknown) =>
+    scanLingdongWorkspaceFiles(input),
+  );
   ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) =>
     submitWorkFromDesktop(payload),
   );
@@ -1367,6 +1427,17 @@ export async function runLingdongPlatformGate(): Promise<LingdongPlatformState |
 
 export function getLingdongPlatformState(): LingdongPlatformState | null {
   return activeState;
+}
+
+/** 只传本地 Host；平台登录 token 不进入 Renderer，也不写日志。 */
+export function getLingdongPlatformFeedbackHostConfig():
+  | { apiBaseUrl: string; authToken: string }
+  | undefined {
+  if (!activeState?.session.token) return undefined;
+  return {
+    apiBaseUrl: API_BASE,
+    authToken: activeState.session.token,
+  };
 }
 
 // 主窗口就绪后收口登录门：此后 window-all-closed 才允许按常规逻辑退出应用。

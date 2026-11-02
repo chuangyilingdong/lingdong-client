@@ -72,6 +72,11 @@ export interface HostInitMessage {
   deliveryKind?: TaskRealtimeHostDeliveryKind;
   deviceMid?: string;
   feedbackApiBase?: string;
+  /** 灵动ai 平台模式下的反馈通道；token 只存在于 Main → 本地 Host。 */
+  lingdongFeedback?: {
+    apiBaseUrl: string;
+    authToken: string;
+  };
   workspacePath?: string;
   workspaceIdentity?: string;
   agentWarmupTargets?: Array<{
@@ -565,7 +570,6 @@ export function spawnHostProcess(
       });
       return;
     }
-
 
     if (result.data.type === HostResponseTypes.BotRemoteWorkspaceReconnectRequest) {
       const request = result.data;

@@ -417,6 +417,10 @@ import {
   createFeedbackService,
   type CreateFeedbackServiceOptions,
 } from "./feedback/feedbackService.js";
+import {
+  createPlatformFeedbackService,
+  type CreatePlatformFeedbackServiceOptions,
+} from "./feedback/platformFeedbackService.js";
 import { createLocalPromptAttachmentTransferService } from "./prompt-attachment-transfer/promptAttachmentTransferService.js";
 import { createNodeApiClient } from "./providers/api/nodeApiClient.js";
 import {
@@ -1296,7 +1300,10 @@ export function createLocalServices(options: {
   authorizeLocalMediaPreviewPath?: (path: string) => Promise<string>;
   feedback?: Partial<
     Omit<CreateFeedbackServiceOptions, "apiClient" | "credentialService" | "oauthService">
-  >;
+  > & {
+    /** 灵动ai 平台模式：反馈只写学习平台，不再回退 ZCode 反馈服务。 */
+    platform?: Pick<CreatePlatformFeedbackServiceOptions, "apiBaseUrl" | "authToken">;
+  };
   processLifecycleReporter?: RuntimeProcessLifecycleReporter;
   taskRuntimeReporter?: RuntimeTaskReporter;
   /** workspace 文件搜索默认使用内置过滤器；后续规则来源只需在 Host 装配时注入最终实现。 */
@@ -2431,6 +2438,7 @@ export function createLocalServices(options: {
   // 注册链上的懒工厂（如 OffPeak）会各自创建 tasks-index sqlite repo；先收集到本数组，
   // services 集合建好后在 return 前统一登记进 sharedSqliteRepos 侧表
   const sqliteReposToClose: Array<{ close(): void }> = [];
+  const platformFeedbackConfig = options?.feedback?.platform;
   const services = new ServiceCollection()
     .register(IFileService, fileService)
     .register(IMediaPreviewService, mediaPreviewService)
@@ -2589,12 +2597,21 @@ export function createLocalServices(options: {
     .register(ISettingsSyncService, createSettingsSyncService({ settingService }))
     .register(
       IFeedbackService,
-      createFeedbackService({
-        ...options?.feedback,
-        apiClient,
-        credentialService,
-        oauthService,
-      }),
+      platformFeedbackConfig
+        ? createPlatformFeedbackService({
+            apiBaseUrl: platformFeedbackConfig.apiBaseUrl,
+            authToken: platformFeedbackConfig.authToken,
+            getDeviceMid: options?.feedback?.getDeviceMid ?? (() => undefined),
+            apiClient,
+            createFullLogArchive: options?.feedback?.createFullLogArchive,
+            revealPath: options?.feedback?.revealPath,
+          })
+        : createFeedbackService({
+            ...options?.feedback,
+            apiClient,
+            credentialService,
+            oauthService,
+          }),
     )
     .register(IPromptAttachmentTransferService, createLocalPromptAttachmentTransferService());
 
