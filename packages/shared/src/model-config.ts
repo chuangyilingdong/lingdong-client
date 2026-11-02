@@ -31,8 +31,19 @@ export const completeEnumOptionSpecDataSchema = z
       .refine((values) => new Set(values).size === values.length, "reasoningLevel.values 不能重复")
       .readonly(),
     map: optionMapSchema("reasoningLevel"),
+    /** 用户未显式选择时使用的档位；必须出现在 values 中。 */
+    defaultLevel: z.string().trim().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((spec, context) => {
+    if (spec.defaultLevel !== undefined && !spec.values.includes(spec.defaultLevel)) {
+      context.addIssue({
+        code: "custom",
+        path: ["defaultLevel"],
+        message: "reasoningLevel.defaultLevel 必须存在于 values 中",
+      });
+    }
+  });
 
 export const completeLimitOptionSpecDataSchema = z
   .object({

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 30,
+  "revision": 31,
   "config": {
     "providerConfigRules": {
       "templateRules": [
@@ -2076,7 +2076,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["disabled", "low", "high", "max"]
+                "values": ["disabled", "low", "high", "max"],
+                "defaultLevel": "high"
               },
               "maxOutputTokens": {
                 "max": 384000

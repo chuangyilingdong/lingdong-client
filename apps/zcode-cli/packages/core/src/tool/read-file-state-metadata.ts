@@ -9,6 +9,7 @@ export type PersistedReadFileStateTool =
   | "Read"
   | "Write"
   | "Edit"
+  | "ApplyPatch"
   | "CreateWorkflow"
   | "AmendWorkflow";
 
@@ -134,6 +135,7 @@ function isPersistedReadFileStateTool(value: unknown): value is PersistedReadFil
     value === "Read" ||
     value === "Write" ||
     value === "Edit" ||
+    value === "ApplyPatch" ||
     value === "CreateWorkflow" ||
     value === "AmendWorkflow"
   );
