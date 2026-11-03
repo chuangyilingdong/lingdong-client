@@ -79,6 +79,8 @@
 ## 验收
 
 - local 模式下 Provider tool list 不包含 deferred tools，包含 resident、ToolSearch、DeferredToolCall。
+- `AskUserQuestion` 直接出现在 resident tool list 中，课堂 Provider 请求体无需先搜索即可收到该工具。
+- 课堂 E2E 中 mock Provider 返回 `AskUserQuestion` 时，客户端显示多题选项卡；用户选择并提交后，Agent 能继续收到答案并完成回合。
 - `select:<name>` 和关键词搜索能命中正确的 deferred tool。
 - `DeferredToolCall` 改写后实际执行真实工具，权限与 Hook 使用真实工具声明。
 - `DeferredToolCall` 不能调用 resident、未知、自身或 provider-native 工具。

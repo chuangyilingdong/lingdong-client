@@ -489,6 +489,52 @@ const server = http.createServer(async (req, res) => {
           prompt_cache_miss_tokens: usageOverride.prompt - usageOverride.cached,
         },
       };
+      if (mode === "ask" && data.stream && toolRound < 1) {
+        toolRound++;
+        const call = {
+          index: 0,
+          id: "mock-ask-user-question",
+          type: "function",
+          function: {
+            name: "AskUserQuestion",
+            arguments: JSON.stringify({
+              questions: [
+                {
+                  header: "性格",
+                  question: "你希望 AI 伙伴偏向哪种性格？",
+                  multiSelect: false,
+                  options: [
+                    { label: "温柔坚定", description: "友善有耐心，但不讨好、不含糊" },
+                    { label: "元气活泼", description: "轻快有感染力，善于降低压力" },
+                    { label: "冷静理性", description: "先看事实与约束，再给结论" },
+                    { label: "从容幽默", description: "有分寸的轻松感，不拿痛点开玩笑" },
+                  ],
+                },
+                {
+                  header: "说话风格",
+                  question: "你希望 AI 伙伴怎么说话？",
+                  multiSelect: false,
+                  options: [
+                    { label: "简洁直接", description: "先给结论和下一步" },
+                    { label: "温暖细腻", description: "关注感受和语境，但不煽情" },
+                    { label: "理性结构化", description: "短段落、清单、分点表达" },
+                    { label: "轻松有梗", description: "允许适度玩笑，但不影响准确" },
+                  ],
+                },
+              ],
+            }),
+          },
+        };
+        res.writeHead(200, { "content-type": "text/event-stream", ...historyHeaders });
+        res.write(
+          `data: ${JSON.stringify({ ...completion, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant", tool_calls: [call] }, finish_reason: null }], usage: undefined })}\n\n`,
+        );
+        res.write(
+          `data: ${JSON.stringify({ ...completion, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] })}\n\n`,
+        );
+        res.end("data: [DONE]\n\n");
+        return;
+      }
       if (mode === "tools" && data.stream && toolRound < 2) {
         toolRound++;
         const isWrite = toolRound === 2;
@@ -521,6 +567,8 @@ const server = http.createServer(async (req, res) => {
       if (mode === "tools" && data.stream)
         completion.choices[0].message.content =
           "MOCK_TWO_TOOL_ROUNDS_OK：index.html 已读取并更新。";
+      if (mode === "ask" && data.stream)
+        completion.choices[0].message.content = "MOCK_ASK_USER_QUESTION_OK：人格选项已收到。";
       if (data.stream) {
         res.writeHead(200, {
           "content-type": "text/event-stream",

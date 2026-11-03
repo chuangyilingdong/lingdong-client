@@ -18,6 +18,7 @@ export const DEFAULT_TOOL_SEARCH_RESIDENT_TOOLS = [
   "Grep",
   "TodoRead",
   "TodoWrite",
+  "AskUserQuestion",
 ] as const;
 
 const DEFAULT_MIN_DEFERRED_TOOLS = 8;

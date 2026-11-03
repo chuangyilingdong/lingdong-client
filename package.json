@@ -59,6 +59,7 @@
     "smoke:platform:classroom-end": "node packages/desktop/tests/windows-classroom-end.e2e.mjs",
     "smoke:platform:classroom-auto-submit": "node packages/desktop/tests/windows-classroom-auto-submit.e2e.mjs",
     "smoke:platform:classroom-auto-submit:skip": "node packages/desktop/tests/windows-classroom-auto-submit.e2e.mjs manual-skip",
+    "smoke:platform:classroom-question": "node packages/desktop/tests/windows-classroom-ask-question.e2e.mjs",
     "smoke:platform:contract": "node packages/desktop/tests/windows-platform-contract.e2e.mjs no-workspace-path",
     "smoke:platform:cache": "node packages/desktop/tests/windows-cache-usage.e2e.mjs",
     "smoke:platform:logout": "node packages/desktop/tests/windows-logout-flow.e2e.mjs",

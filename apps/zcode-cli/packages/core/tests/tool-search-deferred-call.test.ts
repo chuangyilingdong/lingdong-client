@@ -36,6 +36,7 @@ test("local tool search exposes resident and control tools but hides deferred to
   assert.ok(registry.has("DeferredToolCall"));
   assert.ok(state.getCatalog().some((entry) => entry.name === "CronCreate"));
   assert.ok(!state.getCatalog().some((entry) => entry.name === "Read"));
+  assert.ok(!state.getCatalog().some((entry) => entry.name === "AskUserQuestion"));
 
   const allContracts = registry.toContracts();
   const visible = filterToolContractsForToolSearch(allContracts, state);
@@ -46,6 +47,7 @@ test("local tool search exposes resident and control tools but hides deferred to
   assert.ok(names.has("ApplyPatch"));
   assert.ok(names.has("ToolSearch"));
   assert.ok(names.has("DeferredToolCall"));
+  assert.ok(names.has("AskUserQuestion"));
   assert.ok(!names.has("CronCreate"));
 });
 
@@ -76,6 +78,7 @@ test("provider request builder exposes only resident and control tool definition
     names,
     [
       "ApplyPatch",
+      "AskUserQuestion",
       "Bash",
       "DeferredToolCall",
       "Edit",

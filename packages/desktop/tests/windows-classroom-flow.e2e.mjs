@@ -139,13 +139,19 @@ try {
     const toolNames = request.tools.map((tool) => tool.name);
     // 课堂使用 embedded-search 分支，Glob/Grep 会被该分支隐藏；正常情况下最多 11 项。
     assert.ok(
-      toolNames.length >= 9 && toolNames.length <= 11,
+      toolNames.length >= 10 && toolNames.length <= 12,
       `Provider 工具面未正确收口：${toolNames.join(",")}`,
     );
-    for (const requiredTool of ["Read", "Write", "ToolSearch", "DeferredToolCall"]) {
+    for (const requiredTool of [
+      "Read",
+      "Write",
+      "AskUserQuestion",
+      "ToolSearch",
+      "DeferredToolCall",
+    ]) {
       assert.ok(toolNames.includes(requiredTool), `Provider 请求体缺少 ${requiredTool}`);
     }
-    for (const deferredTool of ["CronCreate", "WebFetch", "CreateWorkflow", "AskUserQuestion"]) {
+    for (const deferredTool of ["CronCreate", "WebFetch", "CreateWorkflow"]) {
       assert.ok(!toolNames.includes(deferredTool), `Provider 请求体不得直接暴露 ${deferredTool}`);
     }
   }
