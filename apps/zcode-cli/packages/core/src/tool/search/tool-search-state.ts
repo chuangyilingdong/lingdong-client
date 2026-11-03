@@ -41,7 +41,8 @@ export function createToolSearchRuntimeState(
     getCatalog: () => listDeferredEntries(registry, resident),
     isDeferred: (name) =>
       enabled && listDeferredEntries(registry, resident).some((entry) => entry.name === name),
-    search: (query, limit) => searchCatalog(listDeferredEntries(registry, resident), query, limit ?? maxResults),
+    search: (query, limit) =>
+      searchCatalog(listDeferredEntries(registry, resident), query, limit ?? maxResults),
   };
 }
 
@@ -93,7 +94,9 @@ function searchCatalog(
   const tools = catalog
     .map((entry) => ({ entry, score: scoreEntry(entry, normalizedQuery, tokens) }))
     .filter((item) => item.score > 0)
-    .sort((left, right) => right.score - left.score || left.entry.name.length - right.entry.name.length)
+    .sort(
+      (left, right) => right.score - left.score || left.entry.name.length - right.entry.name.length,
+    )
     .slice(0, limit)
     .map((item) => item.entry);
   return { query, tools };

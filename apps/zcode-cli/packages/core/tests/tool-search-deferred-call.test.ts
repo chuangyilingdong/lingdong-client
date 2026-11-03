@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { toAiSdkMessages } from "../../adapters/src/model/transform.js";
+import { createStreamTextOptions } from "../../adapters/src/model/runner-options.js";
 import {
   createRuntimeAssistantEntry,
   createRuntimeToolResultEntry,
@@ -11,7 +13,8 @@ import { ToolExecutorImpl } from "../src/tool/executor/impl.js";
 import { createDenyPermissionBroker } from "../src/permission/broker.js";
 import { PermissionService } from "../src/permission/service.js";
 import type { ToolEntry } from "../src/tool/types.js";
-import type { ToolSearchRuntimeState } from "../src/tool/search/types.js";import { resolveDeferredToolCall } from "../src/tool/search/deferred-resolution.js";
+import type { ToolSearchRuntimeState } from "../src/tool/search/types.js";
+import { resolveDeferredToolCall } from "../src/tool/search/deferred-resolution.js";
 import { filterToolContractsForToolSearch } from "../src/tool/search/tool-search-state.js";
 
 function createLocalSearchRegistry() {
@@ -44,6 +47,61 @@ test("local tool search exposes resident and control tools but hides deferred to
   assert.ok(names.has("ToolSearch"));
   assert.ok(names.has("DeferredToolCall"));
   assert.ok(!names.has("CronCreate"));
+});
+
+test("provider request builder exposes only resident and control tool definitions", () => {
+  const { registry, state } = createLocalSearchRegistry();
+  const visible = filterToolContractsForToolSearch(registry.toContracts(), state);
+  const options = createStreamTextOptions({
+    includeModelIO: false,
+    request: { messages: [], tools: visible },
+    resolved: {
+      model: {},
+      modelId: "test-model",
+      properties: {
+        requiresMfjsToolSchema: false,
+        supportsNativeWebSearch: false,
+      },
+      providerId: "test-provider",
+      providerKind: "openai-compatible",
+    } as never,
+    statusContext: {
+      modelRequestSessionType: "other",
+      requestId: "request-tool-search-test",
+      traceId: "trace-tool-search-test",
+    } as never,
+  });
+  const names = Object.keys(options.tools ?? {}).sort();
+  assert.deepEqual(
+    names,
+    [
+      "ApplyPatch",
+      "Bash",
+      "DeferredToolCall",
+      "Edit",
+      "Glob",
+      "Grep",
+      "Read",
+      "TodoRead",
+      "TodoWrite",
+      "ToolSearch",
+      "Write",
+    ].sort(),
+  );
+  assert.doesNotMatch(JSON.stringify(options.tools), /CronCreate|WebFetch/u);
+});
+
+test("subagent child runtime inherits the parent tool search config", async () => {
+  const source = await readFile(
+    new URL("../src/runtime/methods/subagent.ts", import.meta.url),
+    "utf8",
+  );
+  const childRuntimeStart = source.indexOf("const childRuntime = new AgentRuntime(");
+  assert.ok(childRuntimeStart >= 0);
+  assert.match(
+    source.slice(childRuntimeStart, childRuntimeStart + 5000),
+    /toolSearch: this\.config\.toolSearch/u,
+  );
 });
 
 test("ToolSearch supports exact selection and capability search", () => {
@@ -87,13 +145,7 @@ test("provider projection restores the DeferredToolCall wrapper for calls and re
         modelCallWrapper: "DeferredToolCall",
       },
     ]),
-    createRuntimeToolResultEntry(
-      "tool-1",
-      "CronCreate",
-      "created",
-      false,
-      "DeferredToolCall",
-    ),
+    createRuntimeToolResultEntry("tool-1", "CronCreate", "created", false, "DeferredToolCall"),
   ];
   const projected = toAiSdkMessages(messages.map((entry) => entry.message));
   const assistantContent = projected[0]?.content as Array<Record<string, unknown>>;
@@ -156,7 +208,12 @@ test("executor rewrites DeferredToolCall before permission and handler execution
     resultBudget: { maxInlineBytes: 1024, maxModelBytes: 1024, strategy: "truncate" },
     timeout: { kind: "none" },
     cancellation: { supported: true, cleanup: "none", userVisibleMessage: "cancelled" },
-    trace: { required: true, propagateToAdapters: false, recordInput: "summary", recordOutput: "summary" },
+    trace: {
+      required: true,
+      propagateToAdapters: false,
+      recordInput: "summary",
+      recordOutput: "summary",
+    },
   };
   registry.register(echoTool);
   const state: ToolSearchRuntimeState = {

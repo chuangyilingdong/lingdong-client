@@ -28,7 +28,8 @@ const DEFERRED_TOOL_CALL_INPUT_SCHEMA: JsonSchema = {
     name: { type: "string", minLength: 1, maxLength: 256 },
     input: {
       type: "object",
-      description: "Input object for the deferred tool, matching the schema returned by ToolSearch.",
+      description:
+        "Input object for the deferred tool, matching the schema returned by ToolSearch.",
     },
   },
 };

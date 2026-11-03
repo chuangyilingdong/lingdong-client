@@ -7,7 +7,9 @@ export interface DeferredToolCallInput {
   input: Record<string, unknown>;
 }
 
-export interface ResolveDeferredToolCallResult<T extends { id: string; name: string; input: unknown }> {
+export interface ResolveDeferredToolCallResult<
+  T extends { id: string; name: string; input: unknown },
+> {
   call: T & { modelCallWrapper?: string };
 }
 

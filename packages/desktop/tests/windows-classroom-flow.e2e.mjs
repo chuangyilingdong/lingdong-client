@@ -133,6 +133,22 @@ try {
   assert.ok(result.requests.length > 0 && result.requests.every((r) => r.keyMatches));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 1));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 2));
+  const providerToolSurfaces = result.requests.filter((request) => request.tools?.length > 0);
+  assert.ok(providerToolSurfaces.length > 0, "mock Provider 必须收到至少一次带工具的请求");
+  for (const request of providerToolSurfaces) {
+    const toolNames = request.tools.map((tool) => tool.name);
+    // 课堂使用 embedded-search 分支，Glob/Grep 会被该分支隐藏；正常情况下最多 11 项。
+    assert.ok(
+      toolNames.length >= 9 && toolNames.length <= 11,
+      `Provider 工具面未正确收口：${toolNames.join(",")}`,
+    );
+    for (const requiredTool of ["Read", "Write", "ToolSearch", "DeferredToolCall"]) {
+      assert.ok(toolNames.includes(requiredTool), `Provider 请求体缺少 ${requiredTool}`);
+    }
+    for (const deferredTool of ["CronCreate", "WebFetch", "CreateWorkflow", "AskUserQuestion"]) {
+      assert.ok(!toolNames.includes(deferredTool), `Provider 请求体不得直接暴露 ${deferredTool}`);
+    }
+  }
   const submitted = result.works.at(-1);
   assert.ok(submitted, "必须有一条提交记录");
   assert.equal(submitted.name, "index.html");
@@ -205,6 +221,7 @@ try {
       pass: true,
       stream: true,
       twoToolRounds: true,
+      providerToolSurface: providerToolSurfaces[0].tools.length,
       submitWithCover: true,
       presetsFromPlatformService: true,
     }),
