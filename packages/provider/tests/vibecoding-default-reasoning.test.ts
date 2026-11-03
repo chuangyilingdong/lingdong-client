@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { completeNewModelSelection } from "../src/model-selection-config.js";
+import {
+  completeNewModelSelection,
+  normalizeModelSelection,
+} from "../src/model-selection-config.js";
 
-test("VibeCoding DeepSeek defaults to high while keeping max explicit", async () => {
+test("VibeCoding DeepSeek defaults to low while keeping max explicit", async () => {
   const release = JSON.parse(
     await readFile(
       fileURLToPath(new URL("../../../config/provider/zcode-builtin.json", import.meta.url)),
@@ -22,7 +25,7 @@ test("VibeCoding DeepSeek defaults to high while keeping max explicit", async ()
     "high",
     "max",
   ]);
-  assert.equal(rule.config.optionSpecs.reasoningLevel.defaultLevel, "high");
+  assert.equal(rule.config.optionSpecs.reasoningLevel.defaultLevel, "low");
 
   const registry = {
     providers: [
@@ -35,7 +38,7 @@ test("VibeCoding DeepSeek defaults to high while keeping max explicit", async ()
               optionSpecs: {
                 reasoningLevel: {
                   values: ["disabled", "low", "high", "max"],
-                  defaultLevel: "high",
+                  defaultLevel: "low",
                 },
               },
             },
@@ -48,5 +51,12 @@ test("VibeCoding DeepSeek defaults to high while keeping max explicit", async ()
     providerId: "lingdong-platform-gateway",
     modelId: "deepseek-flash",
   });
-  assert.deepEqual(selection?.options, { reasoningLevel: "high" });
+  assert.deepEqual(selection?.options, { reasoningLevel: "low" });
+
+  const explicitMax = {
+    providerId: "lingdong-platform-gateway",
+    modelId: "deepseek-flash",
+    options: { reasoningLevel: "max" },
+  };
+  assert.deepEqual(normalizeModelSelection(registry as never, explicitMax), explicitMax);
 });

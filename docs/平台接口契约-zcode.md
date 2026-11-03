@@ -71,8 +71,12 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 - `max_tokens` 或 `max_completion_tokens`
 - `stream`
 - `stream_options`
+- `reasoning_effort`
+- `reasoning`
+- `thinking`
+- `output_config`
 
-平台不能依赖 DSH 特有字段；ZCode 的消息和工具 schema 应按 OpenAI-compatible 契约处理。
+平台不能依赖 DSH 特有字段；ZCode 的消息和工具 schema 应按 OpenAI-compatible 契约处理。思考控制字段存在时，平台必须在请求上游时显式转发，不能静默丢弃或回落到供应商默认档位。
 
 ## usage / 缓存字段
 
@@ -88,6 +92,8 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 平台内部日志继续记录：
 
 - `provider / model / channelId`
+- `reasoning_requested / reasoning_forwarded`
+- `input_tokens / output_tokens / reasoning_tokens`（上游提供时）
 - `time_to_first_token_ms`
 - `total_upstream_ms`
 - `retry_count`
