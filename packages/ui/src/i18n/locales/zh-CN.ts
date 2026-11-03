@@ -165,6 +165,7 @@ const zhCN: Record<string, string> = {
   "workspace.context.lastActivity": "最近活动 {time}",
   // 通用
   "common.loading": "加载中...",
+  "chat.loading.working": "工作中",
   "common.listSeparator": "、",
   "common.generating": "生成中...",
   "common.connecting": "连接中...",

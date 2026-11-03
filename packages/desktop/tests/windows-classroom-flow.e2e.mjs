@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { chromium } from "playwright-core";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 const cdp = process.env.LINGDONG_E2E_CDP || "http://127.0.0.1:9229";
 const mock = process.env.LINGDONG_E2E_MOCK || "http://127.0.0.1:19090";
 for (const url of [cdp, mock]) {
@@ -95,6 +96,13 @@ try {
     .last()
     .waitFor({ timeout: 30_000 });
   await page.getByText("2/10", { exact: true }).waitFor({ timeout: 15_000 });
+  const livePreviewUrl = await page.evaluate(async (fileUrl) => {
+    return await window.lingdong.prepareWorkPreview({ fileUrl });
+  }, pathToFileURL(resolve(".tmp/windows-platform-e2e/classroom/index.html")).href);
+  assert.ok(livePreviewUrl, "课堂内实时预览必须返回本地预览 URL");
+  const livePreviewHtml = await (await fetch(livePreviewUrl)).text();
+  assert.match(livePreviewHtml, /mock-works-llm-grant/u);
+  assert.match(livePreviewHtml, /platform\/api\/works-llm\/chat/u);
   assert.equal(await page.getByText("灵动ai 平台网关", { exact: false }).count(), 0);
   // 课堂预设弹窗走 IPlatformService.classroom.getPresets()，与交作品同一条平台边界。
   await page.getByRole("button", { name: "课堂提示词预设", exact: true }).click();
@@ -103,10 +111,23 @@ try {
   assert.equal(await presetsDialog.getByText("ZCode", { exact: false }).count(), 0);
   // 回归：这是「已有会话」里点预设（不是新建草稿）。以前 SessionPane 只在新草稿时
   // 转发插入请求，于是对话框报「已插入」但输入框其实什么都没拿到。
-  await presetsDialog.getByRole("button", { name: /读取课堂文件/ }).click();
+  const presetButton = presetsDialog.getByRole("button", { name: /读取课堂文件/ });
+  const otherPresetButton = presetsDialog.getByRole("button", { name: /复习知识点/ });
+  assert.equal(await presetButton.getAttribute("data-inserted"), "false");
+  const originalBackground = await presetButton.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  await presetButton.click();
   await presetsDialog
     .getByText("已插入当前任务输入框。", { exact: false })
     .waitFor({ timeout: 10_000 });
+  assert.equal(await presetButton.getAttribute("data-inserted"), "true");
+  assert.equal(await otherPresetButton.getAttribute("data-inserted"), "false");
+  await presetButton.getByText("已插入", { exact: true }).waitFor({ timeout: 5_000 });
+  const insertedBackground = await presetButton.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  assert.notEqual(insertedBackground, originalBackground, "已插入预设必须有明显背景区分");
   const composerAfterPreset = await page.locator('[data-testid="v4-composer-input"]').innerText();
   assert.ok(
     composerAfterPreset.includes("读取 notes.txt 并总结内容"),
@@ -114,9 +135,22 @@ try {
   );
   await page.keyboard.press("Escape");
   await presetsDialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
+  await page.getByRole("button", { name: "课堂提示词预设", exact: true }).click();
+  const reopenedPresetsDialog = page.getByRole("dialog");
+  await reopenedPresetsDialog.getByText("读取课堂文件", { exact: true }).waitFor({ timeout: 10_000 });
+  assert.equal(
+    await reopenedPresetsDialog
+      .getByRole("button", { name: /读取课堂文件/ })
+      .getAttribute("data-inserted"),
+    "true",
+    "重新打开弹窗后，已成功插入的预设必须保持标识",
+  );
+  await page.keyboard.press("Escape");
+  await reopenedPresetsDialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
 
   await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
   const dialog = page.getByRole("dialog");
+  await dialog.getByText("本节课由平台提供模型", { exact: true }).waitFor({ timeout: 10_000 });
   // 对话框只让学生选择一个主作品；引用素材必须由客户端顺着入口自动解析并只读展示。
   await dialog.getByText("任务 ·", { exact: false }).waitFor({ timeout: 10_000 });
   await dialog.getByText("index.html", { exact: true }).waitFor({ timeout: 10_000 });
@@ -130,6 +164,19 @@ try {
   await submittedButton.waitFor({ timeout: 10_000 });
   assert.equal(await submittedButton.isDisabled(), true, "没有新产出时提交按钮必须置灰");
   const result = await (await fetch(`${mock}/__test/state`)).json();
+  await dialog.getByText("我的作品", { exact: true }).waitFor({ timeout: 10_000 });
+  await dialog.getByRole("button", { name: "预览", exact: true }).first().click();
+  const previewFrame = page.frameLocator("iframe[sandbox]").last();
+  await previewFrame
+    .getByText("MOCK_WORKS_LLM_OK", { exact: false })
+    .waitFor({ timeout: 20_000 });
+  const previewDialog = page.getByRole("dialog").filter({ has: page.locator("iframe[sandbox]") });
+  await previewDialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await page
+    .locator('[role="dialog"][data-state="open"]')
+    .waitFor({ state: "detached", timeout: 10_000 })
+    .catch(() => {});
   assert.ok(result.requests.length > 0 && result.requests.every((r) => r.keyMatches));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 1));
   assert.ok(result.requests.some((r) => r.stream && r.toolReplies === 2));
@@ -137,21 +184,25 @@ try {
   assert.ok(providerToolSurfaces.length > 0, "mock Provider 必须收到至少一次带工具的请求");
   for (const request of providerToolSurfaces) {
     const toolNames = request.tools.map((tool) => tool.name);
-    // 课堂使用 embedded-search 分支，Glob/Grep 会被该分支隐藏；正常情况下最多 11 项。
+    // 课堂使用 embedded-search 分支，Glob/Grep 会被该分支隐藏；常驻工具扩容后正常情况下为 14-16 项。
     assert.ok(
-      toolNames.length >= 10 && toolNames.length <= 12,
+      toolNames.length >= 14 && toolNames.length <= 16,
       `Provider 工具面未正确收口：${toolNames.join(",")}`,
     );
     for (const requiredTool of [
       "Read",
       "Write",
       "AskUserQuestion",
+      "Skill",
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "WebFetch",
       "ToolSearch",
       "DeferredToolCall",
     ]) {
       assert.ok(toolNames.includes(requiredTool), `Provider 请求体缺少 ${requiredTool}`);
     }
-    for (const deferredTool of ["CronCreate", "WebFetch", "CreateWorkflow"]) {
+    for (const deferredTool of ["CronCreate", "CreateWorkflow"]) {
       assert.ok(!toolNames.includes(deferredTool), `Provider 请求体不得直接暴露 ${deferredTool}`);
     }
   }
@@ -200,7 +251,7 @@ try {
   assert.ok(!submittedFiles.some((file) => file.name.includes("remote")), "外链素材不得被提交");
   // 再产出后按钮必须重新可用：改入口文件会让最终打包指纹变化。
   await page.keyboard.press("Escape");
-  await dialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
+  await page.getByRole("dialog").waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
   await writeFile(
     resolve(".tmp/windows-platform-e2e/classroom/index.html"),
     "<!-- new output -->\n",

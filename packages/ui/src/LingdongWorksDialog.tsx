@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { FileText, FileUp, Paperclip, RefreshCw } from "lucide-react";
+import { Eye, FileText, FileUp, Paperclip, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
 import {
   Dialog,
@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { cn } from "@/components/lib/utils.js";
-import type { ClassroomWorkspaceScan } from "@zcode/shared";
+import type { ClassroomWorksList, ClassroomWorkspaceScan } from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
@@ -20,6 +20,39 @@ import { readLingdongTaskEntryPaths } from "@/lib/lingdongTaskEntries.js";
 // 平台单次提交的整单上限（base64 解码后合计，封面另算）：现在是 100MB。
 // 平台侧可调（RUNTIME_UPLOAD_MAX_BYTES），这里必须跟它保持一致。
 const MAX_SUBMIT_TOTAL_BYTES = 100 * 1024 * 1024;
+type ClassroomWorkSummary = Readonly<{
+  id: string;
+  title: string;
+  status?: string;
+  submittedAt?: string;
+}>;
+
+function asWorkSummaries(value: ClassroomWorksList | null | undefined): ClassroomWorkSummary[] {
+  const rawItems = Array.isArray(value?.items)
+    ? value.items
+    : Array.isArray(value?.works)
+      ? value.works
+      : [];
+  return rawItems.flatMap((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return [];
+    const record = item as Record<string, unknown>;
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    if (!id) return [];
+    return [
+      {
+        id,
+        title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : "课堂作品",
+        ...(typeof record.status === "string" && record.status.trim()
+          ? { status: record.status.trim() }
+          : {}),
+        ...(typeof record.submittedAt === "string" && record.submittedAt.trim()
+          ? { submittedAt: record.submittedAt.trim() }
+          : {}),
+      },
+    ];
+  });
+}
+
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -47,12 +80,24 @@ export function LingdongWorksDialog({
   const [taskFilePaths, setTaskFilePaths] = useState<readonly string[] | undefined>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [works, setWorks] = useState<ClassroomWorkSummary[]>([]);
+  const [worksLlmAvailable, setWorksLlmAvailable] = useState(false);
+  const [previewBusyId, setPreviewBusyId] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewTitle, setPreviewTitle] = useState("作品预览");
 
   const refresh = useCallback(async () => {
     setBusy(true);
     setMessage("");
     try {
       if (!classroom) throw new Error("当前环境不支持课堂作品提交。");
+      const [worksList, snapshot] = await Promise.all([
+        classroom.listWorks().catch(() => null),
+        classroom.getSnapshot().catch(() => null),
+      ]);
+      setWorks(asWorkSummaries(worksList));
+      setWorksLlmAvailable(Boolean(snapshot?.worksLlmAvailable));
       let nextTaskTitle = "";
       let nextTaskFilePaths: string[] | undefined;
       let scanOptions: Parameters<typeof classroom.scanWorkspaceFiles>[0];
@@ -114,6 +159,23 @@ export function LingdongWorksDialog({
   const hasSubmittedBefore = Boolean(preview?.lastSubmittedAt);
   const canSubmit = Boolean(preview && !overLimit && !noNewOutput);
 
+  const previewWork = async (work: ClassroomWorkSummary) => {
+    if (!classroom || previewBusyId) return;
+    setPreviewBusyId(work.id);
+    setMessage("");
+    try {
+      const url = await classroom.prepareWorkPreview({ workId: work.id });
+      if (!url) throw new Error("当前作品暂不支持客户端预览。");
+      setPreviewTitle(work.title);
+      setPreviewUrl(url);
+      setPreviewOpen(true);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setPreviewBusyId(null);
+    }
+  };
+
   const submit = async () => {
     if (!preview) return;
     if (activeTaskId && preview.taskId !== activeTaskId) {
@@ -152,6 +214,8 @@ export function LingdongWorksDialog({
       } catch {
         // 提交已经成功；重扫失败只影响按钮状态，不能把成功改判成失败。
       }
+      const refreshedWorks = await classroom.listWorks().catch(() => null);
+      if (refreshedWorks) setWorks(asWorkSummaries(refreshedWorks));
       setMessage(
         nextCount === null
           ? "作品已提交，平台正在处理。"
@@ -167,7 +231,8 @@ export function LingdongWorksDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl gap-3">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-ui-lg">
@@ -175,6 +240,11 @@ export function LingdongWorksDialog({
           </DialogTitle>
           <DialogDescription>
             只选择主作品文件，引用的素材会按相对路径自动一起提交。
+            {worksLlmAvailable ? (
+              <span className="ml-2 inline-flex rounded-full bg-brand/10 px-2 py-0.5 text-ui-xs font-medium text-brand">
+                本节课由平台提供模型
+              </span>
+            ) : null}
           </DialogDescription>
         </DialogHeader>
         <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2">
@@ -238,6 +308,35 @@ export function LingdongWorksDialog({
             </div>
           )}
         </div>
+        {works.length > 0 ? (
+          <div className="rounded-lg border border-border">
+            <div className="border-b border-border px-3 py-2 text-ui-xs font-medium text-foreground-subtle">
+              我的作品
+            </div>
+            <div className="max-h-32 divide-y divide-border overflow-auto">
+              {works.map((work) => (
+                <div key={work.id} className="flex items-center gap-3 px-3 py-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-ui-sm">{work.title}</div>
+                    <div className="truncate text-ui-xs text-foreground-subtle">
+                      {[work.status, work.submittedAt].filter(Boolean).join(" · ")}
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={previewBusyId !== null}
+                    onClick={() => void previewWork(work)}
+                  >
+                    <Eye className="size-3.5" />
+                    {previewBusyId === work.id ? "打开中…" : "预览"}
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <div
           className={cn(
             "flex items-center justify-between rounded-lg border px-3 py-2 text-ui-sm",
@@ -276,6 +375,30 @@ export function LingdongWorksDialog({
           </Button>
         </DialogFooter>
       </DialogContent>
-    </Dialog>
+      </Dialog>
+      <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
+        <DialogContent className="h-[80vh] max-w-6xl gap-3">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-ui-lg">
+              <Eye className="size-5" />
+              {previewTitle}
+            </DialogTitle>
+          </DialogHeader>
+          {previewUrl ? (
+            <iframe
+              title={previewTitle}
+              src={previewUrl}
+              className="min-h-0 flex-1 rounded-lg border border-border bg-white"
+              sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+            />
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setPreviewOpen(false)}>
+              关闭
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

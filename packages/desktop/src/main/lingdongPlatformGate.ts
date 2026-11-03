@@ -1,6 +1,7 @@
 /* eslint-disable max-lines -- 平台登录、课堂上下文、作品提交与封面采集共享 Main 单一所有者；迁移阶段保持边界收口。 */
 import { app, BrowserWindow, ipcMain } from "electron";
 import { createHash, randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -11,6 +12,7 @@ import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
 import { buildLingdongClassroomWorkspaceName } from "./lingdongClassroomWorkspace.js";
+import { createLingdongWorkPreviewServer } from "./lingdongWorkPreviewServer.js";
 import { shouldRefreshRuntimeKey } from "./lingdongRuntimeKey.js";
 import {
   buildLingdongSubmissionRecordKey,
@@ -21,6 +23,8 @@ import {
   type ClassroomEndedAutoSubmitRequest,
   type ClassroomWorkspaceScanOptions,
   type ClassroomWorkspaceSubmitPreview,
+  type ClassroomWorksLlmGrant,
+  type ClassroomWorkPreviewRequest,
 } from "@zcode/shared";
 
 type LingdongUser = {
@@ -48,6 +52,7 @@ type LingdongContext = {
   readonly models?: readonly { readonly id?: unknown; readonly displayName?: unknown }[];
   readonly defaultModel?: unknown;
   readonly presets?: readonly { readonly title?: unknown; readonly text?: unknown }[];
+  readonly worksLlm?: ClassroomWorksLlmGrant | null;
   readonly sends?: {
     readonly limit?: number | null;
     readonly used?: number;
@@ -113,6 +118,7 @@ let classroomExitInFlight = false;
 let cachedClassroomSession: CachedClassroomSession | null = null;
 let pendingClassroomAutoSubmit: PendingClassroomAutoSubmit | null = null;
 let lastRuntimeKeyRefreshAt = 0;
+let workPreviewServer: ReturnType<typeof createLingdongWorkPreviewServer> | null = null;
 const AUTO_SUBMIT_WINDOW_MS = 10 * 60 * 1000;
 
 /** 深链 `lingdong://open?prep=1&lesson=<id>` 的落点；null 表示回到学生路径。 */
@@ -1497,6 +1503,93 @@ async function callPlatform(path: string, init: RequestInit = {}): Promise<unkno
   return apiRequest(path, init, activeState.session.token);
 }
 
+function getWorkPreviewServer(): ReturnType<typeof createLingdongWorkPreviewServer> {
+  workPreviewServer ??= createLingdongWorkPreviewServer({
+    platformBaseUrl: API_BASE,
+    getPlatformToken: () => activeState?.session.token ?? null,
+  });
+  return workPreviewServer;
+}
+
+async function buildLocalPreviewFileMap(
+  files: readonly WorkFilePlan[],
+  entryPath: string,
+  entryDir: string,
+  entryName: string,
+): Promise<Record<string, string>> {
+  const map: Record<string, string> = {};
+  await Promise.all(
+    files.map(async (file) => {
+      if (file.binary) return;
+      const name =
+        file.absolute === entryPath
+          ? entryName
+          : relative(entryDir, file.absolute).replaceAll("\\", "/");
+      if (!name || name.startsWith("..")) return;
+      map[name] = await readFile(file.absolute, "utf8");
+    }),
+  );
+  return map;
+}
+
+async function prepareLingdongWorkPreview(payload: unknown): Promise<string | null> {
+  if (!activeState) return null;
+  const input = record<unknown>(payload) ? (payload as ClassroomWorkPreviewRequest) : {};
+  try {
+    const server = getWorkPreviewServer();
+    if (typeof input.workId === "string" && input.workId.trim()) {
+      const detail = unwrap<Record<string, unknown>>(
+        await callPlatform(
+          `/api/student/works/VIBECODING/${encodeURIComponent(input.workId.trim())}`,
+        ),
+      );
+      const entryName = typeof detail.entryFile === "string" ? detail.entryFile.trim() : "";
+      if (!entryName || !HTML_ENTRY_EXTENSIONS.has(extname(entryName).toLowerCase())) return null;
+      const rawFiles = record<unknown>(detail.files) ? detail.files : null;
+      if (!rawFiles) return null;
+      const files: Record<string, string> = {};
+      for (const [name, content] of Object.entries(rawFiles)) {
+        if (typeof content === "string") files[name] = content;
+      }
+      if (files[entryName] === undefined) return null;
+      const grant = record<unknown>(detail.worksLlm)
+        ? String(detail.worksLlm.grant || "").trim()
+        : "";
+      return await server.prepareUploaded({
+        entryName,
+        files,
+        worksLlm: grant ? { grant } : null,
+      });
+    }
+    if (typeof input.fileUrl === "string" && input.fileUrl.trim()) {
+      const entryPath = fileURLToPath(input.fileUrl.trim());
+      if (!HTML_ENTRY_EXTENSIONS.has(extname(entryPath).toLowerCase())) return null;
+      const plan = await resolveSubmitPlan([{ path: entryPath }]);
+      const entryDir = dirname(plan.entryPath);
+      const files = await buildLocalPreviewFileMap(
+        plan.files,
+        plan.entryPath,
+        entryDir,
+        plan.entryName,
+      );
+      return await server.prepareLocal({
+        root: activeState.workspacePath,
+        entryDir,
+        entryName: plan.entryName,
+        files,
+        worksLlm: activeState.context.worksLlm ?? null,
+      });
+    }
+    return null;
+  } catch (error) {
+    // 预览失败只回退原 file URL；不能把 grant 或作品正文写进日志。
+    console.warn("[lingdong-gate] 作品预览准备失败", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+}
+
 export async function getLingdongPlatformSnapshot(): Promise<unknown> {
   if (!activeState) return null;
   const prep = isPrepContext(activeState.context);
@@ -1521,6 +1614,7 @@ export async function getLingdongPlatformSnapshot(): Promise<unknown> {
         }
       : null,
     quota,
+    worksLlmAvailable: Boolean(activeState.context.worksLlm?.grant),
   };
 }
 
@@ -1549,6 +1643,9 @@ function registerPlatformHandlers(): void {
   ipcMain.handle("lingdong:platform-snapshot", () => getLingdongPlatformSnapshot());
   ipcMain.handle("lingdong:platform-works", async () =>
     unwrap<Record<string, unknown>>(await callPlatform("/api/student/works?page=1&limit=20")),
+  );
+  ipcMain.handle("lingdong:platform-prepare-work-preview", (_event, input: unknown) =>
+    prepareLingdongWorkPreview(input),
   );
   ipcMain.handle("lingdong:platform-scan-workspace", (_event, input: unknown) =>
     scanLingdongWorkspaceFiles(input),
@@ -1758,6 +1855,9 @@ export async function disposeLingdongPlatformGate(): Promise<void> {
       message: "课堂自动补交流程已中止。",
     });
   }
+  const previewServer = workPreviewServer;
+  workPreviewServer = null;
+  await previewServer?.close().catch(() => {});
   const binding = providerBinding;
   providerBinding = null;
   await binding?.dispose();

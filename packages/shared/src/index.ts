@@ -93,6 +93,7 @@ export * from "./official-mcp-tool-error.js";
 export * from "./conversation-message-projection-policy.js";
 export * from "./conversation-share.js";
 export * from "./conversation-preview-artifacts.js";
+export * from "./vibecodingProject.js";
 export * from "./zcode-session-task-status.js";
 export * from "./zcode-tool-projection-memory.js";
 export * from "./zcode-slash-command-help.js";
@@ -221,8 +222,10 @@ export type {
   ClassroomEndedAutoSubmitRequest,
   ClassroomSubmitResult,
   ClassroomWorkItem,
+  ClassroomWorkPreviewRequest,
   ClassroomWorkSubmission,
   ClassroomWorksList,
+  ClassroomWorksLlmGrant,
   ClassroomWorkspaceBundleFile,
   ClassroomWorkspaceFile,
   ClassroomWorkspaceScan,

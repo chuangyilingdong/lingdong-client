@@ -54,6 +54,7 @@ import type {
   ClassroomWorkSubmission,
   ClassroomEndedAutoSubmitCompletion,
   ClassroomEndedAutoSubmitRequest,
+  ClassroomWorkPreviewRequest,
 } from "@zcode/shared";
 
 /**
@@ -76,6 +77,7 @@ declare global {
       } | null>;
       refreshPlatformContext(): Promise<unknown>;
       listWorks(): Promise<ClassroomWorksList>;
+      prepareWorkPreview(request: ClassroomWorkPreviewRequest): Promise<string | null>;
       scanWorkspaceFiles(options?: ClassroomWorkspaceScanOptions): Promise<ClassroomWorkspaceScan>;
       submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
       onClassroomEnded(listener: (request: ClassroomEndedAutoSubmitRequest) => void): () => void;

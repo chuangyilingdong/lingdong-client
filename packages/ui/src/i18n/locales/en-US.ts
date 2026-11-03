@@ -176,6 +176,7 @@ const enUS: Record<string, string> = {
   "workspace.context.lastActivity": "Last active {time}",
   // Common
   "common.loading": "Loading...",
+  "chat.loading.working": "Working",
   "common.listSeparator": ", ",
   "common.generating": "Generating...",
   "common.connecting": "Connecting...",

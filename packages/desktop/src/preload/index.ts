@@ -59,6 +59,7 @@ import type {
   RendererHeapSample,
   ClassroomEndedAutoSubmitCompletion,
   ClassroomEndedAutoSubmitRequest,
+  ClassroomWorkPreviewRequest,
   PostUpdateReleaseNotesPayload,
   RemoteSessionClosedEvent,
   BotRemoteWorkspaceReconnectedEvent,
@@ -273,6 +274,8 @@ contextBridge.exposeInMainWorld("lingdong", {
   refreshPlatformContext: (): Promise<unknown> =>
     ipcRenderer.invoke("lingdong:platform-refresh-context"),
   listWorks: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-works"),
+  prepareWorkPreview: (request: ClassroomWorkPreviewRequest): Promise<string | null> =>
+    ipcRenderer.invoke("lingdong:platform-prepare-work-preview", request),
   scanWorkspaceFiles: (options?: unknown): Promise<unknown> =>
     ipcRenderer.invoke("lingdong:platform-scan-workspace", options),
   submitWork: (payload: unknown): Promise<unknown> =>

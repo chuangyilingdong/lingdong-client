@@ -13,6 +13,7 @@ ZCode 作为客户端底座，平台服务端继续保持现有账号、课堂�
 | GET  | `/api/student/runtime/client-context` | 当前课堂、网关、模型、预设、发送次数、课堂工作区 |
 | POST | `/api/student/runtime/submit-upload`  | 上传/提交课堂作品                                |
 | GET  | `/api/student/works?page=1&limit=20`  | 查询历史作品                                     |
+| GET  | `/api/student/works/VIBECODING/:id`  | 查询本人作品详情、文件快照与 worksLlm            |
 
 接口响应可以是 `{ data: payload }` 或直接返回 payload；错误建议继续返回 `{ error: { code, message } }` 或 `{ message }`。
 
@@ -32,6 +33,7 @@ ZCode 作为客户端底座，平台服务端继续保持现有账号、课堂�
   "models": [{ "id": "deepseek-flash", "displayName": "DeepSeek Flash" }],
   "defaultModel": "deepseek-flash",
   "presets": [],
+  "worksLlm": { "grant": "短期作品模型授权" },
   "sends": { "limit": 20, "used": 0, "remaining": 20 },
   "workspacePath": "可选：平台指定的本机课堂目录"
 }
@@ -47,6 +49,8 @@ apiKey     = client-context.gateway.key
 ```
 
 课堂默认使用平台网关 Provider；该 Provider 的模型仅来自平台上下文。成人学生仍可使用 ZCode 自带 Provider 管理、个人外部 API Key 等能力，课堂注入不得覆盖个人配置。
+
+`worksLlm` 是课堂作品预览的短期 bearer 授权，不是 Agent 模型 Key。Main 只把它注入作品预览文档，禁止写入日志、崩溃上报或本地持久化；未开启平台作品模型时为 `null`。
 
 ## 网关请求契约
 

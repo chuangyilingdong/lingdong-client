@@ -18,6 +18,7 @@ const setup = await fetch(`${mock}/__test/classrooms`, {
 });
 assert.equal(setup.status, 200, "设置课堂形态失败");
 await fetch(`${mock}/__test/mode`, { method: "POST", body: JSON.stringify({ mode: "ask" }) });
+await fetch(`${mock}/__test/delay`, { method: "POST", body: JSON.stringify({ delayMs: 1200 }) });
 
 const browser = await chromium.connectOverCDP(cdp);
 try {
@@ -48,6 +49,9 @@ try {
     .locator('[data-testid="v4-composer-input"]')
     .fill("请用选项卡帮我设置 AI 伙伴的人格。");
   await page.getByRole("button", { name: "发送", exact: true }).click();
+  const runningStatus = page.getByRole("status").filter({ hasText: "工作中" });
+  await runningStatus.waitFor({ timeout: 5_000 });
+  assert.match(await runningStatus.innerText(), /工作中\s+\d+\.\d+\s+秒/u);
 
   await page
     .getByText("你希望 AI 伙伴偏向哪种性格？", { exact: true })

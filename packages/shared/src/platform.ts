@@ -538,6 +538,18 @@ export interface ClassroomPlatformModel {
   readonly displayName?: unknown;
 }
 
+/** 平台为课堂作品签发的短期模型授权；grant 只允许在 Main 内消费，不写入日志或持久化。 */
+export interface ClassroomWorksLlmGrant {
+  readonly grant?: string;
+}
+
+export interface ClassroomWorkPreviewRequest {
+  /** 课堂内实时预览：当前工作区 HTML 的文件 URL。 */
+  readonly fileUrl?: string;
+  /** 学生已提交作品预览：作品 id。 */
+  readonly workId?: string;
+}
+
 /** 课堂发送次数投影；limit=null 表示不限次。 */
 export interface ClassroomQuota {
   readonly limit: number | null;
@@ -560,6 +572,8 @@ export interface ClassroomPlatformSnapshot {
   readonly workspaceIdentity?: string;
   readonly classroomId?: string | null;
   readonly quota?: ClassroomQuota;
+  /** 本节课作品是否可用平台模型；Render 侧只需要布尔值，grant 留在 Main。 */
+  readonly worksLlmAvailable?: boolean;
   /**
    * 备课模式：老师端「VibeCoding 备课」拉起时的只读创作环境。
    * 平台在备课上下文里**不下发 gateway**，所以客户端不可能发出生成请求。
@@ -709,6 +723,8 @@ export interface IClassroomPlatformService {
   submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
   /** 查询历史作品，用于提交后回显 */
   listWorks(): Promise<ClassroomWorksList>;
+  /** 由 Main 读取作品并生成带 worksLlm 桥的本地预览 URL；失败时返回 null 由调用方回退原 URL。 */
+  prepareWorkPreview(request: ClassroomWorkPreviewRequest): Promise<string | null>;
   /** 订阅 Main 检测到的课堂结束自动补交请求；桌面宿主才有。 */
   onClassroomEnded(listener: (request: ClassroomEndedAutoSubmitRequest) => void): () => void;
   /** 多窗口竞争中认领本次请求；只有第一个匹配窗口会得到 true。 */

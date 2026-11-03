@@ -38,6 +38,7 @@ function classroomHtml(item, taskWriteMarker = "") {
     "<video src='assets/clip.mp4'></video>",
     "<script src='app.js'></script>",
     taskWriteMarker ? `<p data-mock-task-write='${taskWriteMarker}'>task output</p>` : "",
+    "<script>if(window.__PLATFORM_WORK_LLM__){fetch('/api/llm',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:'hello'}]})}).then(function(r){return r.json()}).then(function(data){var p=document.createElement('p');p.setAttribute('data-mock-works-llm','true');p.textContent=String(data.content||data.error||'');document.body.appendChild(p)}).catch(function(error){var p=document.createElement('p');p.setAttribute('data-mock-works-llm','error');p.textContent=String(error);document.body.appendChild(p)})}</script>",
     "<!--",
     "<img src='https://example.com/remote.png'>",
     "<img src='data:image/png;base64,AAAA'>",
@@ -83,6 +84,7 @@ let activeClassroom = CLASSROOMS[0];
 const prepContexts = [];
 const requests = [];
 const works = [];
+const workFileContents = new Map();
 const workSubmissions = [];
 let classroomEndedAt = null;
 let used = 0;
@@ -105,6 +107,7 @@ let omitWorkspacePath = false;
 let sessionSuperseded = false;
 let submitIncludesWorks = false;
 let mode = "text";
+let responseDelayMs = 0;
 let toolRound = 0;
 // 平台网关历史截断标记（默认关闭 = 不截断）。
 // 只发 x-platform-history-dropped：客户端不消费保留上限，这里也不发，避免测试掩盖该依赖。
@@ -226,7 +229,11 @@ function context(sessionId) {
     gateway: { baseUrl: `${origin}/gateway/v1`, key: fakeKey },
     models: [{ id: "mock-model", displayName: "Mock Model" }],
     defaultModel: "mock-model",
-    presets: [{ title: "读取课堂文件", text: "读取 notes.txt 并总结内容" }],
+    presets: [
+      { title: "读取课堂文件", text: "读取 notes.txt 并总结内容" },
+      { title: "复习知识点", text: "请帮我复习本节课的知识点" },
+    ],
+    worksLlm: { grant: "mock-works-llm-grant" },
     sends: {
       limit: quotaLimit,
       used,
@@ -268,6 +275,11 @@ const server = http.createServer(async (req, res) => {
           title,
         })),
       });
+    }
+    if (pathname === "/__test/delay" && req.method === "POST") {
+      const data = await body(req);
+      responseDelayMs = Math.max(0, Math.min(5_000, Number(data.delayMs) || 0));
+      return json(res, 200, { responseDelayMs });
     }
     if (pathname === "/__test/mode" && req.method === "POST") {
       const data = await body(req);
@@ -328,6 +340,17 @@ const server = http.createServer(async (req, res) => {
     if (pathname === "/api/auth/logout") {
       logoutCalls.push({ authorization: req.headers.authorization ?? null, at: Date.now() });
       return ok(res, { ok: true });
+    }
+    const workDetailMatch = /^\/api\/student\/works\/VIBECODING\/([^/]+)$/u.exec(pathname);
+    if (workDetailMatch) {
+      const work = works.find((candidate) => candidate.id === workDetailMatch[1]);
+      if (!work) return fail(res, 404, "WORK_NOT_FOUND", "作品不存在");
+      return ok(res, {
+        ...work,
+        files: workFileContents.get(work.id) ?? {},
+        entryFile: work.entryFile || "index.html",
+        worksLlm: { grant: "mock-works-llm-grant" },
+      });
     }
     if (pathname === "/api/student/works") {
       // submitIncludesWorks 场景下故意让列表接口落后，用于区分客户端到底用了哪条数据。
@@ -403,6 +426,14 @@ const server = http.createServer(async (req, res) => {
         cover: !!data.cover,
       };
       works.push(work);
+      workFileContents.set(
+        work.id,
+        Object.fromEntries(
+          (Array.isArray(data.files) ? data.files : [])
+            .filter((file) => typeof file?.name === "string" && typeof file?.content === "string")
+            .map((file) => [file.name, file.content]),
+        ),
+      );
       return ok(res, {
         ok: true,
         id: work.id,
@@ -411,6 +442,18 @@ const server = http.createServer(async (req, res) => {
         missing: [],
         // 新版平台：提交响应直接回 works（形状同 GET /student/works 条目）
         ...(submitIncludesWorks ? { works: [work] } : {}),
+      });
+    }
+    if (pathname === "/api/works-llm/chat" && req.method === "POST") {
+      const data = await body(req);
+      if (data.grant !== "mock-works-llm-grant") {
+        return ok(res, { ok: false, error: "INVALID_WORK_LLM_GRANT" });
+      }
+      return ok(res, {
+        ok: true,
+        content: "MOCK_WORKS_LLM_OK",
+        model: "mock-works-model",
+        usage: { total_tokens: 12 },
       });
     }
     if (pathname === "/downloads/manifest.json") {
@@ -448,6 +491,9 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === "/gateway/v1/chat/completions" && req.method === "POST") {
       const data = await body(req);
+      if (responseDelayMs > 0) {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, responseDelayMs));
+      }
       const keyMatches = req.headers.authorization === `Bearer ${fakeKey}`;
       requests.push({
         model: data.model,

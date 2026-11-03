@@ -158,6 +158,7 @@ export function useAppPanels(options: {
     | "onBrowserViewRestore"
     | "browserViewCloseTab"
     | "browserViewEnsureResident"
+    | "classroom"
   >;
 }) {
   const {
@@ -378,10 +379,8 @@ export function useAppPanels(options: {
     [commitOpenedSidePaneState, revealSidePaneForCurrentOwner, workspaceAbsPath],
   );
 
-  const handleOpenBrowserUrl = useCallback(
-    (request: string | EmbeddedBrowserOpenUrlRequest) => {
-      const payload: EmbeddedBrowserOpenUrlRequest =
-        typeof request === "string" ? { url: request, disposition: "foreground-tab" } : request;
+  const openBrowserUrlNow = useCallback(
+    (payload: EmbeddedBrowserOpenUrlRequest) => {
       const sourceWorkspaceKey = payload.workspaceKey ?? activeWorkspaceKeyRef.current;
       const sourceSessionId = payload.sessionId ?? sidePaneOwnerIdRef.current;
       const sourceRemoteSessionId =
@@ -446,6 +445,28 @@ export function useAppPanels(options: {
     ],
   );
 
+  const handleOpenBrowserUrl = useCallback(
+    (request: string | EmbeddedBrowserOpenUrlRequest) => {
+      const payload: EmbeddedBrowserOpenUrlRequest =
+        typeof request === "string" ? { url: request, disposition: "foreground-tab" } : request;
+      const prepareWorkPreview = platform?.classroom?.prepareWorkPreview;
+      if (prepareWorkPreview && /^file:.*\.html?(?:[?#].*)?$/iu.test(payload.url)) {
+        void prepareWorkPreview({ fileUrl: payload.url })
+          .then((previewUrl) => {
+            openBrowserUrlNow(previewUrl ? { ...payload, url: previewUrl } : payload);
+          })
+          .catch((error) => {
+            logger.warn("[App] 课堂作品预览准备失败，回退原文件 URL", {
+              error: error instanceof Error ? error.message : String(error),
+            });
+            openBrowserUrlNow(payload);
+          });
+        return;
+      }
+      openBrowserUrlNow(payload);
+    },
+    [openBrowserUrlNow, platform?.classroom],
+  );
   const handleToggleBrowser = useCallback(() => {
     if (!supportsEmbeddedBrowser) {
       // 能力边界：Web/mobile 当前不支持 Electron webview，不创建 Browser side pane。

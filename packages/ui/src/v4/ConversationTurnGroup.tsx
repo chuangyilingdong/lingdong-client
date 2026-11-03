@@ -142,9 +142,11 @@ function toRetryStatus(apiRetry: ApiRetryState): ZCodeApiRetryStatus {
 function TurnChatLoadingSlot({
   apiRetry,
   eligible,
+  initialElapsedMs,
 }: {
   apiRetry: ApiRetryState | null;
   eligible: boolean;
+  initialElapsedMs: number;
 }) {
   const { intl, locale } = useZCodeIntl();
   const retryStatus = useMemo(() => (apiRetry ? toRetryStatus(apiRetry) : null), [apiRetry]);
@@ -161,7 +163,11 @@ function TurnChatLoadingSlot({
       ) : (
         // running 是 ChatLoading 的权威事实；额外静默计时会让 projection
         // 更新反复重启可见性，并使 UI 晚于真实状态。
-        <ChatLoading loading data-testid={TID_CHAT_LOADING} size="sm" />
+        <ChatLoading
+          loading
+          data-testid={TID_CHAT_LOADING}
+          initialElapsedMs={initialElapsedMs}
+        />
       )}
     </div>
   );
@@ -826,7 +832,11 @@ function ConversationTurnFlow({
           stageTailIsRunning={unit.isRunning}
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
-        <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+        <TurnChatLoadingSlot
+          apiRetry={apiRetry}
+          eligible={showLoading}
+          initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+        />
       </div>
     );
   }
@@ -891,7 +901,11 @@ function ConversationTurnFlow({
           shareSelectionRowId={shareSelectionRowId}
         />
       ))}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+          apiRetry={apiRetry}
+          eligible={showLoading}
+          initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+        />
     </div>
   );
 }
@@ -1093,7 +1107,11 @@ function ConversationBackgroundResultWork({
           assistantCodeCommentProjectionEnabled={assistantCodeCommentProjectionEnabled}
         />
       ) : null}
-      <TurnChatLoadingSlot apiRetry={apiRetry} eligible={showLoading} />
+      <TurnChatLoadingSlot
+          apiRetry={apiRetry}
+          eligible={showLoading}
+          initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+        />
     </div>
   );
 }
