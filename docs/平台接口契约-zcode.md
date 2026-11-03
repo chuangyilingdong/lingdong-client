@@ -220,7 +220,7 @@ Renderer 不直接接触平台凭据，也不直接调用 preload 桥。课堂�
 ### 所有者
 
 - 登录会话、课堂上下文、运行时网关凭据：`packages/desktop/src/main/lingdongPlatformGate.ts`（Electron Main 单一所有者）。
-- 当前课堂工作区：平台上下文初始化后由 `startupWorkspace` 启动参数与 ZCode workspace/session store 共同消费；Main 只注入 canonical path/identity，不复制任务状态。
+- 当前课堂工作区：平台上下文初始化后由 `startupWorkspace` 启动参数与 ZCode workspace/session store 共同消费；Main 只注入 canonical path/identity，不复制任务状态。平台未下发 `workspacePath` 时，本地回退目录名包含 `classroom.id`，确保同一课时的新课堂不复用旧课堂任务历史。
 - 发送次数：`packages/services/src/zcode-agent/lingdongQuotaLedger.ts` 在 Service 的实际命令入口（V4 `sendText`、`createSession.firstInput`、附件兼容 `session/send`）预留与结算，按 workspace identity + sessionId + commandId 幂等；UI 不作为最终事实来源，平台 sends / 网关 429 仍是最终门禁。
 - 作品候选：renderer 通过 `IZCodeTaskService` 读取当前 task 的标题与 `fileState=applied` 文件，再交给 workspace 扫描做路径校验和预览；提交命令只经过 `window.lingdong.submitWork` 回 Main，由 Main 使用平台 token 调用 `submit-upload`。
 

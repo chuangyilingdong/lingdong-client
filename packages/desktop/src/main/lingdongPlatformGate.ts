@@ -10,6 +10,7 @@ import { atomicWritePrivateTextFile } from "@zcode/shared/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
+import { buildLingdongClassroomWorkspaceName } from "./lingdongClassroomWorkspace.js";
 import { shouldRefreshRuntimeKey } from "./lingdongRuntimeKey.js";
 import {
   buildLingdongSubmissionRecordKey,
@@ -420,14 +421,18 @@ function unwrap<T>(value: unknown): T {
 
 function resolveWorkspace(context: LingdongContext, user: LingdongUser | undefined): string {
   const supplied = context.workspacePath?.trim();
+  // 平台显式下发路径时以平台为准；当前生产不下发，回退目录必须按课堂 id 隔离，
+  // 否则同一学生重复上同一课时会继承上一场课堂的任务历史。
   if (supplied) return supplied;
-  const display = String(user?.displayName || user?.login || "学生").trim() || "学生";
   const classroom = context.classroom;
-  const lesson =
-    String(classroom?.lessonTitle || classroom?.title || classroom?.id || "课堂")
-      .trim()
-      .replace(/[<>:"/\\|?*]+/gu, "-") || "课堂";
-  return join(app.getPath("documents"), "灵动ai创作", `${display}-${lesson}`);
+  const workspaceName = buildLingdongClassroomWorkspaceName({
+    ...(user?.displayName ? { displayName: user.displayName } : {}),
+    ...(user?.login ? { login: user.login } : {}),
+    ...(classroom?.lessonTitle ? { lessonTitle: classroom.lessonTitle } : {}),
+    ...(classroom?.title ? { classroomTitle: classroom.title } : {}),
+    classroomId: classroom?.id || "课堂",
+  });
+  return join(app.getPath("documents"), "灵动ai创作", workspaceName);
 }
 
 /** 备课工作区与任何一个学生课堂分开，避免老师的试做落到学生目录里。 */

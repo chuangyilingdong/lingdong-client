@@ -42,7 +42,7 @@ const fallbackWorkspaceDir = join(
   process.env.USERPROFILE || "",
   "Documents",
   "灵动ai创作",
-  "联调学生-联调测试课堂",
+  "联调学生-联调测试课堂-classroom-e2e",
 );
 const fallbackPreexisting = await stat(fallbackWorkspaceDir).catch(() => null);
 
@@ -98,7 +98,11 @@ try {
         url.includes("灵动ai创作"),
         `平台没给 workspacePath 时应落到本机回退目录：${url.slice(0, 300)}`,
       );
-      // 回退目录用学生+课时命名，这里核对确实创建出来了，随后清理本次测试产生的目录。
+      assert.ok(
+        url.includes("classroom-e2e"),
+        `回退工作区必须包含课堂 id，避免同一课时跨课堂复用：${url.slice(0, 300)}`,
+      );
+      // 回退目录按学生 + 课时 + 课堂 id 命名，这里核对确实创建出来了，随后清理本次测试产生的目录。
       const info = await stat(fallbackWorkspaceDir).catch(() => null);
       assert.ok(info?.isDirectory(), `回退工作区未创建：${fallbackWorkspaceDir}`);
       // 只有本次运行前不存在、由本场景新建的目录才清理。

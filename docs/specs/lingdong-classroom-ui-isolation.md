@@ -73,3 +73,24 @@ Windows 客户端迁移到 ZCode 底座后，生产运行时仍使用 `ZCode` �
 2. `primaryWindowCoordinator.canCreateWindow` 必须在 `isLingdongPlatformGateLoginPending()` 为真时阻塞，并只聚焦登录窗；`app.activate`、Dock、托盘和其他入口共享同一边界，不得各自判断。
 3. 登录成功后 `handleLogin` 写入 `activeState`，主窗口创建闸立即放行；随后仍由既有 `app-ready` 路径创建主窗口，此时 `ZCODE_LINGDONG_WORKSPACE_PATH` 已由当前 `client-context` 注入。
 4. 回归测试必须覆盖“登录门等待时 activate 不创建窗口，登录门完成后允许创建窗口”。
+
+## 2026-11-03 每场课堂使用独立学生工作区
+
+现场问题：同一学生重复上同一课时时，旧课堂任务仍出现在新课堂项目列表中。原因是生产
+`client-context` 不下发 `workspacePath`，客户端回退目录只包含“学生 + 课时”，同一课时的
+不同 `classroom.id` 会复用同一个物理目录和其中的 ZCode 历史。
+
+规则：
+
+1. 学生课堂回退目录必须包含当前 `classroom.id`，即使学生、课时标题完全相同。
+2. 同一 `classroom.id` 重新登录/重连时继续使用原目录，保留本场课堂内已有任务。
+3. 新的 `classroom.id` 必须得到新的物理工作区目录；不得导入或展示旧课堂任务。
+4. 平台显式下发 `workspacePath` 时，该路径仍由平台负责保证会话隔离；当前生产不下发，
+   客户端走带课堂 id 的本地回退目录。
+5. 备课模式目录规则不变，仍与学生课堂目录隔离。
+
+验收：
+
+- 同一学生连续两场使用同一课时、不同 classroom id 时，解析出的 workspacePath 不同。
+- 新课堂首次打开时项目任务列表为空。
+- 同一 classroom id 重新进入时仍复用对应工作区。
