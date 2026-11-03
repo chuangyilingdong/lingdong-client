@@ -117,9 +117,13 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 - `cover`（可选 PNG base64 或平台已有文件引用）
 - `copyrightConfirmed`
 - `taskId`（可选 string，trim 后 ≤200；有当前 ZCode 任务时必带，草稿态不传）
+- `sessionId`（课后自动补交必填，值为刚刚结束的课堂 id）
+- `autoSubmit`（可选 boolean；true 表示老师结束课堂后的自动补交）
 
 平台按 `(conversation_id, client_task_id, entry_file)` 判重：同一任务同一入口覆盖并递增 round，
 不同任务同名入口为独立作品。提交响应顶层和 `works[]`、以及 `GET /student/works` 每条都必须回显 `taskId`。
+
+课后自动补交只接受 ENDED、仍在宽限期内的 VibeCoding 课堂；平台不复用手动作品、内容未变的自动作品不重复加轮次，并通过顶层 `autoSubmitted` / `autoSubmitSkipped` 与 `works[].autoSubmitted` 回显结果。自动作品落库 `auto_submitted=1`，平台将其视为已同意展示；审核通过后可发布到广场。手动提交仍要求 `copyrightConfirmed: true`。客户端流程见 `docs/specs/lingdong-classroom-auto-submit.md`。
 
 **客户端会带上入口 HTML 引用的本地素材**（2026-09-30 起，见 `docs/specs/lingdong-work-asset-bundle.md`）：
 

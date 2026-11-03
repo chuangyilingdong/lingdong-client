@@ -10,70 +10,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { cn } from "@/components/lib/utils.js";
-import { normalizeLingdongEntryPaths, type ClassroomWorkspaceScan } from "@zcode/shared";
-import { PROTOCOL_V4_LIMITS } from "@zcode/shared/zcode-protocol-v4";
+import type { ClassroomWorkspaceScan } from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
 import { createAgentConversationTransport } from "@/v4/agentConversationTransport.js";
-import type { ConversationTransport } from "@/v4/transport.js";
+import { readLingdongTaskEntryPaths } from "@/lib/lingdongTaskEntries.js";
 
 // 平台单次提交的整单上限（base64 解码后合计，封面另算）：现在是 100MB。
 // 平台侧可调（RUNTIME_UPLOAD_MAX_BYTES），这里必须跟它保持一致。
 const MAX_SUBMIT_TOTAL_BYTES = 100 * 1024 * 1024;
-const MAX_TASK_ROW_PAGES = 50;
-
-// V4 任务的 ZCodeTaskSnapshot.fileChanges 为空；作品入口必须从 conversation 的
-// turnHeader + fileChanges 读取，否则会把“已写文件”的任务误判成没有可提交作品。
-async function readTaskEntryPaths(
-  transport: ConversationTransport,
-  taskId: string,
-  workspacePath: string,
-): Promise<string[]> {
-  const rows = new Map<
-    number,
-    Awaited<ReturnType<ConversationTransport["rowsRange"]>>["rows"][number]
-  >();
-  let beforeRowId: number | undefined;
-  let authority: { revision: number; logEpoch: string } | null = null;
-  for (let page = 0; page < MAX_TASK_ROW_PAGES; page += 1) {
-    const result = await transport.rowsRange({
-      sessionId: taskId,
-      limit: PROTOCOL_V4_LIMITS.rowsRangeMaxLimit,
-      ...(beforeRowId !== undefined ? { beforeRowId } : {}),
-    });
-    if (
-      authority &&
-      (authority.revision !== result.atRevision || authority.logEpoch !== result.atLogEpoch)
-    ) {
-      throw new Error("当前任务仍在更新，请稍后重新打开作品提交。");
-    }
-    authority ??= { revision: result.atRevision, logEpoch: result.atLogEpoch };
-    for (const row of result.rows) rows.set(row.rowId, row);
-    if (!result.hasMore || result.rows.length === 0) break;
-    const nextBeforeRowId = result.rows[0]?.rowId;
-    if (nextBeforeRowId === undefined || nextBeforeRowId === beforeRowId) break;
-    beforeRowId = nextBeforeRowId;
-  }
-
-  if (!authority) throw new Error("无法读取当前任务的对话投影。");
-  const filePaths: string[] = [];
-  for (const row of rows.values()) {
-    if (row.kind !== "turnHeader" || row.fileChanges?.state === "reverted") continue;
-    if (!row.fileChanges || row.fileChanges.files <= 0) continue;
-    if (!row.entityId) continue;
-    const result = await transport.fileChanges({
-      sessionId: taskId,
-      target: { rowId: row.rowId, entityId: row.entityId },
-      baseRevision: authority.revision,
-      baseLogEpoch: authority.logEpoch,
-    });
-    if (result.state === "reverted") continue;
-    for (const item of result.items) filePaths.push(item.path);
-  }
-  return normalizeLingdongEntryPaths(filePaths, workspacePath);
-}
-
 function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
@@ -124,7 +70,11 @@ export function LingdongWorksDialog({
           workspacePath,
           workspaceIdentity,
         });
-        nextTaskFilePaths = await readTaskEntryPaths(transport, activeTaskId, workspacePath);
+        nextTaskFilePaths = await readLingdongTaskEntryPaths(
+          transport,
+          activeTaskId,
+          workspacePath,
+        );
         scanOptions = {
           taskId: activeTaskId,
           taskFilePaths: nextTaskFilePaths,

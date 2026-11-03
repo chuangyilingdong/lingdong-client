@@ -5,18 +5,22 @@ import { resolve, join } from "node:path";
 const root = resolve(".tmp/windows-platform-e2e");
 
 /** 每个课堂有独立工作区，用于验证课堂隔离（工作区 + 额度桶都不能串）。 */
+// 只给当前 E2E 进程启动前留 1 秒，避免复用工作区时把上一轮任务误判为本课产出。
+const CLASSROOM_STARTED_AT = new Date(Date.now() - 1_000).toISOString();
 const CLASSROOMS = [
   {
     id: "classroom-e2e",
     lessonId: "lesson-e2e",
     title: "联调测试课堂",
     workspace: join(root, "classroom"),
+    startedAt: CLASSROOM_STARTED_AT,
   },
   {
     id: "classroom-e2e-b",
     lessonId: "lesson-e2e-b",
     title: "联调测试课堂 B",
     workspace: join(root, "classroom-b"),
+    startedAt: CLASSROOM_STARTED_AT,
   },
 ];
 // 1x1 PNG：用来验证「入口 HTML 引用的本地素材要一起提交」。
@@ -79,6 +83,8 @@ let activeClassroom = CLASSROOMS[0];
 const prepContexts = [];
 const requests = [];
 const works = [];
+const workSubmissions = [];
+let classroomEndedAt = null;
 let used = 0;
 let quotaLimit = 10;
 // 更新联动测试注入：manifest 指向的安装包字节由 /__test/update 提供。
@@ -105,7 +111,6 @@ let toolRound = 0;
 let historyTruncation = { dropped: 0 };
 const origin = "http://127.0.0.1:19090";
 const fakeKey = "mock-runtime-key";
-const classroom = { id: "classroom-e2e", lessonId: "lesson-e2e", title: "联调测试课堂" };
 const json = (res, status, value) => {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(value));
@@ -210,7 +215,12 @@ function context(sessionId) {
   }
   activeClassroom = selected;
   return {
-    classroom: { id: selected.id, lessonId: selected.lessonId, title: selected.title },
+    classroom: {
+      id: selected.id,
+      lessonId: selected.lessonId,
+      title: selected.title,
+      startedAt: selected.startedAt,
+    },
     classrooms: available.map(publicOf),
     reason: null,
     gateway: { baseUrl: `${origin}/gateway/v1`, key: fakeKey },
@@ -249,6 +259,7 @@ const server = http.createServer(async (req, res) => {
       const data = await body(req);
       classroomMode = data.mode === "none" || data.mode === "canvas" ? data.mode : "active";
       activeClassroomCount = data.count === 2 ? 2 : 1;
+      classroomEndedAt = classroomMode === "active" ? null : Date.now();
       return json(res, 200, {
         classroomMode,
         activeClassroomCount,
@@ -286,6 +297,8 @@ const server = http.createServer(async (req, res) => {
         requests,
         prepContexts,
         works,
+        workSubmissions,
+        classroomEndedAt,
         used,
         revision,
         updateDownloads,
@@ -323,8 +336,29 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === "/api/student/runtime/submit-upload" && req.method === "POST") {
       const data = await body(req);
-      if (!data.copyrightConfirmed)
+      const autoSubmit = data.autoSubmit === true;
+      const sessionId =
+        typeof data.sessionId === "string" ? data.sessionId.trim() : activeClassroom.id;
+      workSubmissions.push({
+        ...data,
+        files: Array.isArray(data.files)
+          ? data.files.map((file) => ({ name: file?.name, binary: !!file?.binary }))
+          : [],
+        at: Date.now(),
+      });
+      if (autoSubmit) {
+        if (!sessionId) return fail(res, 400, "AUTO_SUBMIT_SESSION_REQUIRED", "缺少课堂 id");
+        if (
+          classroomMode !== "none" ||
+          classroomEndedAt === null ||
+          Date.now() - classroomEndedAt > 10 * 60 * 1000 ||
+          sessionId !== activeClassroom.id
+        ) {
+          return fail(res, 403, "AUTO_SUBMIT_WINDOW_CLOSED", "课堂自动提交窗口已关闭");
+        }
+      } else if (!data.copyrightConfirmed) {
         return fail(res, 400, "WORK_COPYRIGHT_CONFIRMATION_REQUIRED", "请先确认作品为本人原创");
+      }
       // 平台侧逐段校验资源名，不合规整单 400、不静默改名；mock 复刻这条规则，
       // 客户端一旦回退成「扁平文件名」或被素材引用带出非法名，E2E 会直接红。
       for (const file of data.files ?? []) {
@@ -334,26 +368,49 @@ const server = http.createServer(async (req, res) => {
       }
       if (typeof data.taskId === "string" && data.taskId.trim().length > 200)
         return fail(res, 400, "INVALID_TASK_ID", "taskId 过长");
-      works.push({
+      const existing =
+        autoSubmit && typeof data.taskId === "string"
+          ? works.find(
+              (item) =>
+                item.classSessionId === sessionId &&
+                item.taskId === data.taskId.trim() &&
+                item.entryFile === data.name,
+            )
+          : null;
+      if (existing) {
+        return ok(res, {
+          id: existing.id,
+          autoSubmitted: false,
+          autoSubmitSkipped: true,
+          warnings: [],
+          works: [existing],
+        });
+      }
+      const work = {
         id: "work-" + (works.length + 1),
         name: data.name,
         entryFile: data.name,
-        classSessionId: activeClassroom.id,
+        classSessionId: sessionId,
         source: "VIBECODING",
         submittedAt: new Date().toISOString(),
         title: data.title,
+        autoSubmitted: autoSubmit,
+        copyrightConfirmed: autoSubmit ? false : data.copyrightConfirmed === true,
         ...(typeof data.taskId === "string" && data.taskId.trim()
           ? { taskId: data.taskId.trim() }
           : {}),
         files: data.files?.map((f) => ({ name: f.name, binary: !!f.binary })),
         cover: !!data.cover,
-      });
+      };
+      works.push(work);
       return ok(res, {
         ok: true,
+        id: work.id,
+        autoSubmitted: autoSubmit,
         warnings: [],
         missing: [],
         // 新版平台：提交响应直接回 works（形状同 GET /student/works 条目）
-        ...(submitIncludesWorks ? { works: [works.at(-1)] } : {}),
+        ...(submitIncludesWorks ? { works: [work] } : {}),
       });
     }
     if (pathname === "/downloads/manifest.json") {

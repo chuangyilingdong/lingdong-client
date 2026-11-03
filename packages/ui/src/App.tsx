@@ -62,6 +62,7 @@ import {
 import { useTaskSidePaneMemoryBridge } from "@/app-shell/useTaskSidePaneMemoryBridge.js";
 import { resolveAppWorkspaceRpcTarget } from "@/app-shell/workspaceRpcTarget.js";
 import { useWorkspaceServicesResolution } from "@/hooks/useWorkspaceServices.js";
+import { useLingdongClassroomAutoSubmit } from "@/hooks/useLingdongClassroomAutoSubmit.js";
 import { useWorkspaceTerminalTaskNotifications } from "@/hooks/useTaskNotifications.js";
 import { useOffPeakTaskNotifications } from "@/hooks/useOffPeakTaskNotifications.js";
 import type { AppProps, WorkspaceMainView } from "@/app-shell/types.js";
@@ -190,6 +191,11 @@ export function App({
     workspaceIdentity,
     workspaceRpcTarget.remoteTarget,
   );
+  useLingdongClassroomAutoSubmit({
+    services,
+    workspacePath: workspaceAbsPath,
+    ...(workspaceIdentity ? { workspaceIdentity } : {}),
+  });
   const workspaceReadOnly = useTabStore((state) =>
     isWorkspaceReadOnly(state, workspaceAbsPath, workspaceIdentity),
   );

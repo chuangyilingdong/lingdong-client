@@ -52,6 +52,8 @@ import type {
   ClassroomWorkspaceScan,
   ClassroomWorkspaceScanOptions,
   ClassroomWorkSubmission,
+  ClassroomEndedAutoSubmitCompletion,
+  ClassroomEndedAutoSubmitRequest,
 } from "@zcode/shared";
 
 /**
@@ -76,6 +78,11 @@ declare global {
       listWorks(): Promise<ClassroomWorksList>;
       scanWorkspaceFiles(options?: ClassroomWorkspaceScanOptions): Promise<ClassroomWorkspaceScan>;
       submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
+      onClassroomEnded(listener: (request: ClassroomEndedAutoSubmitRequest) => void): () => void;
+      claimClassroomEndedAutoSubmit(requestId: string, accept: boolean): Promise<boolean>;
+      completeClassroomEndedAutoSubmit(
+        completion: ClassroomEndedAutoSubmitCompletion,
+      ): Promise<void>;
       logout(): Promise<void>;
     };
     zcode: {

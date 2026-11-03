@@ -548,7 +548,11 @@ export interface ClassroomQuota {
 /** Main 下发到 renderer 的课堂只读快照。 */
 export interface ClassroomPlatformSnapshot {
   readonly user?: ClassroomPlatformUser | null;
-  readonly classroom?: { readonly id?: string; readonly title?: string } | null;
+  readonly classroom?: {
+    readonly id?: string;
+    readonly title?: string;
+    readonly startedAt?: string;
+  } | null;
   readonly models?: readonly ClassroomPlatformModel[];
   readonly defaultModel?: string | null;
   readonly presets?: readonly ClassroomPreset[];
@@ -621,20 +625,61 @@ export interface ClassroomWorkItem {
 }
 
 export interface ClassroomWorkSubmission {
-  /** 用户必须显式确认后才能为 true；UI 不得默认置真。 */
+  /** 用户必须显式确认后才能为 true；UI 不得默认置真。自动补交固定为 false。 */
   readonly copyrightConfirmed: boolean;
   readonly items: readonly ClassroomWorkItem[];
   /** 当前 ZCode taskId；草稿态不传。 */
   readonly taskId?: string;
   /** 当前任务标题，作为平台作品默认标题；空值由宿主回退到入口名。 */
   readonly taskTitle?: string;
+  /** 刚结束的课堂 id；仅课后自动补交发送。 */
+  readonly sessionId?: string;
+  /** true = 课后自动补交；手动提交不发送。 */
+  readonly autoSubmit?: boolean;
+}
+
+/** Main 路由给 Renderer 的课堂结束自动补交请求。 */
+export interface ClassroomEndedAutoSubmitRequest {
+  readonly requestId: string;
+  readonly sessionId: string;
+  readonly workspacePath: string;
+  readonly workspaceIdentity: string;
+  /** 课堂开始时间；平台未提供时是客户端首次看到该课堂的时间。 */
+  readonly startedAtMs: number;
+  /** 客户端检测到课堂结束的时间。 */
+  readonly detectedAtMs: number;
+  /** 本次自动补交必须停止的本地截止时间。 */
+  readonly deadlineAtMs: number;
+}
+
+export type ClassroomAutoSubmitStopReason =
+  | "window-closed"
+  | "wrong-classroom"
+  | "session-required"
+  | "deadline"
+  | "aborted";
+
+/** Renderer 完成（或无法认领）课堂结束自动补交后的回执。 */
+export interface ClassroomEndedAutoSubmitCompletion {
+  readonly requestId: string;
+  readonly submitted: number;
+  readonly skipped: number;
+  readonly failed: number;
+  readonly stoppedReason?: ClassroomAutoSubmitStopReason;
+  readonly message?: string;
 }
 
 export interface ClassroomSubmitResult {
   readonly ok?: boolean;
   readonly message?: string;
+  /** 平台或宿主错误码；自动补交依靠它执行停止策略。 */
+  readonly code?: string;
+  /** 平台 HTTP 状态；宿主本地校验失败时缺省。 */
+  readonly status?: number;
   /** 平台回显的提交任务 id；老平台缺省。 */
   readonly taskId?: string;
+  readonly autoSubmitted?: boolean;
+  readonly autoSubmitSkipped?: boolean;
   readonly warnings?: readonly unknown[];
   readonly missing?: readonly unknown[];
   readonly works?: readonly unknown[];
@@ -664,6 +709,12 @@ export interface IClassroomPlatformService {
   submitWork(payload: ClassroomWorkSubmission): Promise<ClassroomSubmitResult>;
   /** 查询历史作品，用于提交后回显 */
   listWorks(): Promise<ClassroomWorksList>;
+  /** 订阅 Main 检测到的课堂结束自动补交请求；桌面宿主才有。 */
+  onClassroomEnded(listener: (request: ClassroomEndedAutoSubmitRequest) => void): () => void;
+  /** 多窗口竞争中认领本次请求；只有第一个匹配窗口会得到 true。 */
+  claimClassroomEndedAutoSubmit(requestId: string, accept: boolean): Promise<boolean>;
+  /** 报告自动补交完成，Main 收到后才退出课堂。 */
+  completeClassroomEndedAutoSubmit(completion: ClassroomEndedAutoSubmitCompletion): Promise<void>;
   /** 退出平台登录：注销 token 并回到登录门（宿主负责清理会话与重启） */
   logout(): Promise<void>;
 }

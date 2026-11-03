@@ -1,6 +1,6 @@
 /* eslint-disable max-lines -- 平台登录、课堂上下文、作品提交与封面采集共享 Main 单一所有者；迁移阶段保持边界收口。 */
 import { app, BrowserWindow, ipcMain } from "electron";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -16,6 +16,8 @@ import {
   LINGDONG_MAX_TASK_ID_LENGTH,
   LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS,
   toLingdongWorkspaceRelativePath,
+  type ClassroomEndedAutoSubmitCompletion,
+  type ClassroomEndedAutoSubmitRequest,
   type ClassroomWorkspaceScanOptions,
   type ClassroomWorkspaceSubmitPreview,
 } from "@zcode/shared";
@@ -64,6 +66,18 @@ type LingdongContext = {
   } | null;
 };
 type LingdongSession = { readonly token: string; readonly user?: LingdongUser };
+type CachedClassroomSession = Readonly<{ id: string; startedAtMs: number }>;
+
+type PendingClassroomAutoSubmit = {
+  readonly request: ClassroomEndedAutoSubmitRequest;
+  readonly expectedWindowIds: Set<number>;
+  readonly respondedWindowIds: Set<number>;
+  claimedWindowId: number | null;
+  settled: boolean;
+  deadlineTimer?: NodeJS.Timeout;
+  readonly resolve: (completion: ClassroomEndedAutoSubmitCompletion) => void;
+};
+
 export type LingdongPlatformState = Readonly<{
   session: LingdongSession;
   context: LingdongContext;
@@ -95,7 +109,10 @@ const PLATFORM_SYSTEM_PROMPT_MAX_BYTES = 32 * 1024;
 const syncedPlatformSystemPrompt = new Map<string, string>();
 let classroomPollTimer: NodeJS.Timeout | null = null;
 let classroomExitInFlight = false;
+let cachedClassroomSession: CachedClassroomSession | null = null;
+let pendingClassroomAutoSubmit: PendingClassroomAutoSubmit | null = null;
 let lastRuntimeKeyRefreshAt = 0;
+const AUTO_SUBMIT_WINDOW_MS = 10 * 60 * 1000;
 
 /** 深链 `lingdong://open?prep=1&lesson=<id>` 的落点；null 表示回到学生路径。 */
 export function setLingdongPrepLessonId(lessonId: string | null): void {
@@ -132,6 +149,28 @@ function describePlatformNetworkError(error: unknown): string {
     : "无法连接灵动ai平台，请检查网络后重试。";
 }
 
+class PlatformRequestError extends Error {
+  readonly status?: number;
+  readonly code?: string;
+
+  constructor(message: string, options: { status?: number; code?: string } = {}) {
+    super(message);
+    this.name = "PlatformRequestError";
+    this.status = options.status;
+    this.code = options.code;
+  }
+}
+
+function platformErrorCode(value: unknown): string | undefined {
+  if (!record<unknown>(value)) return undefined;
+  if (typeof value.code === "string" && value.code.trim()) return value.code.trim();
+  if (record<unknown>(value.error) && typeof value.error.code === "string") {
+    const code = value.error.code.trim();
+    return code || undefined;
+  }
+  return undefined;
+}
+
 function messageFrom(value: unknown, fallback: string): string {
   if (record<unknown>(value)) {
     const error = value.error;
@@ -148,7 +187,12 @@ async function apiRequest(path: string, init: RequestInit = {}, token?: string):
   const headers = new Headers(init.headers);
   headers.set("content-type", "application/json");
   if (token) headers.set("authorization", `Bearer ${token}`);
-  const response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  } catch (error) {
+    throw new PlatformRequestError(describePlatformNetworkError(error), { code: "NETWORK_ERROR" });
+  }
   const text = await response.text();
   let payload: unknown = null;
   try {
@@ -157,9 +201,174 @@ async function apiRequest(path: string, init: RequestInit = {}, token?: string):
     payload = { message: text };
   }
   if (!response.ok) {
-    throw new Error(messageFrom(payload, `平台请求失败（HTTP ${response.status}）`));
+    const code = platformErrorCode(payload);
+    throw new PlatformRequestError(
+      messageFrom(payload, `平台请求失败（HTTP ${response.status}）`),
+      {
+        status: response.status,
+        ...(code ? { code } : {}),
+      },
+    );
   }
   return payload;
+}
+
+function serializePlatformOperationError(error: unknown): {
+  ok: false;
+  message: string;
+  code?: string;
+  status?: number;
+} {
+  if (error instanceof PlatformRequestError) {
+    return {
+      ok: false,
+      message: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.status ? { status: error.status } : {}),
+    };
+  }
+  return { ok: false, message: error instanceof Error ? error.message : String(error) };
+}
+
+function parseClassroomStartedAtMs(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+/** 同一课堂保留首次观察时间；后续平台下发权威 startedAt 时只向前校正。 */
+function rememberActiveClassroom(context: LingdongContext): CachedClassroomSession | null {
+  const id = context.classroom?.id?.trim();
+  if (!id) return cachedClassroomSession;
+  const suppliedStartedAtMs = parseClassroomStartedAtMs(context.classroom?.startedAt);
+  const previous = cachedClassroomSession?.id === id ? cachedClassroomSession : null;
+  cachedClassroomSession = {
+    id,
+    startedAtMs: suppliedStartedAtMs ?? previous?.startedAtMs ?? Date.now(),
+  };
+  return cachedClassroomSession;
+}
+
+function settleClassroomAutoSubmit(completion: ClassroomEndedAutoSubmitCompletion): void {
+  const pending = pendingClassroomAutoSubmit;
+  if (!pending || pending.settled || completion.requestId !== pending.request.requestId) return;
+  pending.settled = true;
+  if (pending.deadlineTimer) clearTimeout(pending.deadlineTimer);
+  pendingClassroomAutoSubmit = null;
+  pending.resolve(completion);
+}
+
+function settleUnclaimedClassroomAutoSubmit(pending: PendingClassroomAutoSubmit): void {
+  if (pending.settled || pending.claimedWindowId !== null) return;
+  const allWindowsResponded = [...pending.expectedWindowIds].every((id) =>
+    pending.respondedWindowIds.has(id),
+  );
+  if (!allWindowsResponded) return;
+  settleClassroomAutoSubmit({
+    requestId: pending.request.requestId,
+    submitted: 0,
+    skipped: 0,
+    failed: 0,
+  });
+}
+
+/**
+ * 课堂结束后先让 Renderer 用本地 task/fileChanges 补交，再执行既有退出流程。
+ * Main 不枚举任务；它只把缓存下来的课堂身份和带截止时间的请求路由给窗口。
+ */
+async function requestClassroomAutoSubmit(
+  classroom: CachedClassroomSession,
+): Promise<ClassroomEndedAutoSubmitCompletion> {
+  const state = activeState;
+  if (!state) {
+    return { requestId: "unavailable", submitted: 0, skipped: 0, failed: 0 };
+  }
+  const request: ClassroomEndedAutoSubmitRequest = {
+    requestId: randomUUID(),
+    sessionId: classroom.id,
+    workspacePath: state.workspacePath,
+    workspaceIdentity: state.workspaceIdentity,
+    startedAtMs: classroom.startedAtMs,
+    detectedAtMs: Date.now(),
+    deadlineAtMs: Date.now() + AUTO_SUBMIT_WINDOW_MS,
+  };
+  const windows = BrowserWindow.getAllWindows().filter(
+    (window) => window !== gateWindow && !window.isDestroyed() && !window.webContents.isDestroyed(),
+  );
+  if (windows.length === 0) {
+    return { requestId: request.requestId, submitted: 0, skipped: 0, failed: 0 };
+  }
+
+  return await new Promise<ClassroomEndedAutoSubmitCompletion>((resolve) => {
+    const pending: PendingClassroomAutoSubmit = {
+      request,
+      expectedWindowIds: new Set(),
+      respondedWindowIds: new Set(),
+      claimedWindowId: null,
+      settled: false,
+      resolve,
+    };
+    pendingClassroomAutoSubmit = pending;
+    for (const window of windows) {
+      const windowId = window.webContents.id;
+      try {
+        window.webContents.send("lingdong:classroom-ended", request);
+        pending.expectedWindowIds.add(windowId);
+        window.webContents.once("destroyed", () => {
+          if (pending.settled) return;
+          pending.respondedWindowIds.add(windowId);
+          if (pending.claimedWindowId === windowId) {
+            settleClassroomAutoSubmit({
+              requestId: request.requestId,
+              submitted: 0,
+              skipped: 0,
+              failed: 1,
+              message: "自动补交窗口已关闭。",
+            });
+            return;
+          }
+          settleUnclaimedClassroomAutoSubmit(pending);
+        });
+      } catch {
+        // 窗口在枚举与发送之间销毁时跳过；若全部失败则按无窗口处理。
+      }
+    }
+    if (pending.expectedWindowIds.size === 0) {
+      settleClassroomAutoSubmit({
+        requestId: request.requestId,
+        submitted: 0,
+        skipped: 0,
+        failed: 0,
+      });
+      return;
+    }
+    pending.deadlineTimer = setTimeout(() => {
+      settleClassroomAutoSubmit({
+        requestId: request.requestId,
+        submitted: 0,
+        skipped: 0,
+        failed: 1,
+        stoppedReason: "deadline",
+        message: "课后自动补交已超过 10 分钟。",
+      });
+    }, AUTO_SUBMIT_WINDOW_MS + 1_000);
+    pending.deadlineTimer.unref?.();
+  });
+}
+
+async function handleClassroomEndDetected(classroom: CachedClassroomSession): Promise<void> {
+  if (classroomExitInFlight) return;
+  classroomExitInFlight = true;
+  stopClassroomPolling();
+  const completion = await requestClassroomAutoSubmit(classroom);
+  console.info(
+    `[lingdong-gate] classroom auto-submit session=${classroom.id} submitted=${completion.submitted} skipped=${completion.skipped} failed=${completion.failed}${completion.stoppedReason ? ` stopped=${completion.stoppedReason}` : ""}`,
+  );
+  if (!activeState) return;
+  await writeGateNotice("课堂已结束，请重新登录。").catch(() => {});
+  await logoutFromPlatform();
+  app.relaunch();
+  app.quit();
 }
 
 /**
@@ -169,25 +378,31 @@ async function apiRequest(path: string, init: RequestInit = {}, token?: string):
 async function checkClassroomStillActive(): Promise<void> {
   const state = activeState;
   if (!state || isPrepContext(state.context) || classroomExitInFlight) return;
+  let context: LingdongContext;
   try {
-    const context = unwrap<LingdongContext>(
+    context = unwrap<LingdongContext>(
       await apiRequest("/api/student/runtime/client-context", {}, state.session.token),
     );
-    if (context.classroom) {
+  } catch {
+    // 网络抖动与临时服务错误不触发退出；下一轮仍会继续检查。
+    return;
+  }
+
+  const previous = cachedClassroomSession;
+  const nextId = context.classroom?.id?.trim();
+  if (nextId) {
+    if (!previous || previous.id === nextId) {
+      rememberActiveClassroom(context);
       await refreshRuntimeKeyIfNeeded(context);
       return;
     }
-    if (!CLASSROOM_END_REASONS.has(String(context.reason || ""))) return;
-    classroomExitInFlight = true;
-    await writeGateNotice("课堂已结束，请重新登录。").catch(() => {});
-    await logoutFromPlatform();
-    app.relaunch();
-    app.quit();
-  } catch {
-    // 网络抖动与临时服务错误不触发退出；下一轮仍会继续检查。
+    await handleClassroomEndDetected(previous);
+    return;
   }
+  if (!CLASSROOM_END_REASONS.has(String(context.reason || ""))) return;
+  if (!previous) return;
+  await handleClassroomEndDetected(previous);
 }
-
 function startClassroomPolling(): void {
   stopClassroomPolling();
   if (!activeState || isPrepContext(activeState.context)) return;
@@ -483,6 +698,7 @@ async function handleLogin(
       quotaFilePath,
       systemPromptFilePath,
     };
+    if (!prep) rememberActiveClassroom(context);
     process.env.LINGDONG_API_BASE = API_BASE;
     const webSearch = prep
       ? { url: "", enabled: false }
@@ -596,7 +812,7 @@ async function scanLingdongWorkspaceFiles(input?: unknown): Promise<unknown> {
         submissionRecord ??
         (await findLatestPlatformSubmission(
           plan.entryName,
-          activeState.context.classroom?.id ?? null,
+          cachedClassroomSession?.id ?? activeState.context.classroom?.id ?? null,
           taskId,
         ));
       const latestMtimeMs = Math.max(0, ...plan.files.map((file) => file.mtimeMs));
@@ -975,27 +1191,34 @@ async function findLatestPlatformSubmission(
   taskId: string | null,
 ): Promise<PlatformSubmissionRecord | null> {
   try {
-    const payload = unwrap<Record<string, unknown>>(
-      await callPlatform("/api/student/works?page=1&limit=50"),
-    );
-    const items = Array.isArray(payload.items)
-      ? payload.items
-      : Array.isArray(payload.works)
-        ? payload.works
-        : [];
+    const limit = 50;
     let latest: PlatformSubmissionRecord | null = null;
-    for (const item of items) {
-      if (!record<unknown>(item)) continue;
-      if (String(item.source || "").toUpperCase() !== "VIBECODING") continue;
-      if (String(item.entryFile || "") !== entryName) continue;
-      if (taskId && String(item.taskId || "").trim() !== taskId) continue;
-      if (classroomId && String(item.classSessionId || "") !== classroomId) continue;
-      const submittedAt = String(item.submittedAt || "");
-      const submittedAtMs = Date.parse(submittedAt);
-      if (!Number.isFinite(submittedAtMs)) continue;
-      if (!latest || submittedAtMs > latest.submittedAtMs) {
-        latest = { submittedAt, submittedAtMs };
+    // 宽限期内判断平台是否已有同 taskId + entryFile 的作品；分页读到列表尾，避免历史作品
+    // 超过一页时重复上传。
+    for (let page = 1; page <= 20; page += 1) {
+      const payload = unwrap<Record<string, unknown>>(
+        await callPlatform(`/api/student/works?page=${page}&limit=${limit}`),
+      );
+      const items = Array.isArray(payload.items)
+        ? payload.items
+        : Array.isArray(payload.works)
+          ? payload.works
+          : [];
+      for (const item of items) {
+        if (!record<unknown>(item)) continue;
+        if (String(item.source || "").toUpperCase() !== "VIBECODING") continue;
+        if (String(item.entryFile || "") !== entryName) continue;
+        if (taskId && String(item.taskId || "").trim() !== taskId) continue;
+        if (classroomId && String(item.classSessionId || "") !== classroomId) continue;
+        const submittedAt = String(item.submittedAt || "");
+        const submittedAtMs = Date.parse(submittedAt);
+        if (!Number.isFinite(submittedAtMs)) continue;
+        if (!latest || submittedAtMs > latest.submittedAtMs) {
+          latest = { submittedAt, submittedAtMs };
+        }
       }
+      const total = Number(payload.total);
+      if (items.length < limit || (Number.isFinite(total) && page * limit >= total)) break;
     }
     return latest;
   } catch {
@@ -1193,6 +1416,14 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   const input = record<unknown>(payload) ? payload : {};
   const taskId = normalizeSubmissionTaskId(input.taskId);
   const taskTitle = typeof input.taskTitle === "string" ? input.taskTitle.trim() : "";
+  const autoSubmit = input.autoSubmit === true;
+  const sessionId = typeof input.sessionId === "string" ? input.sessionId.trim() : "";
+  if (autoSubmit && !sessionId) {
+    throw new PlatformRequestError("课后自动补交缺少课堂 id。", {
+      status: 400,
+      code: "AUTO_SUBMIT_SESSION_REQUIRED",
+    });
+  }
   const rawItems = Array.isArray(input.items) ? (input.items as SubmitItem[]) : [];
   const prepared = await prepareSubmitFiles(rawItems);
   const preparedMs = Date.now() - submitStartedAt;
@@ -1205,14 +1436,19 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   const body: Record<string, unknown> = {
     name: entry.name,
     title: taskTitle || entry.name,
-    classroomId: activeState.context.classroom?.id,
-    workspaceIdentity: activeState.workspaceIdentity,
-    copyrightConfirmed: input.copyrightConfirmed === true,
+    copyrightConfirmed: autoSubmit ? false : input.copyrightConfirmed === true,
     files,
     ...(taskId ? { taskId } : {}),
+    ...(autoSubmit
+      ? { sessionId, autoSubmit: true }
+      : {
+          classroomId: activeState.context.classroom?.id,
+          workspaceIdentity: activeState.workspaceIdentity,
+        }),
   };
   const coverStartedAt = Date.now();
-  const cover = await captureHtmlCover(prepared.entryPath);
+  // 自动补交受 10 分钟窗口约束，优先把时间留给正文和素材；封面仍由手动提交链路采集。
+  const cover = autoSubmit ? undefined : await captureHtmlCover(prepared.entryPath);
   const coverMs = Date.now() - coverStartedAt;
   if (cover) body.cover = cover;
   if (Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_WORK_REQUEST_BYTES) {
@@ -1230,20 +1466,27 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   // 平台 submit-upload 已返回分阶段 timings；没有这行日志时只能看到“处理中”，
   // 没法判断时间花在客户端封面采集、请求传输还是平台落盘/入库。
   console.info(
-    `[lingdong-gate] submit-upload done preparedMs=${preparedMs} coverMs=${coverMs} uploadMs=${uploadMs} totalMs=${Date.now() - submitStartedAt} timings=${JSON.stringify(record<unknown>(result) ? (result.timings ?? null) : null)}`,
+    `[lingdong-gate] submit-upload done mode=${autoSubmit ? "auto" : "manual"} preparedMs=${preparedMs} coverMs=${coverMs} uploadMs=${uploadMs} totalMs=${Date.now() - submitStartedAt} timings=${JSON.stringify(record<unknown>(result) ? (result.timings ?? null) : null)}`,
   );
-  try {
-    await writeSubmissionRecord(activeState.workspaceIdentity, taskId, prepared.entryRelativePath, {
-      revision: prepared.revision,
-      submittedAt: new Date().toISOString(),
-    });
-  } catch (error) {
-    // 平台提交已经成功；本地去重状态写失败只影响按钮置灰，不能把成功改判成失败。
-    console.warn("[lingdong-gate] 记录作品提交指纹失败，下次扫描可能允许重复提交。", error);
+  const autoSubmitSkipped = record<unknown>(result) && result.autoSubmitSkipped === true;
+  if (!autoSubmitSkipped) {
+    try {
+      await writeSubmissionRecord(
+        activeState.workspaceIdentity,
+        taskId,
+        prepared.entryRelativePath,
+        {
+          revision: prepared.revision,
+          submittedAt: new Date().toISOString(),
+        },
+      );
+    } catch (error) {
+      // 平台提交已经成功；本地去重状态写失败只影响按钮置灰，不能把成功改判成失败。
+      console.warn("[lingdong-gate] 记录作品提交指纹失败，下次扫描可能允许重复提交。", error);
+    }
   }
   return result;
 }
-
 async function callPlatform(path: string, init: RequestInit = {}): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   return apiRequest(path, init, activeState.session.token);
@@ -1305,9 +1548,57 @@ function registerPlatformHandlers(): void {
   ipcMain.handle("lingdong:platform-scan-workspace", (_event, input: unknown) =>
     scanLingdongWorkspaceFiles(input),
   );
-  ipcMain.handle("lingdong:platform-submit-work", (_event, payload: unknown) =>
-    submitWorkFromDesktop(payload),
-  );
+  ipcMain.handle("lingdong:platform-submit-work", async (_event, payload: unknown) => {
+    try {
+      return await submitWorkFromDesktop(payload);
+    } catch (error) {
+      return serializePlatformOperationError(error);
+    }
+  });
+  ipcMain.handle("lingdong:classroom-ended-claim", (event, input: unknown) => {
+    const pending = pendingClassroomAutoSubmit;
+    if (!pending || !record<unknown>(input)) return false;
+    const requestId = typeof input.requestId === "string" ? input.requestId : "";
+    if (requestId !== pending.request.requestId) return false;
+    if (!pending.expectedWindowIds.has(event.sender.id)) return false;
+    pending.respondedWindowIds.add(event.sender.id);
+    if (input.accept !== true) {
+      settleUnclaimedClassroomAutoSubmit(pending);
+      return false;
+    }
+    if (pending.claimedWindowId !== null) return false;
+    pending.claimedWindowId = event.sender.id;
+    return true;
+  });
+  ipcMain.handle("lingdong:classroom-ended-complete", (event, input: unknown) => {
+    const pending = pendingClassroomAutoSubmit;
+    if (!pending || !record<unknown>(input)) return;
+    if (
+      pending.claimedWindowId !== event.sender.id ||
+      input.requestId !== pending.request.requestId
+    ) {
+      return;
+    }
+    const numberField = (value: unknown) =>
+      typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0;
+    const stoppedReason = input.stoppedReason;
+    settleClassroomAutoSubmit({
+      requestId: pending.request.requestId,
+      submitted: numberField(input.submitted),
+      skipped: numberField(input.skipped),
+      failed: numberField(input.failed),
+      ...(typeof stoppedReason === "string"
+        ? {
+            stoppedReason: stoppedReason as NonNullable<
+              ClassroomEndedAutoSubmitCompletion["stoppedReason"]
+            >,
+          }
+        : {}),
+      ...(typeof input.message === "string" && input.message.trim()
+        ? { message: input.message.trim() }
+        : {}),
+    });
+  });
   ipcMain.handle("lingdong:platform-logout", async () => {
     await logoutFromPlatform();
     app.relaunch();
@@ -1332,6 +1623,7 @@ function registerPlatformHandlers(): void {
     process.env.PLATFORM_SEARCH_URL = webSearch.url;
     process.env.PLATFORM_WEB_SEARCH_ENABLED = webSearch.enabled ? "1" : "0";
     activeState = { ...activeState, context };
+    rememberActiveClassroom(context);
     lastRuntimeKeyRefreshAt = Date.now();
     return getLingdongPlatformSnapshot();
   });
@@ -1450,9 +1742,22 @@ export function finishLingdongPlatformGate(): void {
 
 export async function disposeLingdongPlatformGate(): Promise<void> {
   stopClassroomPolling();
+  const pending = pendingClassroomAutoSubmit;
+  if (pending) {
+    settleClassroomAutoSubmit({
+      requestId: pending.request.requestId,
+      submitted: 0,
+      skipped: 0,
+      failed: 0,
+      stoppedReason: "aborted",
+      message: "课堂自动补交流程已中止。",
+    });
+  }
   const binding = providerBinding;
   providerBinding = null;
   await binding?.dispose();
   activeState = null;
+  cachedClassroomSession = null;
+  classroomExitInFlight = false;
   lastRuntimeKeyRefreshAt = 0;
 }

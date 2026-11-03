@@ -9,7 +9,7 @@
 - message `课堂已经结束，创作环境已关闭`
 
 客户端当前只把这条错误作为普通任务提示展示，学生仍停留在已经失效的创作环境里。
-目标行为是：客户端主动识别课堂结束，清理本课堂运行态，并返回登录门。
+目标行为是：客户端主动识别课堂结束，先尝试为本节课任务自动补交作品，再清理本课堂运行态并返回登录门。自动补交细节见 `docs/specs/lingdong-classroom-auto-submit.md`。
 
 ## 产品规则
 
@@ -18,10 +18,12 @@
 3. 只有下述成功响应才判定课堂结束：
    - 当前不是备课模式；
    - HTTP 200 且 `classroom` 为空；
-   - 原因是 `NOT_STARTED` / `CLASSROOM_NOT_AVAILABLE` / `CLASSROOM_MODE_MISMATCH`。
+   - 原因是 `NOT_STARTED` / `CLASSROOM_NOT_AVAILABLE` / `CLASSROOM_MODE_MISMATCH`；
+   - 或 HTTP 200 返回了另一个 classroom id，缓存中的当前课堂已不再出现。
 4. 网络失败、401、临时 5xx 不触发退出，避免网络抖动把学生踢回登录页。
 5. 判定课堂结束后：
-   - 写入一次性登录提示 `课堂已结束，请重新登录。`；
+   - 先按 `lingdong-classroom-auto-submit.md` 使用缓存课堂 id 触发一次 Renderer 自动补交；
+   - 自动补交完成、无窗口可处理或超过 10 分钟宽限后，写入一次性登录提示 `课堂已结束，请重新登录。`；
    - 清理平台 Provider 与会话状态；
    - `app.relaunch()` 后退出当前进程；
    - 新进程显示登录门，并在登录卡片里展示这次提示。
@@ -40,6 +42,7 @@
 学生已进入课堂
   → Main 定时 GET client-context
   → classroom:null 且原因属于课堂结束
+  → 发送 classroom-ended 自动补交请求并等待 Renderer 回执
   → 写一次性 gate notice
   → 清理 Provider / activeState
   → app.relaunch()

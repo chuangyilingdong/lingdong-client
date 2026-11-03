@@ -21,6 +21,11 @@ export function createDesktopPlatform(options: {
         scanWorkspaceFiles: (options) => window.lingdong!.scanWorkspaceFiles(options),
         submitWork: (payload) => window.lingdong!.submitWork(payload),
         listWorks: () => window.lingdong!.listWorks(),
+        onClassroomEnded: (listener) => window.lingdong!.onClassroomEnded(listener),
+        claimClassroomEndedAutoSubmit: (requestId, accept) =>
+          window.lingdong!.claimClassroomEndedAutoSubmit(requestId, accept),
+        completeClassroomEndedAutoSubmit: (completion) =>
+          window.lingdong!.completeClassroomEndedAutoSubmit(completion),
         logout: () => window.lingdong!.logout(),
       }
     : undefined;

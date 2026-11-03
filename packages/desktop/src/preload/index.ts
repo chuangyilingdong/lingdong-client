@@ -57,6 +57,8 @@ import type {
   RendererActionTraceBatchV1,
   RendererActionTraceConfigV1,
   RendererHeapSample,
+  ClassroomEndedAutoSubmitCompletion,
+  ClassroomEndedAutoSubmitRequest,
   PostUpdateReleaseNotesPayload,
   RemoteSessionClosedEvent,
   BotRemoteWorkspaceReconnectedEvent,
@@ -106,6 +108,8 @@ let latestPostUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 const pendingOpenWorkspacePaths: string[] = [];
 const shareImportCallbacks = new Set<(payload: { shareCode: string }) => void>();
 const pendingShareImports: { shareCode: string }[] = [];
+const classroomEndedCallbacks = new Set<(request: ClassroomEndedAutoSubmitRequest) => void>();
+let latestClassroomEndedRequest: ClassroomEndedAutoSubmitRequest | null = null;
 const MACOS_WINDOW_CONTROLS_BASE_LEFT_PADDING_PX = 96;
 const WINDOWS_WINDOW_CONTROLS_BASE_RIGHT_PADDING_PX = 136;
 const WINDOWS_TITLE_BAR_HEIGHT_PX = 48;
@@ -246,6 +250,26 @@ window.addEventListener("DOMContentLoaded", updateRendererProcessTitle, {
  */
 contextBridge.exposeInMainWorld("lingdong", {
   getPlatformSnapshot: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-snapshot"),
+  onClassroomEnded: (
+    listener: (request: ClassroomEndedAutoSubmitRequest) => void,
+  ): (() => void) => {
+    classroomEndedCallbacks.add(listener);
+    if (latestClassroomEndedRequest) {
+      queueMicrotask(() => {
+        if (classroomEndedCallbacks.has(listener) && latestClassroomEndedRequest) {
+          listener(latestClassroomEndedRequest);
+        }
+      });
+    }
+    return () => {
+      classroomEndedCallbacks.delete(listener);
+    };
+  },
+  claimClassroomEndedAutoSubmit: (requestId: string, accept: boolean): Promise<boolean> =>
+    ipcRenderer.invoke("lingdong:classroom-ended-claim", { requestId, accept }),
+  completeClassroomEndedAutoSubmit: (
+    completion: ClassroomEndedAutoSubmitCompletion,
+  ): Promise<void> => ipcRenderer.invoke("lingdong:classroom-ended-complete", completion),
   refreshPlatformContext: (): Promise<unknown> =>
     ipcRenderer.invoke("lingdong:platform-refresh-context"),
   listWorks: (): Promise<unknown> => ipcRenderer.invoke("lingdong:platform-works"),
@@ -898,6 +922,11 @@ window.addEventListener("message", (event) => {
     attachmentId: payload.attachmentId,
     sessionId: payload.sessionId,
   });
+});
+
+ipcRenderer.on("lingdong:classroom-ended", (_event, request: ClassroomEndedAutoSubmitRequest) => {
+  latestClassroomEndedRequest = request;
+  for (const callback of classroomEndedCallbacks) callback(request);
 });
 
 ipcRenderer.on(PlatformChannels.TaskNotificationSound, () => {
