@@ -1,0 +1,69 @@
+name: Export release artifacts 0.2.18
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - run_id: "41626112409"
+            artifact: lingdong-client-0.2.18-mac-arm64
+            target_branch: ci/export-0.2.18-mac-arm64
+            file_name: lingdong-client-0.2.18-mac-arm64.dmg
+          - run_id: "41626112440"
+            artifact: lingdong-client-0.2.18-mac-x64
+            target_branch: ci/export-0.2.18-mac-x64
+            file_name: lingdong-client-0.2.18-mac-x64.dmg
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
+      SOURCE_RUN_ID: ${{ matrix.run_id }}
+      SOURCE_ARTIFACT: ${{ matrix.artifact }}
+      TARGET_BRANCH: ${{ matrix.target_branch }}
+      FILE_NAME: ${{ matrix.file_name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and export artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          curl -fsSL --retry 3 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H 'Accept: application/vnd.github+json' "${api}/actions/runs/${SOURCE_RUN_ID}/artifacts" > artifacts.json
+          artifact_id=$(jq -r --arg name "$SOURCE_ARTIFACT" '.artifacts[] | select(.name == $name) | .id' artifacts.json | head -n 1)
+          test -n "$artifact_id" && test "$artifact_id" != "null"
+          curl -fsSL --retry 3 -H "Authorization: Bearer ${GITHUB_TOKEN}" -H 'Accept: application/vnd.github+json' "${api}/actions/artifacts/${artifact_id}/zip" -o artifact.zip
+          rm -rf downloaded chunks
+          mkdir -p downloaded chunks
+          unzip -q artifact.zip -d downloaded
+          dmg=$(find downloaded -type f -name '*.dmg' -print -quit)
+          test -n "$dmg"
+          cp "$dmg" "chunks/${FILE_NAME}"
+          split -b 64m "chunks/${FILE_NAME}" chunks/dmg-part-
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git checkout -B "$TARGET_BRANCH"
+          rm -rf ".ci/$TARGET_BRANCH"
+          mkdir -p ".ci/$TARGET_BRANCH"
+          printf 'started source_run=%s source_sha=%s artifact=%s\n' "$SOURCE_RUN_ID" "$GITHUB_SHA" "$artifact_id" > ".ci/$TARGET_BRANCH/status.txt"
+          git add -f ".ci/$TARGET_BRANCH/status.txt"
+          git commit -m "ci: start export $SOURCE_RUN_ID"
+          git push --force origin HEAD:"$TARGET_BRANCH"
+          for part in chunks/dmg-part-*; do
+            cp "$part" ".ci/$TARGET_BRANCH/"
+            git add -f ".ci/$TARGET_BRANCH/$(basename "$part")"
+            git commit -m "ci: add $(basename "$part") $SOURCE_RUN_ID"
+            git push origin HEAD:"$TARGET_BRANCH"
+          done
+          printf 'complete source_run=%s source_sha=%s artifact=%s\n' "$SOURCE_RUN_ID" "$GITHUB_SHA" "$artifact_id" > ".ci/$TARGET_BRANCH/status.txt"
+          git add -f ".ci/$TARGET_BRANCH/status.txt"
+          git commit -m "ci: complete export $SOURCE_RUN_ID"
+          git push origin HEAD:"$TARGET_BRANCH"
