@@ -63,6 +63,7 @@ export async function executeToolCallsForModelStep(
     // 让 executor 强制走 registry miss，而不是把 storage 占位值当成真实工具。
     name: tc.name,
     input: tc.input,
+    ...(tc.modelCallWrapper ? { modelCallWrapper: tc.modelCallWrapper } : {}),
   }));
   const streamedResultsById = new Map(
     (options.streamedToolResults ?? []).map((entry) => [entry.toolCallId, entry]),
@@ -251,6 +252,7 @@ export async function executeToolCallsForModelStep(
       result.toolName,
       modelContentForToolResult(result),
       isErrorForToolResult(result),
+      result.modelCallWrapper,
     ),
   );
   commitTurnRequestEntries(this, state.turnRequestState, batchToolResultEntries);
@@ -320,7 +322,12 @@ export async function executeToolCallsForModelStep(
           callID: result.toolCallId,
           declarationIndex: persisted.declarationIndex,
           tool: projectedResultToolName.toolName,
-          metadata: projectedResultToolName.metadata,
+          metadata: {
+            ...projectedResultToolName.metadata,
+            ...(result.modelCallWrapper
+              ? { modelCallWrapper: result.modelCallWrapper }
+              : {}),
+          },
           state: result.success
             ? {
                 status: "completed",
@@ -331,6 +338,9 @@ export async function executeToolCallsForModelStep(
                   ...completedToolPartMetadata(result),
                   ...(mediaPersistence
                     ? { modelContentLayout: mediaPersistence.modelContentLayout }
+                    : {}),
+                  ...(result.modelCallWrapper
+                    ? { modelCallWrapper: result.modelCallWrapper }
                     : {}),
                 },
                 time: {
@@ -351,6 +361,9 @@ export async function executeToolCallsForModelStep(
                   ),
                   ...(typeof result.modelContent === "string"
                     ? { modelContent: result.modelContent }
+                    : {}),
+                  ...(result.modelCallWrapper
+                    ? { modelCallWrapper: result.modelCallWrapper }
                     : {}),
                 },
                 time: {

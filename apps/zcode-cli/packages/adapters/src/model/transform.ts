@@ -105,7 +105,7 @@ export function toAiSdkMessages(
             { context: { role: message.role } },
           );
         }
-        const toolName = projectToolNameForProvider(message.toolName, options);
+        const toolName = message.modelCallWrapper ?? projectToolNameForProvider(message.toolName, options);
         // 含 video 的 tool result 在所有 provider kind 上都强制 textify + 后置投影：
         // AI SDK tool result part 无 video 变体，anthropic 内嵌路径同样会丢失视频内容。
         const messageTextifyToolResult =
@@ -266,14 +266,15 @@ function toAiSdkAssistantContent(
   options: AiSdkAssistantTransformOptions,
 ): AiSdkAssistantContent {
   const toolCallParts =
-    toolCalls?.map(
-      (toolCall): AiSdkAssistantContentPart => ({
+    toolCalls?.map((toolCall): AiSdkAssistantContentPart => {
+      const projectName = projectToolNameForProvider(toolCall.name, options);
+      return {
         type: "tool-call",
         toolCallId: toolCall.id,
-        toolName: projectToolNameForProvider(toolCall.name, options),
-        input: toolCall.input,
-      }),
-    ) ?? [];
+        toolName: toolCall.modelCallWrapper ?? projectName,
+        input: toolCall.modelCallWrapper ? { name: toolCall.name, input: toolCall.input } : toolCall.input,
+      };
+    }) ?? [];
 
   if (typeof content === "string" && toolCallParts.length === 0) {
     return content;

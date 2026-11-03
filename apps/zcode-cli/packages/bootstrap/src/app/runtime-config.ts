@@ -30,6 +30,9 @@ interface ResolvedInitialRegistrySelection extends ResolvedRegistrySelection {
   readonly selectionOptions?: ModelSelectionOptions;
 }
 
+function resolveToolSearchMode(env: NodeJS.ProcessEnv | undefined): "off" | "local" {
+  return env?.ZCODE_TOOL_SEARCH?.trim().toLowerCase() === "off" ? "off" : "local";
+}
 export function resolveAppRuntimeConfig(input: {
   cliStorageRoot: string;
   configResult: ConfigResult;
@@ -117,6 +120,7 @@ export function resolveAppRuntimeConfig(input: {
     options.runtimeConfig?.subagents?.builtInModelSelectionOverrides ?? {};
   const runtimeConfig: AgentRuntimeConfig = {
     ...options.runtimeConfig,
+    toolSearch: options.runtimeConfig?.toolSearch ?? { mode: resolveToolSearchMode(options.env) },
     bashTimeoutPolicy:
       options.runtimeConfig?.bashTimeoutPolicy ??
       resolveBashTimeoutPolicy(options.env ?? process.env),

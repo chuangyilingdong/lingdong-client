@@ -57,6 +57,7 @@ import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-
 import type { RuntimeTelemetryFacade } from "../telemetry/runtime-telemetry.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 import type { WebSearchPort } from "../tool/web-search-port.js";
+import type { ToolSearchRuntimeState } from "../tool/search/types.js";
 
 export interface AgentRuntimeInternal
   extends AgentRuntimeCoreMethods, AgentRuntimeTurnMethods, AgentRuntimeHookMethods {
@@ -87,6 +88,7 @@ export interface AgentRuntimeInternal
   sessionModelSelection: ModelSelection | undefined;
   messageHistory: MessageHistory;
   readFileState: ReadFileStateMap;
+  toolSearchState?: ToolSearchRuntimeState;
   cachedTools: ModelToolContract[] | null;
   contextBuilder: ContextBuilder | null;
   contextInitialized: boolean;

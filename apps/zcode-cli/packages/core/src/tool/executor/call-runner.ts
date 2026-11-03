@@ -61,6 +61,7 @@ import { validateInitialModelToolInput, validateInput, validateOutput } from "./
 import type { ExecutableToolCall } from "../types.js";
 import { resolveEmbeddedSearchBranchCapability } from "../../embedded-search/capability.js";
 import { resolveToolEntryModelContract } from "../model-contract.js";
+import { resolveDeferredToolCall } from "../search/deferred-resolution.js";
 
 export async function executeToolCall(
   deps: ToolExecutorDeps,
@@ -68,6 +69,7 @@ export async function executeToolCall(
   toolCall: ExecutableToolCall,
   options?: ToolExecuteOptions,
 ): Promise<ToolExecutionResult> {
+  toolCall = resolveDeferredToolCall(toolCall, options?.toolSearch, deps.registry).call;
   const totalStartedAt = Date.now();
   const entry = isEmptyToolName(toolCall.name) ? undefined : deps.registry.get(toolCall.name);
   const canonicalToolCall =
@@ -516,6 +518,9 @@ async function executeToolCallImpl(
       {
         toolCallId: canonicalToolCall.id,
         toolName: canonicalToolCall.name,
+        ...(canonicalToolCall.modelCallWrapper
+          ? { modelCallWrapper: canonicalToolCall.modelCallWrapper }
+          : {}),
         success: true,
         output,
         display,

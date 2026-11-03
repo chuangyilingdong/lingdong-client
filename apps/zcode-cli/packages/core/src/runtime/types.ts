@@ -109,6 +109,7 @@ import type { AgentProfile } from "../subagent/profile.js";
 import type { RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import type { BashTimeoutPolicy } from "../tool/bash-timeout-policy.js";
 import type { WebSearchPort } from "../tool/web-search-port.js";
+import type { ToolSearchConfig } from "../tool/search/types.js";
 import type { PresentationSurface } from "../context/types.js";
 import type { WorkspaceHookRuntimeAdmissionPort } from "../hooks/workspace-hook-runtime-admission.js";
 
@@ -195,6 +196,7 @@ export interface AgentRuntimeConfig {
   embeddedSearchBackend?: EmbeddedSearchBackend;
   /** 根 Session runtime 创建时固定；false 只关闭 Bash 的 bfs/ugrep prelude。 */
   nativeSearchEnhancementsEnabled?: boolean;
+  toolSearch?: ToolSearchConfig;
   memory?: MemoryRuntimeConfig;
   /** 历史恢复允许未绑定；只有完整选择才能创建本轮执行 Model。 */
   modelSelection?: ModelSelection;

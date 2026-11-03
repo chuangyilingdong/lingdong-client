@@ -580,6 +580,8 @@ function isToolPart(part: MessagePart): part is ToolPart {
 }
 
 function providerToolNameFromPart(part: ToolPart): string {
+  const modelCallWrapper = part.metadata?.modelCallWrapper;
+  if (typeof modelCallWrapper === "string") return modelCallWrapper;
   const providerToolName = part.metadata?.providerToolName;
   // 空字符串在 cold hydration 中曾只能依赖 non-empty ToolPart.tool；
   // 必须按字段存在性恢复原值，不能用 truthy 判断把空名重新覆盖成占位值。

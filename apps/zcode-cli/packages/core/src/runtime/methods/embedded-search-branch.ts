@@ -25,7 +25,7 @@ export function refreshBranchAwareBuiltInTools(runtime: AgentRuntimeInternal): v
     runtime.registry.unregister("Grep");
   }
 
-  registerBuiltInTools(runtime.registry, {
+  runtime.toolSearchState = registerBuiltInTools(runtime.registry, {
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
     includeAgent: Boolean(runtime.subagentPort),
@@ -41,6 +41,7 @@ export function refreshBranchAwareBuiltInTools(runtime: AgentRuntimeInternal): v
     allowedTools: resolveBuiltInToolAllowlist(runtime.config),
     disallowedTools: runtime.config.toolDisallowlist,
     silentDuplicateWarnings: true,
+    toolSearchConfig: runtime.config.toolSearch,
   });
   runtime.cachedTools = null;
 }

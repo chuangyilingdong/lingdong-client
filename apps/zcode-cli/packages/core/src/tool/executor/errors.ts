@@ -39,6 +39,7 @@ export function createErrorResult(
   return {
     toolCallId: toolCall.id,
     toolName: toolCall.name,
+    ...(toolCall.modelCallWrapper ? { modelCallWrapper: toolCall.modelCallWrapper } : {}),
     success: false,
     output: null,
     error: {

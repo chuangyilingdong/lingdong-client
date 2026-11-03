@@ -36,6 +36,7 @@ import type {
 } from "@zcode/contracts";
 import type { HookRunner } from "../../hooks/index.js";
 import type { PermissionService } from "../../permission/service.js";
+import type { ToolSearchRuntimeState } from "../search/types.js";
 import type { RuntimeTaskRegistry } from "../../runtime-task/registry.js";
 import type { ToolRegistry } from "../registry.js";
 import type { ToolSchedule } from "../scheduler.js";
@@ -174,6 +175,7 @@ export interface ToolExecuteOptions {
   traceContext?: TraceContext;
   subagentModelOverride?: SubagentRunOptions["modelOverride"];
   model?: Model;
+  toolSearch?: ToolSearchRuntimeState;
 }
 
 export interface ToolBatchExecuteOptions extends ToolExecuteOptions {

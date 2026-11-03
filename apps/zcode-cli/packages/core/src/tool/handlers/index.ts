@@ -70,6 +70,10 @@ import { getWorkflowRunToolEntry } from "./get-workflow-run.js";
 import { resumeWorkflowRunToolEntry } from "./resume-workflow-run.js";
 // import { workflowToolEntry } from "./workflow.js";
 import { createToolRuleNameSet } from "../tool-visibility.js";
+import { DEFERRED_TOOL_CALL_TOOL_NAME, TOOL_SEARCH_TOOL_NAME, type ToolSearchConfig, type ToolSearchRuntimeState } from "../search/types.js";
+import type { ToolRegistry } from "../registry.js";
+import { createDeferredToolCallToolEntry, createToolSearchToolEntry } from "../search/tool-entries.js";
+import { createToolSearchRuntimeState } from "../search/tool-search-state.js";
 
 // direct 分支保留 Glob/Grep 工具实现；embedded search 分支由 registerBuiltInTools
 // 统一隐藏 Glob/Grep，并通过 Bash find/grep 接管搜索。
@@ -191,14 +195,13 @@ interface RegisterBuiltInToolsOptions {
   allowedTools?: readonly string[];
   disallowedTools?: readonly string[];
   silentDuplicateWarnings?: boolean;
+  toolSearchConfig?: ToolSearchConfig;
 }
 
 export function registerBuiltInTools(
-  registry: {
-    register(entry: ToolEntry, options?: { silentDuplicateWarning?: boolean }): void;
-  },
+  registry: Pick<ToolRegistry, "register" | "unregister" | "list" | "get">,
   options: RegisterBuiltInToolsOptions = {},
-): void {
+): ToolSearchRuntimeState | undefined {
   const allowedTools = options.allowedTools ? new Set(options.allowedTools) : undefined;
   const disallowedTools = createToolRuleNameSet(options.disallowedTools);
 
@@ -267,6 +270,26 @@ export function registerBuiltInTools(
       silentDuplicateWarning: options.silentDuplicateWarnings,
     });
   }
+
+  registry.unregister(TOOL_SEARCH_TOOL_NAME);
+  registry.unregister(DEFERRED_TOOL_CALL_TOOL_NAME);
+  if (!options.toolSearchConfig) return undefined;
+  const controlsDisabled =
+    disallowedTools?.has(TOOL_SEARCH_TOOL_NAME) === true ||
+    disallowedTools?.has(DEFERRED_TOOL_CALL_TOOL_NAME) === true;
+  const toolSearchState = createToolSearchRuntimeState(
+    registry,
+    controlsDisabled ? { ...options.toolSearchConfig, mode: "off" } : options.toolSearchConfig,
+  );
+  if (!toolSearchState.enabled) return toolSearchState;
+
+  registry.register(createToolSearchToolEntry(toolSearchState), {
+    silentDuplicateWarning: true,
+  });
+  registry.register(createDeferredToolCallToolEntry(toolSearchState), {
+    silentDuplicateWarning: true,
+  });
+  return toolSearchState;
 }
 
 function resolveBuiltInToolEntryForBranch(

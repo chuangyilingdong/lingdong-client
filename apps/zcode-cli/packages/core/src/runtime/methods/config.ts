@@ -31,6 +31,7 @@ import { orderProviderVisibleToolContracts } from "../../tool/provider-visible-o
 import { projectToolModelContract } from "../../tool/model-contract.js";
 import { rebuildContextPrefix } from "./context-refresh.js";
 import { filterEmbeddedSearchRuntimeVisibleTools } from "./embedded-search-branch.js";
+import { filterToolContractsForToolSearch } from "../../tool/search/tool-search-state.js";
 import {
   getSessionShellSelection as readSessionShellSelection,
   initializeSessionShellEnvironmentIfNeeded as initializeSessionShellEnvironment,
@@ -137,13 +138,14 @@ export function getTools(this: AgentRuntimeInternal, model?: Model): ModelToolCo
   if (this.cachedTools === null) {
     this.cachedTools = filterRuntimeVisibleTools.call(this, this.registry.toContracts());
   }
-  return this.cachedTools
-    .filter((tool) => tool.name !== "WebSearch" || shouldExposeWebSearch.call(this, model))
-    .map((tool) =>
-      projectToolModelContract(tool, this.registry.get(tool.name), {
-        model,
-      }),
-    );
+  const visibleTools = this.cachedTools.filter(
+    (tool) => tool.name !== "WebSearch" || shouldExposeWebSearch.call(this, model),
+  );
+  return filterToolContractsForToolSearch(visibleTools, this.toolSearchState).map((tool) =>
+    projectToolModelContract(tool, this.registry.get(tool.name), {
+      model,
+    }),
+  );
 }
 
 export function invalidateToolCache(this: AgentRuntimeInternal): void {

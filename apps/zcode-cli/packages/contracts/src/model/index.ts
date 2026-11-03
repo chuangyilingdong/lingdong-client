@@ -324,6 +324,8 @@ export interface ModelToolCall {
   name: string;
   input: unknown;
   providerExecuted?: boolean;
+  /** Model-visible wrapper when execution rewrites a logical call to another tool. */
+  modelCallWrapper?: string;
 }
 
 export type AttachmentKind = "local_file" | "resource" | "inline";
@@ -409,6 +411,7 @@ export interface ModelInputMessage {
   isError?: boolean;
   providerId?: ModelProviderId;
   modelId?: ModelId;
+  modelCallWrapper?: string;
 }
 
 export function modelMessageContentToText(content: ModelMessageContent): string {

@@ -119,6 +119,7 @@ import type {
   WorkspaceForkResult,
 } from "./types.js";
 import type { AgentRuntimeInternal } from "./internal.js";
+import type { ToolSearchRuntimeState } from "../tool/search/types.js";
 import { InMemoryRuntimeTaskRegistry, type RuntimeTaskRegistry } from "../runtime-task/registry.js";
 import type { ChildClientPortsContext, ClientFacingPorts } from "./helpers/child-client-ports.js";
 import type { ProjectMemoryExtractionScheduler } from "./helpers/project-memory-extraction.js";
@@ -158,6 +159,7 @@ export class AgentRuntime {
   private sessionModelSelection: ModelSelection | undefined;
   private messageHistory: MessageHistory;
   private readFileState: ReadFileStateMap;
+  private toolSearchState?: ToolSearchRuntimeState;
   private cachedTools: ModelToolContract[] | null = null;
   private contextBuilder: ContextBuilder | null = null;
   private contextInitialized = false;

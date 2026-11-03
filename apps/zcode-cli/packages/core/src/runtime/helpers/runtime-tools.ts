@@ -47,7 +47,7 @@ export function initializeRuntimeTooling(
 function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentRuntimeDeps): void {
   const nodeReplEnabled = runtime.config.runtimeFeatures?.nodeRepl === true;
   const browserUseEnabled = resolveRuntimeBrowserUseEnabled(runtime, deps);
-  registerBuiltInTools(runtime.registry, {
+  runtime.toolSearchState = registerBuiltInTools(runtime.registry, {
     bashTimeoutPolicy: runtime.config.bashTimeoutPolicy,
     includeSkill: Boolean(runtime.skillPort),
     includeAgent: Boolean(runtime.subagentPort),
@@ -83,6 +83,7 @@ function registerRuntimeBuiltInTools(runtime: AgentRuntimeInternal, deps: AgentR
     // ResumeWorkflowRun 已免确认但因「child 内不得再编排」仍在列）在 helper
     // 里与 turn 级名单合并，见 tool-allowlist.ts 的根因注释。
     disallowedTools: resolveRuntimeDisallowedTools(runtime.config),
+    toolSearchConfig: runtime.config.toolSearch,
   });
 }
 

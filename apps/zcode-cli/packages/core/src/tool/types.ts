@@ -413,6 +413,7 @@ export interface ToolExecutionModelContext {
 export interface ToolExecutionResult {
   toolCallId: string;
   toolName: string;
+  modelCallWrapper?: string;
   success: boolean;
   output: unknown;
   turnControl?: ToolExecutionTurnControl;
@@ -476,6 +477,7 @@ export interface ExecutableToolCall {
   id: string;
   name: string;
   input: unknown;
+  modelCallWrapper?: string;
 }
 
 // -----------------------------------------------

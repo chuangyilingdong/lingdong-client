@@ -19,6 +19,7 @@ export interface ToolCallInput {
   id: string;
   name: string;
   input: unknown;
+  modelCallWrapper?: string;
 }
 
 export type ReasoningContentInput = ModelReasoningContentBlock;
@@ -33,6 +34,7 @@ export interface ModelInputMessage {
   isError?: boolean;
   providerId?: Model["providerId"];
   modelId?: Model["modelId"];
+  modelCallWrapper?: string;
 }
 
 export type RuntimeMessageSource =
@@ -105,6 +107,7 @@ export interface MessageHistory {
     content: ModelMessageContent,
     success: boolean,
     isError?: boolean,
+    modelCallWrapper?: string,
   ): void;
 
   // 借用当前权威 entries，只允许同步只读；跨异步边界时由调用方做数组浅快照。
@@ -198,6 +201,7 @@ export class MessageHistoryImpl implements MessageHistory {
           id: tc.id,
           name: tc.name,
           input: tc.input,
+          ...(tc.modelCallWrapper ? { modelCallWrapper: tc.modelCallWrapper } : {}),
         })),
         ...(model ? { providerId: model.providerId, modelId: model.modelId } : {}),
       },
@@ -212,8 +216,9 @@ export class MessageHistoryImpl implements MessageHistory {
     content: ModelMessageContent,
     success: boolean,
     isError = !success,
+    modelCallWrapper?: string,
   ): void {
-    this.entries.push(createRuntimeToolResultEntry(toolCallId, toolName, content, isError));
+    this.entries.push(createRuntimeToolResultEntry(toolCallId, toolName, content, isError, modelCallWrapper));
     this.cacheStats.totalMessages = this.entries.length;
   }
 
@@ -369,6 +374,7 @@ export function createRuntimeAssistantEntry(
         id: toolCall.id,
         name: toolCall.name,
         input: toolCall.input,
+        ...(toolCall.modelCallWrapper ? { modelCallWrapper: toolCall.modelCallWrapper } : {}),
       })),
       ...(model ? { providerId: model.providerId, modelId: model.modelId } : {}),
     },
@@ -381,6 +387,7 @@ export function createRuntimeToolResultEntry(
   toolName: string,
   content: ModelMessageContent,
   isError: boolean,
+  modelCallWrapper?: string,
 ): RuntimeMessageMessageEntry {
   return {
     message: {
@@ -389,6 +396,7 @@ export function createRuntimeToolResultEntry(
       toolCallId,
       toolName,
       isError,
+      ...(modelCallWrapper ? { modelCallWrapper } : {}),
     },
   };
 }
@@ -490,6 +498,7 @@ export function cloneModelInputMessage(message: ModelInputMessage): ModelInputMe
   // 空字符串是可恢复调用的 provider 原始名称，不能在 request-local clone 时按 falsy 丢失。
   if (message.toolName !== undefined) next.toolName = message.toolName;
   if (message.isError !== undefined) next.isError = message.isError;
+  if (message.modelCallWrapper !== undefined) next.modelCallWrapper = message.modelCallWrapper;
   if (message.providerId) next.providerId = message.providerId;
   if (message.modelId) next.modelId = message.modelId;
   return next;
