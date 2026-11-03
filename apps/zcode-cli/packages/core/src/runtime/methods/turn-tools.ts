@@ -242,6 +242,18 @@ export async function executeToolCallsForModelStep(
   const results = coreToolCalls
     .map((toolCall) => resultById.get(toolCall.id))
     .filter((result): result is ToolExecutionResult => result !== undefined);
+  // 修复原因：旧逻辑在异步保存每个结果后才逐项写入模型历史。中途 part/media/usage
+  // 保存失败时，后面的 sibling tool result 会缺失，下一次请求出现 tool_call 无结果。
+  // 先用同一批内容一次性建立完整模型历史，durable 持久化仍在下面逐项执行。
+  const batchToolResultEntries = results.map((result) =>
+    createRuntimeToolResultEntry(
+      result.toolCallId,
+      result.toolName,
+      modelContentForToolResult(result),
+      isErrorForToolResult(result),
+    ),
+  );
+  commitTurnRequestEntries(this, state.turnRequestState, batchToolResultEntries);
   for (const result of results) {
     recordBrowserTurnToolResult({
       output: result.output,
@@ -356,14 +368,6 @@ export async function executeToolCallsForModelStep(
       success: result.success,
       contentLength: content.length,
     });
-    commitTurnRequestEntries(this, state.turnRequestState, [
-      createRuntimeToolResultEntry(
-        result.toolCallId,
-        result.toolName,
-        modelContentForToolResult(result),
-        isError,
-      ),
-    ]);
     try {
       // checkpoint 是 tool result 闭合后的附加操作。Stop 若在这里
       // 触发，必须先继续提交所有 sibling tool results，不能提前进入 reminder flush。
