@@ -19,6 +19,11 @@ export const DEFAULT_TOOL_SEARCH_RESIDENT_TOOLS = [
   "TodoRead",
   "TodoWrite",
   "AskUserQuestion",
+  "Skill",
+  "EnterPlanMode",
+  "ExitPlanMode",
+  "WebSearch",
+  "WebFetch",
 ] as const;
 
 const DEFAULT_MIN_DEFERRED_TOOLS = 8;

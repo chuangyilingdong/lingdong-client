@@ -36,7 +36,19 @@ test("local tool search exposes resident and control tools but hides deferred to
   assert.ok(registry.has("DeferredToolCall"));
   assert.ok(state.getCatalog().some((entry) => entry.name === "CronCreate"));
   assert.ok(!state.getCatalog().some((entry) => entry.name === "Read"));
-  assert.ok(!state.getCatalog().some((entry) => entry.name === "AskUserQuestion"));
+  for (const residentName of [
+    "AskUserQuestion",
+    "Skill",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "WebSearch",
+    "WebFetch",
+  ]) {
+    assert.ok(
+      !state.getCatalog().some((entry) => entry.name === residentName),
+      "resident tool must not enter deferred catalog: " + residentName,
+    );
+  }
 
   const allContracts = registry.toContracts();
   const visible = filterToolContractsForToolSearch(allContracts, state);
@@ -47,7 +59,16 @@ test("local tool search exposes resident and control tools but hides deferred to
   assert.ok(names.has("ApplyPatch"));
   assert.ok(names.has("ToolSearch"));
   assert.ok(names.has("DeferredToolCall"));
-  assert.ok(names.has("AskUserQuestion"));
+  for (const residentName of [
+    "AskUserQuestion",
+    "Skill",
+    "EnterPlanMode",
+    "ExitPlanMode",
+    "WebSearch",
+    "WebFetch",
+  ]) {
+    assert.ok(names.has(residentName), "resident tool must be visible: " + residentName);
+  }
   assert.ok(!names.has("CronCreate"));
 });
 
@@ -82,16 +103,21 @@ test("provider request builder exposes only resident and control tool definition
       "Bash",
       "DeferredToolCall",
       "Edit",
+      "EnterPlanMode",
+      "ExitPlanMode",
       "Glob",
       "Grep",
       "Read",
+      "Skill",
+      "WebFetch",
+      "WebSearch",
       "TodoRead",
       "TodoWrite",
       "ToolSearch",
       "Write",
     ].sort(),
   );
-  assert.doesNotMatch(JSON.stringify(options.tools), /CronCreate|WebFetch/u);
+  assert.doesNotMatch(JSON.stringify(options.tools), /CronCreate/u);
 });
 
 test("subagent child runtime inherits the parent tool search config", async () => {
