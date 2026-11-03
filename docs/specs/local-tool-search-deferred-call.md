@@ -17,6 +17,7 @@
 - Tool Executor 拥有 `DeferredToolCall -> 实际工具` 的执行前解析权；解析必须发生在 permission、Hook 和 handler 之前。
 - Provider message projection 只负责 `modelCallWrapper` 的模型可见还原，不参与执行决策。
 - Agent Runtime 只在当前 session 内持有 ToolSearch 状态，不跨 session 共享可变 catalog。
+- subagent child runtime 必须继承父 session 的 `toolSearch` 配置；否则父会话显式关闭后，child 会重新启用 local 模式。
 
 ## 产品规则
 
@@ -43,6 +44,7 @@
 - 默认模式：`local`。
 - 环境变量 `ZCODE_TOOL_SEARCH=off` 可关闭；其他非法值回退默认 `local`。
 - 最小 deferred 工具数：`8`，低于该值不启用，避免小工具面增加一次额外搜索。
+- subagent child runtime 与父 session 使用同一模式和阈值；workflow child 继续通过配置展开继承。
 - 本次不增加 UI 设置，不改变平台协议。
 
 ## 事件顺序
@@ -82,4 +84,6 @@
 - `DeferredToolCall` 不能调用 resident、未知、自身或 provider-native 工具。
 - assistant tool call 与 tool result 在 Provider 请求中都显示为 `DeferredToolCall`。
 - 模式 off 时工具列表与当前行为完全一致。
+- Provider 实际请求体只包含 resident 和两个控制工具，不包含 deferred tool schema。
+- 打包态 E2E 能从 mock Provider 收到的请求体读取并校验工具面。
 - `pnpm typecheck`、定向测试和架构检查通过。

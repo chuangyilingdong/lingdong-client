@@ -279,6 +279,7 @@ export function createDefaultSubagentPort(
           toolset: builtInExplore ? "explore" : "main",
           toolAllowlist: childToolAllowlist,
           toolDisallowlist: this.config.toolDisallowlist,
+          toolSearch: this.config.toolSearch,
           embeddedSearchBackend: this.config.embeddedSearchBackend,
           nativeSearchEnhancementsEnabled: this.config.nativeSearchEnhancementsEnabled,
           subagents: {
