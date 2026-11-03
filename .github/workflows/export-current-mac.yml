@@ -1,4 +1,4 @@
-# Release trigger: macOS 0.2.12 three-platform release.
+# Release trigger: Lingdong 0.2.17 auto-submit release.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 
