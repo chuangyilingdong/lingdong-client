@@ -496,6 +496,7 @@ export const TID_WORKSPACE_PATH = "workspace-path";
 export const TID_WORKSPACE_MORE_BUTTON = "workspace-more-button";
 /** 右上角问号帮助菜单触发按钮 */
 export const TID_WORKSPACE_HELP_MENU_TRIGGER = "workspace-help-menu-trigger";
+export const TID_LINGDONG_WORKS_WORKSPACE_PATH = "lingdong-works-workspace-path";
 /** 问号帮助菜单里的「资源管理器」项（仅桌面端） */
 export const TID_WORKSPACE_HELP_MENU_RESOURCE_MANAGER = "workspace-help-menu-resource-manager";
 /** 侧边栏打开工作区文件树按钮（动态后缀为 workspacePath） */

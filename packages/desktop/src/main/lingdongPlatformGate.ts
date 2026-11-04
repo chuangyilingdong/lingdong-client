@@ -9,6 +9,7 @@ import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } 
 import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
 import { atomicWritePrivateTextFile } from "@zcode/shared/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
+import { logger } from "./logger.js";
 import { createLingdongProviderBinding } from "./lingdongProviderConfig.js";
 import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
 import { buildLingdongClassroomWorkspaceName } from "./lingdongClassroomWorkspace.js";
@@ -1654,7 +1655,15 @@ function registerPlatformHandlers(): void {
     try {
       return await submitWorkFromDesktop(payload);
     } catch (error) {
-      return serializePlatformOperationError(error);
+      const serialized = serializePlatformOperationError(error);
+      // 失败信息过去只返回 renderer；生产 renderer 日志关闭后，用户反馈里没有可诊断的错误码。
+      // 这里只记录服务端 message/code/status，不记录作品 payload、文件内容或平台凭据。
+      logger.warn("[lingdong-gate] submit work failed", {
+        message: serialized.message,
+        ...(serialized.code ? { code: serialized.code } : {}),
+        ...(serialized.status ? { status: serialized.status } : {}),
+      });
+      return serialized;
     }
   });
   ipcMain.handle("lingdong:classroom-ended-claim", (event, input: unknown) => {

@@ -96,9 +96,12 @@ try {
     .last()
     .waitFor({ timeout: 30_000 });
   await page.getByText("2/10", { exact: true }).waitFor({ timeout: 15_000 });
-  const livePreviewUrl = await page.evaluate(async (fileUrl) => {
-    return await window.lingdong.prepareWorkPreview({ fileUrl });
-  }, pathToFileURL(resolve(".tmp/windows-platform-e2e/classroom/index.html")).href);
+  const livePreviewUrl = await page.evaluate(
+    async (fileUrl) => {
+      return await window.lingdong.prepareWorkPreview({ fileUrl });
+    },
+    pathToFileURL(resolve(".tmp/windows-platform-e2e/classroom/index.html")).href,
+  );
   assert.ok(livePreviewUrl, "课堂内实时预览必须返回本地预览 URL");
   const livePreviewHtml = await (await fetch(livePreviewUrl)).text();
   assert.match(livePreviewHtml, /mock-works-llm-grant/u);
@@ -137,7 +140,9 @@ try {
   await presetsDialog.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
   await page.getByRole("button", { name: "课堂提示词预设", exact: true }).click();
   const reopenedPresetsDialog = page.getByRole("dialog");
-  await reopenedPresetsDialog.getByText("读取课堂文件", { exact: true }).waitFor({ timeout: 10_000 });
+  await reopenedPresetsDialog
+    .getByText("读取课堂文件", { exact: true })
+    .waitFor({ timeout: 10_000 });
   assert.equal(
     await reopenedPresetsDialog
       .getByRole("button", { name: /读取课堂文件/ })
@@ -151,6 +156,21 @@ try {
   await page.getByRole("button", { name: "提交课堂作品", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByText("本节课由平台提供模型", { exact: true }).waitFor({ timeout: 10_000 });
+  // 长工作区路径曾把 CSS Grid 的隐式列撑宽，导致整个内容区冲出弹窗。
+  const workspacePath = dialog.getByTestId("lingdong-works-workspace-path");
+  await workspacePath.evaluate((element) => {
+    element.textContent =
+      "C:\\Users\\student\\Documents\\灵动ai创作\\" +
+      "very-long-unbroken-workspace-path-".repeat(40);
+  });
+  const dialogWidthMetrics = await dialog.evaluate((element) => ({
+    clientWidth: element.clientWidth,
+    scrollWidth: element.scrollWidth,
+  }));
+  assert.ok(
+    dialogWidthMetrics.scrollWidth <= dialogWidthMetrics.clientWidth + 1,
+    `作品弹窗内容不得横向溢出：client=${dialogWidthMetrics.clientWidth}, scroll=${dialogWidthMetrics.scrollWidth}`,
+  );
   // 对话框只让学生选择一个主作品；引用素材必须由客户端顺着入口自动解析并只读展示。
   await dialog.getByText("任务 ·", { exact: false }).waitFor({ timeout: 10_000 });
   await dialog.getByText("index.html", { exact: true }).waitFor({ timeout: 10_000 });
@@ -159,7 +179,24 @@ try {
   await dialog.getByText("最终将提交 8 个文件", { exact: true }).waitFor({ timeout: 10_000 });
   await dialog.getByText(/总大小 \d+(?:\.\d+)? (?:B|KB|MB)/u).waitFor({ timeout: 10_000 });
   await dialog.getByRole("button", { name: "确认并提交主作品", exact: true }).click();
-  await dialog.getByText("作品已提交", { exact: false }).waitFor({ timeout: 20_000 });
+  const messageBox = dialog.getByText("作品已提交", { exact: false });
+  await messageBox.waitFor({ timeout: 20_000 });
+  const messageMetrics = await messageBox.evaluate((element) => {
+    element.textContent = "平台提交失败：".repeat(80) + "unbroken-error-token-".repeat(80);
+    const style = getComputedStyle(element);
+    return {
+      clientWidth: element.clientWidth,
+      scrollWidth: element.scrollWidth,
+      overflowY: style.overflowY,
+      overflowWrap: style.overflowWrap,
+    };
+  });
+  assert.ok(
+    messageMetrics.scrollWidth <= messageMetrics.clientWidth + 1,
+    `错误消息不得横向溢出：client=${messageMetrics.clientWidth}, scroll=${messageMetrics.scrollWidth}`,
+  );
+  assert.equal(messageMetrics.overflowY, "auto", "超长错误消息必须可纵向滚动");
+  assert.equal(messageMetrics.overflowWrap, "anywhere", "错误消息必须允许任意位置换行");
   const submittedButton = dialog.getByRole("button", { name: "已提交，无新产出", exact: true });
   await submittedButton.waitFor({ timeout: 10_000 });
   assert.equal(await submittedButton.isDisabled(), true, "没有新产出时提交按钮必须置灰");
@@ -167,10 +204,22 @@ try {
   await dialog.getByText("我的作品", { exact: true }).waitFor({ timeout: 10_000 });
   await dialog.getByRole("button", { name: "预览", exact: true }).first().click();
   const previewFrame = page.frameLocator("iframe[sandbox]").last();
-  await previewFrame
-    .getByText("MOCK_WORKS_LLM_OK", { exact: false })
-    .waitFor({ timeout: 20_000 });
+  await previewFrame.getByText("MOCK_WORKS_LLM_OK", { exact: false }).waitFor({ timeout: 20_000 });
   const previewDialog = page.getByRole("dialog").filter({ has: page.locator("iframe[sandbox]") });
+  const previewIframe = previewDialog.locator("iframe[sandbox]");
+  const [previewDialogBox, previewIframeBox] = await Promise.all([
+    previewDialog.boundingBox(),
+    previewIframe.boundingBox(),
+  ]);
+  assert.ok(previewDialogBox && previewIframeBox, "作品预览 iframe 必须有可见尺寸");
+  assert.ok(
+    previewIframeBox.width >= previewDialogBox.width - 64,
+    `作品预览 iframe 必须铺满弹窗宽度：dialog=${previewDialogBox.width}, iframe=${previewIframeBox.width}`,
+  );
+  assert.ok(
+    previewIframeBox.height >= previewDialogBox.height * 0.55,
+    `作品预览 iframe 必须占满可用高度：dialog=${previewDialogBox.height}, iframe=${previewIframeBox.height}`,
+  );
   await previewDialog.getByRole("button", { name: "关闭", exact: true }).click();
   await page.keyboard.press("Escape");
   await page
@@ -251,7 +300,10 @@ try {
   assert.ok(!submittedFiles.some((file) => file.name.includes("remote")), "外链素材不得被提交");
   // 再产出后按钮必须重新可用：改入口文件会让最终打包指纹变化。
   await page.keyboard.press("Escape");
-  await page.getByRole("dialog").waitFor({ state: "detached", timeout: 10_000 }).catch(() => {});
+  await page
+    .getByRole("dialog")
+    .waitFor({ state: "detached", timeout: 10_000 })
+    .catch(() => {});
   await writeFile(
     resolve(".tmp/windows-platform-e2e/classroom/index.html"),
     "<!-- new output -->\n",

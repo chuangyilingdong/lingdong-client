@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- 作品扫描、提交、预览和错误状态共享同一份对话框事务，拆分会让状态所有权重复。 */
 import { useCallback, useEffect, useState } from "react";
 import { Eye, FileText, FileUp, Paperclip, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button.js";
@@ -10,7 +11,12 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js";
 import { cn } from "@/components/lib/utils.js";
-import type { ClassroomWorksList, ClassroomWorkspaceScan } from "@zcode/shared";
+import { logger } from "@/logger.js";
+import {
+  TID_LINGDONG_WORKS_WORKSPACE_PATH,
+  type ClassroomWorksList,
+  type ClassroomWorkspaceScan,
+} from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useWorkspaceServices } from "@/hooks/useWorkspaceServices.js";
 import { useZCodeTaskService } from "@/hooks/useZCodeTaskService.js";
@@ -41,7 +47,10 @@ function asWorkSummaries(value: ClassroomWorksList | null | undefined): Classroo
     return [
       {
         id,
-        title: typeof record.title === "string" && record.title.trim() ? record.title.trim() : "课堂作品",
+        title:
+          typeof record.title === "string" && record.title.trim()
+            ? record.title.trim()
+            : "课堂作品",
         ...(typeof record.status === "string" && record.status.trim()
           ? { status: record.status.trim() }
           : {}),
@@ -193,7 +202,14 @@ export function LingdongWorksDialog({
         ...(preview.taskId ? { taskId: preview.taskId } : {}),
         ...(taskTitle ? { taskTitle } : {}),
       });
-      if (result?.ok === false) throw new Error(result.message || "提交失败。");
+      if (result?.ok === false) {
+        logger.lifecycle.warn("[LingdongWorks] submit rejected", {
+          message: result.message || "提交失败。",
+          ...(result.code ? { code: result.code } : {}),
+          ...(result.status ? { status: result.status } : {}),
+        });
+        throw new Error(result.message || "提交失败。");
+      }
       const submitted = Array.isArray(result?.works) ? result.works : null;
       let nextCount: number | null = null;
       if (submitted) {
@@ -224,7 +240,12 @@ export function LingdongWorksDialog({
     } catch (error) {
       // Electron 的 IPC 拒绝会把方法名拼进 message，学生不该看到那串内部前缀。
       const raw = error instanceof Error ? error.message : String(error);
-      setMessage(raw.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/u, ""));
+      const messageToDisplay = raw.replace(
+        /^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/u,
+        "",
+      );
+      logger.lifecycle.warn("[LingdongWorks] submit failed", { message: messageToDisplay });
+      setMessage(messageToDisplay);
     } finally {
       setBusy(false);
     }
@@ -233,151 +254,158 @@ export function LingdongWorksDialog({
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl gap-3">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-ui-lg">
-            <FileUp className="size-5" /> 提交课堂作品
-          </DialogTitle>
-          <DialogDescription>
-            只选择主作品文件，引用的素材会按相对路径自动一起提交。
-            {worksLlmAvailable ? (
-              <span className="ml-2 inline-flex rounded-full bg-brand/10 px-2 py-0.5 text-ui-xs font-medium text-brand">
-                本节课由平台提供模型
-              </span>
-            ) : null}
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2">
-          <span className="min-w-0 truncate text-ui-sm text-foreground-subtle">
-            {scan?.workspacePath || "正在读取课堂工作区…"}
-          </span>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            onClick={() => void refresh()}
-            disabled={busy}
-          >
-            <RefreshCw className={cn("size-4", busy && "animate-spin")} />
-          </Button>
-        </div>
-        <div className="max-h-[420px] overflow-auto rounded-lg border border-border">
-          {preview ? (
-            <div className="divide-y divide-border">
-              <div className="flex items-center gap-3 px-3 py-3">
-                <FileText className="size-5 shrink-0 text-brand" />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-ui-sm font-medium">
-                    {preview.entry.relativePath}
-                  </div>
-                  <div className="mt-0.5 truncate text-ui-xs text-foreground-subtle">
-                    {taskTitle
-                      ? `任务 · ${taskTitle} · ${formatBytes(preview.entry.size)}`
-                      : `主作品 · ${formatBytes(preview.entry.size)}`}
-                  </div>
-                </div>
-              </div>
-              {autoIncludedFiles.length > 0 ? (
-                <div className="space-y-2 px-3 py-3">
-                  <div className="flex items-center gap-2 text-ui-xs text-foreground-subtle">
-                    <Paperclip className="size-3.5" />
-                    自动包含 {autoIncludedFiles.length} 个引用文件
-                  </div>
-                  <div className="space-y-1.5">
-                    {autoIncludedFiles.map((file) => (
-                      <div key={file.path} className="flex items-center gap-3 text-ui-sm">
-                        <span className="min-w-0 flex-1 truncate text-foreground-subtle">
-                          {file.relativePath}
-                        </span>
-                        <span className="shrink-0 text-ui-xs text-foreground-subtle">
-                          {formatBytes(file.size)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <div className="px-3 py-2 text-ui-xs text-foreground-subtle">
-                  未检测到需要自动包含的引用文件。
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="p-8 text-center text-ui-sm text-foreground-subtle">
-              {scan?.previewError || "当前工作区没有可提交的主作品文件。"}
-            </div>
-          )}
-        </div>
-        {works.length > 0 ? (
-          <div className="rounded-lg border border-border">
-            <div className="border-b border-border px-3 py-2 text-ui-xs font-medium text-foreground-subtle">
-              我的作品
-            </div>
-            <div className="max-h-32 divide-y divide-border overflow-auto">
-              {works.map((work) => (
-                <div key={work.id} className="flex items-center gap-3 px-3 py-2">
+        <DialogContent className="max-h-[calc(100dvh-2rem)] max-w-2xl min-w-0 grid-cols-[minmax(0,1fr)] gap-3 overflow-x-hidden overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-ui-lg">
+              <FileUp className="size-5" /> 提交课堂作品
+            </DialogTitle>
+            <DialogDescription className="min-w-0 [overflow-wrap:anywhere]">
+              只选择主作品文件，引用的素材会按相对路径自动一起提交。
+              {worksLlmAvailable ? (
+                <span className="ml-2 inline-flex rounded-full bg-brand/10 px-2 py-0.5 text-ui-xs font-medium text-brand">
+                  本节课由平台提供模型
+                </span>
+              ) : null}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex min-w-0 items-center justify-between gap-2 rounded-lg border border-border bg-surface px-3 py-2">
+            <span
+              className="min-w-0 truncate text-ui-sm text-foreground-subtle"
+              data-testid={TID_LINGDONG_WORKS_WORKSPACE_PATH}
+            >
+              {scan?.workspacePath || "正在读取课堂工作区…"}
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void refresh()}
+              disabled={busy}
+            >
+              <RefreshCw className={cn("size-4", busy && "animate-spin")} />
+            </Button>
+          </div>
+          <div className="min-w-0 max-h-[420px] overflow-auto rounded-lg border border-border">
+            {preview ? (
+              <div className="divide-y divide-border">
+                <div className="flex items-center gap-3 px-3 py-3">
+                  <FileText className="size-5 shrink-0 text-brand" />
                   <div className="min-w-0 flex-1">
-                    <div className="truncate text-ui-sm">{work.title}</div>
-                    <div className="truncate text-ui-xs text-foreground-subtle">
-                      {[work.status, work.submittedAt].filter(Boolean).join(" · ")}
+                    <div className="truncate text-ui-sm font-medium">
+                      {preview.entry.relativePath}
+                    </div>
+                    <div className="mt-0.5 truncate text-ui-xs text-foreground-subtle">
+                      {taskTitle
+                        ? `任务 · ${taskTitle} · ${formatBytes(preview.entry.size)}`
+                        : `主作品 · ${formatBytes(preview.entry.size)}`}
                     </div>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    disabled={previewBusyId !== null}
-                    onClick={() => void previewWork(work)}
-                  >
-                    <Eye className="size-3.5" />
-                    {previewBusyId === work.id ? "打开中…" : "预览"}
-                  </Button>
                 </div>
-              ))}
+                {autoIncludedFiles.length > 0 ? (
+                  <div className="space-y-2 px-3 py-3">
+                    <div className="flex items-center gap-2 text-ui-xs text-foreground-subtle">
+                      <Paperclip className="size-3.5" />
+                      自动包含 {autoIncludedFiles.length} 个引用文件
+                    </div>
+                    <div className="space-y-1.5">
+                      {autoIncludedFiles.map((file) => (
+                        <div key={file.path} className="flex items-center gap-3 text-ui-sm">
+                          <span className="min-w-0 flex-1 truncate text-foreground-subtle">
+                            {file.relativePath}
+                          </span>
+                          <span className="shrink-0 text-ui-xs text-foreground-subtle">
+                            {formatBytes(file.size)}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="px-3 py-2 text-ui-xs text-foreground-subtle">
+                    未检测到需要自动包含的引用文件。
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="min-w-0 p-8 text-center text-ui-sm text-foreground-subtle [overflow-wrap:anywhere]">
+                {scan?.previewError || "当前工作区没有可提交的主作品文件。"}
+              </div>
+            )}
+          </div>
+          {works.length > 0 ? (
+            <div className="min-w-0 rounded-lg border border-border">
+              <div className="border-b border-border px-3 py-2 text-ui-xs font-medium text-foreground-subtle">
+                我的作品
+              </div>
+              <div className="max-h-32 divide-y divide-border overflow-auto">
+                {works.map((work) => (
+                  <div key={work.id} className="flex items-center gap-3 px-3 py-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-ui-sm">{work.title}</div>
+                      <div className="truncate text-ui-xs text-foreground-subtle">
+                        {[work.status, work.submittedAt].filter(Boolean).join(" · ")}
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={previewBusyId !== null}
+                      onClick={() => void previewWork(work)}
+                    >
+                      <Eye className="size-3.5" />
+                      {previewBusyId === work.id ? "打开中…" : "预览"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        ) : null}
-        <div
-          className={cn(
-            "flex items-center justify-between rounded-lg border px-3 py-2 text-ui-sm",
-            overLimit ? "border-warning/40 bg-warning/10 text-warning" : "border-border bg-surface",
-          )}
-        >
-          <span>
-            {noNewOutput
-              ? "已提交，当前没有新产出"
-              : hasSubmittedBefore
-                ? `检测到新产出 · 将提交 ${preview?.files.length ?? 0} 个文件`
-                : `最终将提交 ${preview?.files.length ?? 0} 个文件`}
-          </span>
-          <span>总大小 {preview ? formatBytes(totalBytes) : "—"}</span>
-        </div>
-        {overLimit ? (
-          <div className="rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-ui-sm text-warning">
-            平台单次提交上限 {formatBytes(MAX_SUBMIT_TOTAL_BYTES)}，当前总大小已超出。
-          </div>
-        ) : null}
-        {message ? (
-          <div className="rounded-lg bg-accent px-3 py-2 text-ui-sm text-foreground">{message}</div>
-        ) : null}
-        <DialogFooter>
-          <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-            关闭
-          </Button>
-          <Button type="button" onClick={() => void submit()} disabled={busy || !canSubmit}>
-            {busy
-              ? "处理中…"
-              : noNewOutput
-                ? "已提交，无新产出"
+          ) : null}
+          <div
+            className={cn(
+              "flex min-w-0 items-center justify-between gap-3 rounded-lg border px-3 py-2 text-ui-sm",
+              overLimit
+                ? "border-warning/40 bg-warning/10 text-warning"
+                : "border-border bg-surface",
+            )}
+          >
+            <span className="min-w-0 truncate">
+              {noNewOutput
+                ? "已提交，当前没有新产出"
                 : hasSubmittedBefore
-                  ? "确认并提交新版本"
-                  : "确认并提交主作品"}
-          </Button>
-        </DialogFooter>
-      </DialogContent>
+                  ? `检测到新产出 · 将提交 ${preview?.files.length ?? 0} 个文件`
+                  : `最终将提交 ${preview?.files.length ?? 0} 个文件`}
+            </span>
+            <span className="shrink-0">总大小 {preview ? formatBytes(totalBytes) : "—"}</span>
+          </div>
+          {overLimit ? (
+            <div className="min-w-0 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-ui-sm text-warning [overflow-wrap:anywhere]">
+              平台单次提交上限 {formatBytes(MAX_SUBMIT_TOTAL_BYTES)}，当前总大小已超出。
+            </div>
+          ) : null}
+          {message ? (
+            <div className="max-h-32 min-w-0 overflow-y-auto whitespace-pre-wrap rounded-lg bg-accent px-3 py-2 text-ui-sm text-foreground [overflow-wrap:anywhere]">
+              {message}
+            </div>
+          ) : null}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
+              关闭
+            </Button>
+            <Button type="button" onClick={() => void submit()} disabled={busy || !canSubmit}>
+              {busy
+                ? "处理中…"
+                : noNewOutput
+                  ? "已提交，无新产出"
+                  : hasSubmittedBefore
+                    ? "确认并提交新版本"
+                    : "确认并提交主作品"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
       </Dialog>
       <Dialog open={previewOpen} onOpenChange={setPreviewOpen}>
-        <DialogContent className="h-[80vh] max-w-6xl gap-3">
+        <DialogContent className="flex h-[80vh] max-h-[calc(100dvh-2rem)] max-w-6xl min-w-0 flex-col gap-3 overflow-hidden">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-ui-lg">
               <Eye className="size-5" />
@@ -388,7 +416,7 @@ export function LingdongWorksDialog({
             <iframe
               title={previewTitle}
               src={previewUrl}
-              className="min-h-0 flex-1 rounded-lg border border-border bg-white"
+              className="min-h-0 w-full flex-1 rounded-lg border border-border bg-white"
               sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads"
             />
           ) : null}

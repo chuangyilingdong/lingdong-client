@@ -27,6 +27,10 @@
    再逐轮读取 `conversation/fileChanges`；只取 state 非 reverted 的文件，并按可提交扩展名过滤。
    多个候选仍按最近更新时间选主作品。草稿态没有 taskId 时才沿用工作区最近入口。
 7. 提交标题默认使用当前任务标题；草稿态或任务标题为空时回退到入口文件名。
+8. 对话框必须约束 CSS Grid 子项宽度：工作区绝对路径、文件清单和错误消息不得撑宽弹窗。
+   - 长路径可截断，但截断容器本身必须允许收缩。
+   - 错误消息必须换行，并放在有最大高度、可纵向滚动的容器内。
+   - 弹窗内容超过窗口可用高度时由弹窗自身纵向滚动，不允许横向冲出窗口。
 
 ## 客户端契约（提交给平台的形状）
 
@@ -153,6 +157,7 @@ type ClassroomWorkspaceSubmitPreview = {
 - 入口名不合法：预览报错，禁用提交。
 - 单个素材读取失败（文件消失/权限）：由宿主按既有提交错误处理，不伪造预览成功。
 - 平台返回的 `warnings` / `missingAssets` 原样交给 UI；客户端不吞。
+- 手动提交失败时，Main 必须把 `message`、错误码和 HTTP 状态写入应用日志，不能只返回给 renderer；日志不得包含作品正文、token、grant 或文件内容。
 
 ## 验收
 
@@ -164,4 +169,6 @@ type ClassroomWorkspaceSubmitPreview = {
 2. 入口 HTML 里的 `https://…`、`data:…`、`#anchor` 引用不得出现在预览或提交清单里。
 3. mock 平台按白名单逐段校验，名字不合规直接 400 —— E2E 必须保持绿。
 4. UI 不显示工作区里未被主作品引用的普通文件，例如 `notes.txt`。
-5. `pnpm typecheck`、`pnpm lint` 通过。
+5. 工作区路径是不可断行的超长 Windows 路径时，弹窗内容的 `scrollWidth` 不得超过弹窗可视宽度。
+6. 平台或 IPC 返回超长错误消息时，消息在弹窗内换行并可纵向滚动，底部按钮仍可到达。
+7. `pnpm typecheck`、`pnpm lint` 通过。
