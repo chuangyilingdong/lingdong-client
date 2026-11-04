@@ -1,0 +1,66 @@
+name: Export release artifacts 0.2.19
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  export:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download macOS arm64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lingdong-client-0.2.19-mac-arm64
+          path: downloaded/arm
+          run-id: 41772892256
+          github-token: ${{ github.token }}
+      - name: Download macOS x64 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lingdong-client-0.2.19-mac-x64
+          path: downloaded/x64
+          run-id: 41772892170
+          github-token: ${{ github.token }}
+      - name: Export split artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          export_arch() {
+            branch="$1"
+            arch="$2"
+            source_dir="$3"
+            source_run="$4"
+            dmg=$(find "$source_dir" -type f -name '*.dmg' -print -quit)
+            test -n "$dmg"
+            rm -rf chunks
+            mkdir -p chunks
+            cp "$dmg" "chunks/lingdong-client-0.2.19-${arch}.dmg"
+            git checkout -B "$branch"
+            rm -rf ".ci/$branch"
+            mkdir -p ".ci/$branch"
+            printf 'started source_run=%s source_sha=d45d98ca6425f93b939ec192007417e825949ddb arch=%s\n' "$source_run" "$arch" > ".ci/$branch/status.txt"
+            git add -f ".ci/$branch/status.txt"
+            git commit -m "ci: start 0.2.19 ${arch} export $source_run"
+            git push --force origin HEAD:"$branch"
+            split -b 64m "chunks/lingdong-client-0.2.19-${arch}.dmg" "chunks/${arch}-part-"
+            for part in chunks/${arch}-part-*; do
+              cp "$part" ".ci/$branch/"
+              git add -f ".ci/$branch/$(basename "$part")"
+              git commit -m "ci: add 0.2.19 ${arch} $(basename "$part")"
+              git push origin HEAD:"$branch"
+            done
+            printf 'complete source_run=%s source_sha=d45d98ca6425f93b939ec192007417e825949ddb arch=%s\n' "$source_run" "$arch" > ".ci/$branch/status.txt"
+            git add -f ".ci/$branch/status.txt"
+            git commit -m "ci: complete 0.2.19 ${arch} export $source_run"
+            git push origin HEAD:"$branch"
+          }
+          export_arch ci/export-0.2.19-mac-arm64 arm64 downloaded/arm 41772892256
+          export_arch ci/export-0.2.19-mac-x64 x64 downloaded/x64 41772892170
