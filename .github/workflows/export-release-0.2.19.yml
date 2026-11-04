@@ -1,7 +1,8 @@
 name: Export release artifacts 0.2.19
 
 on:
-  workflow_dispatch:
+  push:
+    branches: [ci/export-0.2.19]
 
 permissions:
   actions: read
