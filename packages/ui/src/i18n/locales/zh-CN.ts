@@ -1402,6 +1402,7 @@ const zhCN: Record<string, string> = {
   "titleBar.menu.view.zoomOut": "缩小",
   "titleBar.menu.help.about": "关于 灵动ai",
   "titleBar.menu.help.checkForUpdates": "检查更新",
+  "titleBar.menu.help.checkForUpdatesOnStartup": "更新仅在启动时检查",
   "titleBar.menu.help.feedback": "问题上报",
   "sidebar.menu.community": "用户社群",
   "titleBar.menu.help.exportLogs": "导出日志",
@@ -1452,6 +1453,7 @@ const zhCN: Record<string, string> = {
   "update.toast.alreadyDownloading": "正在下载新版本（{progress}%）",
   "update.toast.ready": "v{version} 已下载，重启即可安装",
   "update.toast.devSkipped": "开发环境不检查更新",
+  "update.toast.startupOnly": "更新只在启动时检查，请重启客户端后更新",
   "update.toast.error": "检查更新失败：{error}",
   "forceUpdate.title": "需要升级 灵动ai 后继续使用",
   "forceUpdate.description":
@@ -2074,9 +2076,9 @@ const zhCN: Record<string, string> = {
   "settings.receivePreviewUpdates": "接受提前收到预览版更新",
   "settings.receivePreviewUpdatesDescription":
     "开启后将最快、提前体验新功能和改进版本，关闭后将随着版本发布节奏获得版本推送更新。",
-  "settings.autoDownloadAndInstallUpdates": "自动下载并安装更新",
+  "settings.autoDownloadAndInstallUpdates": "启动时自动下载更新",
   "settings.autoDownloadAndInstallUpdatesDescription":
-    "开启后检测到更新会自动开始下载；下载完成后，如有任务正在运行，重启更新前仍会要求确认。",
+    "仅在启动检查发现更新后自动下载；安装仍需在启动更新窗中确认。",
   "settings.notification": "任务通知",
   "settings.notificationDescription": "任务完成、失败或需要确认时发送桌面通知。",
   "settings.notificationSound": "通知声音",

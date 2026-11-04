@@ -1517,6 +1517,7 @@ const enUS: Record<string, string> = {
   "titleBar.menu.view.zoomOut": "Zoom out",
   "titleBar.menu.help.about": "About Lingdong AI",
   "titleBar.menu.help.checkForUpdates": "Check for updates",
+  "titleBar.menu.help.checkForUpdatesOnStartup": "Updates are checked on startup",
   "titleBar.menu.help.feedback": "Feedback",
   "sidebar.menu.community": "Community",
   "titleBar.menu.help.exportLogs": "Export logs",
@@ -1568,6 +1569,7 @@ const enUS: Record<string, string> = {
   "update.toast.alreadyDownloading": "Downloading new version ({progress}%)",
   "update.toast.ready": "v{version} downloaded, restart to install",
   "update.toast.devSkipped": "Updates are disabled in dev builds",
+  "update.toast.startupOnly": "Updates are only checked on startup. Restart the client to update.",
   "update.toast.error": "Update check failed: {error}",
   "forceUpdate.title": "Update Lingdong AI to continue",
   "forceUpdate.description":
@@ -2208,9 +2210,9 @@ const enUS: Record<string, string> = {
   "settings.receivePreviewUpdates": "Receive preview updates early",
   "settings.receivePreviewUpdatesDescription":
     "When enabled, you will get the earliest access to new features and improvements. When disabled, you will receive update pushes according to the regular release schedule.",
-  "settings.autoDownloadAndInstallUpdates": "Automatically download and install updates",
+  "settings.autoDownloadAndInstallUpdates": "Download updates on startup",
   "settings.autoDownloadAndInstallUpdatesDescription":
-    "When enabled, updates start downloading as soon as they are found. Restart still requires confirmation when tasks are running.",
+    "When enabled, available updates are downloaded during the startup check. Installation still requires confirmation in the startup update window.",
   "settings.notification": "Task notifications",
   "settings.notificationDescription":
     "Send desktop notifications when a task completes, fails, or needs approval.",

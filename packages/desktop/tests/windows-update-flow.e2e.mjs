@@ -91,6 +91,8 @@ async function launchApp({
   const env = {
     ...process.env,
     HOME: profile,
+    // 隔离 electron-updater 的 Windows cache，避免复用开发者真实待安装包，也避免测试故意损坏文件时污染本机缓存。
+    LOCALAPPDATA: join(profile, "local-app-data"),
     ZCODE_DESKTOP_HOME_DIR: profile,
     ZCODE_DATA_BASE_DIR: profile,
     ZCODE_DESKTOP_USER_DATA_DIR: join(profile, "electron"),
@@ -183,6 +185,79 @@ try {
   assert.ok(goodState.updateDownloads.length >= 1, "mock 未收到安装包下载请求");
   stopApp();
 
+  // 已下载文件在点击安装前被改写 → 安装前复检必须拒绝，不能把损坏安装器交给 NSIS。
+  const tampered = await launchApp({ profileName: "tampered-before-install", digest: sha256 });
+  const tamperedReadyLog = await waitForLog(
+    tampered.logPath,
+    (text) => text.includes(`[auto-update] downloaded: ${NEXT_VERSION}`),
+    120_000,
+    "准备损坏安装包",
+  );
+  const downloadedLine = tamperedReadyLog
+    .split(/\r?\n/u)
+    .find((line) => line.includes(`New version ${NEXT_VERSION} has been downloaded to `));
+  assert.ok(downloadedLine, "未找到已下载安装包路径");
+  const downloadedArtifactPath = downloadedLine
+    .slice(
+      downloadedLine.indexOf(`New version ${NEXT_VERSION} has been downloaded to `) +
+        `New version ${NEXT_VERSION} has been downloaded to `.length,
+    )
+    .trim();
+  await writeFile(
+    downloadedArtifactPath,
+    Buffer.from("tampered after updater verification", "utf8"),
+  );
+  {
+    const { chromium } = await import("playwright-core");
+    let browser;
+    for (let attempt = 0; attempt < 60 && !browser; attempt++) {
+      try {
+        browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      }
+    }
+    assert.ok(browser, "无法连接 Electron 调试端口");
+    try {
+      const context = browser.contexts()[0];
+      let updatePage;
+      for (let i = 0; i < 80; i++) {
+        updatePage = context
+          .pages()
+          .find((page) => page.url().includes("windowKind=update-status"));
+        if (updatePage) break;
+        await new Promise((resolve) => setTimeout(resolve, 250));
+      }
+      assert.ok(updatePage, "损坏安装包场景未出现更新窗");
+      await updatePage.getByRole("button", { name: /重启|Restart/ }).click();
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  }
+  const tamperedFailureLog = await waitForLog(
+    tampered.logPath,
+    (text) =>
+      text.includes("[auto-update] install artifact verification failed") ||
+      text.includes("[auto-update] downloaded artifact integrity check failed before install"),
+    30_000,
+    "安装前完整性复检",
+  );
+  assert.ok(
+    tamperedFailureLog.includes(
+      "[auto-update] downloaded artifact integrity check failed before install",
+    ),
+    "损坏的已下载安装包必须在安装前被拒绝",
+  );
+  assert.ok(
+    !tamperedFailureLog.includes("[auto-update] downloaded artifact verified before install"),
+    "损坏安装包不得通过安装前校验",
+  );
+  assert.ok(
+    !tamperedFailureLog.includes("[app-quit] forceQuit enabled (auto-update quitAndInstall)"),
+    "校验失败不得进入退出安装流程",
+  );
+  stopApp();
+
   // 反例：清单 sha256 与安装包不一致 → 必须失败且不得进入已下载状态。
   const wrongDigest = sha256.replace(/^./, sha256[0] === "0" ? "1" : "0");
   const bad = await launchApp({ profileName: "negative", digest: wrongDigest });
@@ -221,6 +296,53 @@ try {
     "缺少本平台条目时应判定为暂无更新",
   );
   assert.ok(!/\[auto-update\] error:/.test(missingLog), "缺少本平台条目不得记成更新失败");
+
+  // 主窗口创建前必须封存更新器；运行期手动检查只能收到 startup-only，不得再次请求清单。
+  const sealedLog = await waitForLog(
+    missing.logPath,
+    (text) => text.includes("[auto-update] startup update handling sealed for current run"),
+    30_000,
+    "启动更新器封存",
+  );
+  const checkCountBeforeRuntimeCommand = (
+    sealedLog.match(/\[auto-update\] checking for update/g) ?? []
+  ).length;
+  {
+    const { chromium } = await import("playwright-core");
+    const browser = await chromium.connectOverCDP(`http://127.0.0.1:${cdpPort}`);
+    try {
+      const mainPage = browser
+        .contexts()[0]
+        .pages()
+        .find((page) => page.url().startsWith("file:") && !/login\.html/.test(page.url()));
+      assert.ok(mainPage, "主窗口未创建");
+      const updateState = await mainPage.evaluate(() => window.zcode.getUpdateState());
+      assert.deepEqual(
+        { kind: updateState.kind, enabled: updateState.enabled },
+        { kind: "idle", enabled: false },
+        "主窗口放行后更新入口必须禁用",
+      );
+      await mainPage.evaluate(() => window.zcode.executeDesktopCommand("checkForUpdates"));
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+      const runtimeLog = await readFile(missing.logPath, "utf8");
+      assert.ok(
+        runtimeLog.includes(
+          "[auto-update] skip manual check: updates are only handled during startup",
+        ),
+        "运行期手动检查必须被主进程拒绝",
+      );
+      const checkCountAfterRuntimeCommand = (
+        runtimeLog.match(/\[auto-update\] checking for update/g) ?? []
+      ).length;
+      assert.equal(
+        checkCountAfterRuntimeCommand,
+        checkCountBeforeRuntimeCommand,
+        "运行期检查命令不得发起新的更新请求",
+      );
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  }
   stopApp();
 
   // 第四场景：上一次下载完成但未安装，重启后必须先恢复 ready 更新窗，再允许登录。
@@ -291,7 +413,9 @@ try {
       manifestApplied: true,
       downloadedAndVerified: true,
       tamperedArtifactRejected: true,
+      tamperedAfterDownloadRejectedBeforeInstall: true,
       missingPlatformEntryTreatedAsNoUpdate: true,
+      runtimeUpdateEntrySealed: true,
       restoredReadyShownBeforeLogin: true,
       explicitRestageInstallsWithAutoDownloadOff: true,
     }),

@@ -16,16 +16,16 @@ import {
   type UpdateStatePayload,
 } from "@zcode/shared";
 import { app, BrowserWindow, ipcMain, Menu } from "electron";
-import { access, rename } from "node:fs/promises";
-import { join } from "node:path";
+import { access, rename, rm } from "node:fs/promises";
+import { basename, join } from "node:path";
 import pkg, { CancellationToken } from "electron-updater";
 import semver from "semver";
 import { logger } from "./logger.js";
 import { getElectronReleasePlatform, ManifestUpdateProvider } from "./manifestUpdateProvider.js";
+import { verifyUpdateArtifactIntegrity, type UpdateArtifactIntegrity } from "./updateIntegrity.js";
 const { autoUpdater } = pkg;
 
 export const CHECK_FOR_UPDATE_MENU_ID = "check-for-update";
-const AUTO_UPDATE_POLL_INTERVAL_MS = 60 * 60 * 1000;
 const UPDATE_FEED_URL_ENV = "ZCODE_UPDATE_FEED_URL";
 const UPDATE_FEED_URL_SWITCH = "--zcode-update-feed-url";
 const DEV_AUTO_UPDATE_ENV = "ZCODE_AUTO_UPDATE_DEV";
@@ -35,12 +35,12 @@ const DEV_AUTO_UPDATE_VERSION_SWITCH = "--zcode-auto-update-dev-version";
 let readyUpdateVersion: string | null = null;
 let readyUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let readyUpdateRestoredFromPendingReleaseNotes = false;
+let readyUpdateArtifact: UpdateArtifactIntegrity | null = null;
 let installAfterRestage = false;
 let menuLocale: Locale = DEFAULT_LOCALE;
 let manualCheckWebContentsId: number | null = null;
 let pendingPostUpdateReleaseNotes: PostUpdateReleaseNotesPayload | null = null;
 let deliveredPostUpdateReleaseNotesWebContentsId: number | null = null;
-let autoUpdatePollTimer: NodeJS.Timeout | null = null;
 let checkForUpdatesInFlight = false;
 let autoUpdateCheckGeneration = 0;
 let activeAutoUpdateCheckId: number | null = null;
@@ -65,6 +65,8 @@ let autoUpdaterSettingService: SettingServiceLike | undefined;
 // （占位 feed、autoDownload 默认值）。任何漏改成按身份判断的入口若仍调用手动检查，
 // 都会对占位 feed 发真实请求。这里记住“本 flavor 已禁用”，让手动检查在模块内部 fail-closed。
 let autoUpdaterDisabledForProductFlavor = false;
+// 更新只允许在启动更新门内处理；主窗口创建前会封存，运行期命令必须 fail-closed。
+let startupUpdateHandlingActive = false;
 
 type SettingServiceLike = Pick<ISettingService, "get" | "update">;
 
@@ -76,7 +78,15 @@ type ReleaseNoteInfoLike = {
 type UpdateDownloadedInfoLike = {
   version: string;
   path?: string | null;
-  files?: Array<{ url?: string | null } | null> | null;
+  downloadedFile?: string | null;
+  sha2?: string | null;
+  sha512?: string | null;
+  files?: Array<{
+    url?: string | null;
+    sha2?: string | null;
+    sha512?: string | null;
+    size?: number | null;
+  } | null> | null;
   packages?: Record<string, { path?: string | null } | null> | null;
   zcodeReleaseChannel?: ElectronReleaseChannel | null;
   releaseName?: string | null;
@@ -233,10 +243,6 @@ function shouldDownloadAvailableUpdate(version: string): boolean {
   return !readyUpdateVersion || isVersionGreaterThan(version, readyUpdateVersion);
 }
 
-function canPollForUpdatesFromState(state: AutoUpdaterMenuState): boolean {
-  return state.kind === "idle" || state.kind === "update-downloaded";
-}
-
 function getAutoUpdaterReleaseChannelForCurrentState(): ElectronReleaseChannel {
   switch (menuState.kind) {
     case "update-available":
@@ -334,6 +340,10 @@ function shouldIgnoreStaleAvailableUpdate(infoChannel: ElectronReleaseChannel | 
   return Boolean(infoChannel && infoChannel !== expectedChannel);
 }
 
+function buildIdleUpdateState(): AutoUpdaterMenuState {
+  return { kind: "idle", enabled: startupUpdateHandlingActive };
+}
+
 function buildUpdateDownloadedState(version: string): AutoUpdaterMenuState {
   return {
     kind: "update-downloaded",
@@ -410,6 +420,16 @@ function buildDownloadProgressState(
 }
 
 async function quitAndInstallUpdate(rejectUnavailable = false) {
+  if (!startupUpdateHandlingActive) {
+    logger.warn(
+      `[auto-update] ignore quitAndInstall after startup sealed: state=${menuState.kind}`,
+    );
+    if (rejectUnavailable) {
+      throw new Error("Updates can only be installed during startup");
+    }
+    return;
+  }
+
   if (
     menuState.kind === "update-downloaded" &&
     readyUpdateVersion &&
@@ -456,6 +476,19 @@ async function quitAndInstallUpdate(rejectUnavailable = false) {
   // 如果仍然只靠 before-quit 去放行窗口 close，现有的“红绿灯关闭=隐藏窗口”逻辑会把退出拦住，
   // 表现成点击更新后界面消失但进程没退、安装流程也不再继续。
   // 这里先通知主进程进入“允许真正关窗”的状态，再把控制权交给 updater。
+  try {
+    // 下载时已有校验，但缓存文件可能在之后被杀毒软件、磁盘错误或外部操作改写。
+    // 安装器自检失败时用户只会看到 NSIS integrity error，因此必须在退出前重新校验。
+    await verifyReadyUpdateBeforeInstall();
+  } catch (error) {
+    await discardInvalidReadyUpdateArtifact(error);
+    quitAndInstallInFlight = false;
+    if (rejectUnavailable) {
+      throw error;
+    }
+    return;
+  }
+
   try {
     // Windows 更新会替换 resources/glm 等随包资源；
     // 若 quitAndInstall 先于 host/agent 子进程完成退出，安装器可能在文件仍被占用时开始覆盖，
@@ -524,7 +557,12 @@ function getMenuItemLabel(state: AutoUpdaterMenuState): string {
       });
     case "idle":
     default:
-      return getDesktopMenuMessage(menuLocale, desktopMenuMessageIds.helpCheckForUpdates);
+      return getDesktopMenuMessage(
+        menuLocale,
+        state.kind === "idle" && !state.enabled
+          ? desktopMenuMessageIds.helpCheckForUpdatesOnStartup
+          : desktopMenuMessageIds.helpCheckForUpdates,
+      );
   }
 }
 
@@ -950,10 +988,75 @@ function clearDownloadingUpdateState() {
   downloadingUpdateChannel = null;
 }
 
+function updateFileNameFromUrl(value: string): string {
+  try {
+    return decodeURIComponent(basename(new URL(value).pathname)).toLowerCase();
+  } catch {
+    return decodeURIComponent(basename(value)).toLowerCase();
+  }
+}
+
+function hasUpdateChecksum(file: NonNullable<UpdateDownloadedInfoLike["files"]>[number]): boolean {
+  return Boolean(
+    (typeof file?.sha2 === "string" && file.sha2.trim()) ||
+    (typeof file?.sha512 === "string" && file.sha512.trim()),
+  );
+}
+
+function readReadyUpdateArtifact(info: UpdateDownloadedInfoLike): UpdateArtifactIntegrity | null {
+  const filePath = typeof info.downloadedFile === "string" ? info.downloadedFile.trim() : "";
+  if (!filePath) {
+    return null;
+  }
+
+  const files = (info.files ?? []).filter(
+    (file): file is NonNullable<UpdateDownloadedInfoLike["files"]>[number] => file != null,
+  );
+  const downloadedName = basename(filePath).toLowerCase();
+  const selectedFile =
+    files.find(
+      (file) => typeof file.url === "string" && updateFileNameFromUrl(file.url) === downloadedName,
+    ) ?? files.find(hasUpdateChecksum);
+  const sha256 =
+    (typeof selectedFile?.sha2 === "string" ? selectedFile.sha2.trim() : "") ||
+    (typeof info.sha2 === "string" ? info.sha2.trim() : "");
+  const sha512 =
+    (typeof selectedFile?.sha512 === "string" ? selectedFile.sha512.trim() : "") ||
+    (typeof info.sha512 === "string" ? info.sha512.trim() : "");
+
+  return {
+    filePath,
+    ...(sha256 ? { sha256 } : {}),
+    ...(sha512 ? { sha512 } : {}),
+  };
+}
+
+async function discardInvalidReadyUpdateArtifact(error: unknown): Promise<void> {
+  const filePath = readyUpdateArtifact?.filePath;
+  logger.error("[auto-update] downloaded artifact integrity check failed before install:", error);
+  if (filePath) {
+    await rm(filePath, { force: true }).catch((removeError) => {
+      logger.warn("[auto-update] failed to remove invalid update artifact:", removeError);
+    });
+  }
+  handleAutoUpdateFailure(error, "install artifact verification failed");
+}
+
+async function verifyReadyUpdateBeforeInstall(): Promise<void> {
+  if (!readyUpdateArtifact) {
+    throw new Error("Downloaded update artifact path is unavailable");
+  }
+  await verifyUpdateArtifactIntegrity(readyUpdateArtifact);
+  logger.info(
+    `[auto-update] downloaded artifact verified before install version=${readyUpdateVersion ?? "unknown"} path=${readyUpdateArtifact.filePath}`,
+  );
+}
+
 function clearReadyUpdateState() {
   readyUpdateVersion = null;
   readyUpdateReleaseNotes = null;
   readyUpdateChannel = null;
+  readyUpdateArtifact = null;
   readyUpdateRestoredFromPendingReleaseNotes = false;
 }
 
@@ -1055,7 +1158,12 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
   }
   clearAvailableUpdateState();
   clearDownloadingUpdateState();
-  if (failedDownload?.version && !readyUpdateVersion && !activeForceAutoUpdateListener) {
+  if (
+    startupUpdateHandlingActive &&
+    failedDownload?.version &&
+    !readyUpdateVersion &&
+    !activeForceAutoUpdateListener
+  ) {
     // 用户点击“下载更新”后如果下载启动或 staging 很快失败，
     // 清空 available/downloading 并广播 idle 会让 renderer 入口和弹窗同时消失。
     // 失败并不等同于用户跳过该版本，应退回“发现更新”状态，让用户能看到并重试下载。
@@ -1070,9 +1178,7 @@ function handleAutoUpdateFailure(error: unknown, source: string) {
     );
   } else {
     setAutoUpdaterMenuState(
-      readyUpdateVersion
-        ? buildUpdateDownloadedState(readyUpdateVersion)
-        : { kind: "idle", enabled: true },
+      readyUpdateVersion ? buildUpdateDownloadedState(readyUpdateVersion) : buildIdleUpdateState(),
     );
   }
   notifyForceAutoUpdate({ kind: "error", message });
@@ -1122,6 +1228,10 @@ async function skipAvailableUpdateVersion(
   version: string,
   settingService: SettingServiceLike | undefined,
 ): Promise<void> {
+  if (!startupUpdateHandlingActive) {
+    logger.info(`[auto-update] ignore skip version=${version}: startup update handling is sealed`);
+    return;
+  }
   if (activeForceAutoUpdateListener) {
     logger.info(`[auto-update] ignore skip version=${version}: force update active`);
     return;
@@ -1153,9 +1263,7 @@ async function skipAvailableUpdateVersion(
   clearAvailableUpdateState();
   clearDownloadingUpdateState();
   setAutoUpdaterMenuState(
-    readyUpdateVersion
-      ? buildUpdateDownloadedState(readyUpdateVersion)
-      : { kind: "idle", enabled: true },
+    readyUpdateVersion ? buildUpdateDownloadedState(readyUpdateVersion) : buildIdleUpdateState(),
   );
 
   if (!settingService) {
@@ -1209,6 +1317,10 @@ async function clearSkippedUpdateVersionForManualCheck(
 }
 
 function downloadAvailableUpdate(reason = "renderer") {
+  if (!startupUpdateHandlingActive) {
+    logger.info(`[auto-update] skip ${reason} download: startup update handling is sealed`);
+    return;
+  }
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason} download: not packaged`);
     return;
@@ -1268,6 +1380,10 @@ function downloadAvailableUpdate(reason = "renderer") {
 }
 
 function cancelDownloadingUpdate(reason = "renderer") {
+  if (!startupUpdateHandlingActive) {
+    logger.info(`[auto-update] skip ${reason} cancel download: startup update handling is sealed`);
+    return;
+  }
   if (activeForceAutoUpdateListener) {
     logger.info(`[auto-update] skip ${reason} cancel download: force update active`);
     return;
@@ -1299,9 +1415,7 @@ function cancelDownloadingUpdate(reason = "renderer") {
   }
 
   setAutoUpdaterMenuState(
-    readyUpdateVersion
-      ? buildUpdateDownloadedState(readyUpdateVersion)
-      : { kind: "idle", enabled: true },
+    readyUpdateVersion ? buildUpdateDownloadedState(readyUpdateVersion) : buildIdleUpdateState(),
   );
 }
 
@@ -1382,6 +1496,11 @@ export function refreshAutoUpdaterReleaseChannel(
 ) {
   const nextChannel: ElectronReleaseChannel = receivePreviewUpdates ? "preview" : "stable";
 
+  if (!startupUpdateHandlingActive) {
+    logger.info(`[auto-update] skip ${reason}: startup update handling is sealed`);
+    return;
+  }
+
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     logger.info(`[auto-update] skip ${reason}: not packaged`);
     return;
@@ -1423,7 +1542,7 @@ export function refreshAutoUpdaterReleaseChannel(
       setAutoUpdaterMenuState(
         readyUpdateVersion
           ? buildUpdateDownloadedState(readyUpdateVersion)
-          : { kind: "idle", enabled: true },
+          : buildIdleUpdateState(),
       );
     })
     .finally(() => {
@@ -1517,16 +1636,15 @@ async function migrateLegacyUpdaterCacheDir(): Promise<void> {
 export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Promise<void> {
   if (options.enabled === false) {
     autoUpdaterDisabledForProductFlavor = true;
-    if (autoUpdatePollTimer) {
-      clearInterval(autoUpdatePollTimer);
-      autoUpdatePollTimer = null;
-    }
+    startupUpdateHandlingActive = false;
     logger.info("[auto-update] disabled for this desktop product flavor");
     return;
   }
   autoUpdaterDisabledForProductFlavor = false;
+  startupUpdateHandlingActive = false;
   await migrateLegacyUpdaterCacheDir();
   if (!canUseAutoUpdaterInCurrentRuntime()) return;
+  startupUpdateHandlingActive = true;
 
   onBeforeQuitAndInstall = options.onBeforeQuitAndInstall;
   if (options.locale) {
@@ -1534,10 +1652,6 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   }
   autoUpdaterSettingService = options.settingService;
 
-  if (autoUpdatePollTimer) {
-    clearInterval(autoUpdatePollTimer);
-    autoUpdatePollTimer = null;
-  }
   checkForUpdatesInFlight = false;
   activeAutoUpdateCheckId = null;
   activeAutoUpdateCheckChannel = null;
@@ -1556,25 +1670,19 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   // 再决定是否下载。若继续让 electron-updater 自动下载，它只会按当前 app 版本判断，
   // 导致 `3.1.2` 已 ready `3.1.3` 时每次轮询都可能重复下载 `3.1.3`。
   autoUpdater.autoDownload = false;
-  // Windows/NSIS 在窗口关闭后会异步启动安装；如果用户紧接着关机，安装器可能被系统中断，
-  // 留下半更新状态并导致下次启动失败。
-  // 这里仅在 Windows 关闭“退出即自动安装”，要求用户显式点更新；其他平台保持原有行为，避免改动既有升级链路。
-  autoUpdater.autoInstallOnAppQuit = process.platform !== "win32";
+  // 所有平台都只允许显式安装。运行期或普通退出自动安装会绕过启动更新门，也会绕开
+  // 安装前的文件完整性复检；已下载更新留到下一次启动恢复并由启动更新窗处理。
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.logger = logger;
   applyManifestUpdateProvider(options);
 
   const triggerCheckForUpdates = (reason: string): Promise<void> => {
-    if (checkForUpdatesInFlight) {
-      logger.info(`[auto-update] skip ${reason}: check already in flight`);
+    if (!startupUpdateHandlingActive) {
+      logger.info(`[auto-update] skip ${reason}: startup update handling is sealed`);
       return Promise.resolve();
     }
-
-    // 发布链路即使改成“安装包先、latest 后”，CDN 生效仍可能晚于客户端的轮询节奏。
-    // 如果 checking / downloading 阶段继续并发触发 checkForUpdates，会把同一轮更新流重复拉起，
-    // 造成无效请求、噪音日志，甚至把用户看到的菜单状态来回覆盖，所以自动轮询只在 idle 或
-    // update-downloaded 态进入；后者继续轮询是为了发现取代已下载版本的新版本。
-    if (reason === "poll" && !canPollForUpdatesFromState(menuState)) {
-      logger.info(`[auto-update] skip ${reason}: state=${menuState.kind}`);
+    if (checkForUpdatesInFlight) {
+      logger.info(`[auto-update] skip ${reason}: check already in flight`);
       return Promise.resolve();
     }
 
@@ -1602,11 +1710,24 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   };
 
   autoUpdater.on("checking-for-update", () => {
+    if (!startupUpdateHandlingActive) {
+      logger.info("[auto-update] ignore checking-for-update after startup sealed");
+      return;
+    }
     logger.info("[auto-update] checking for update...");
     setAutoUpdaterMenuState({ kind: "checking", enabled: false });
   });
 
   autoUpdater.on("update-available", (info: UpdateDownloadedInfoLike) => {
+    if (!startupUpdateHandlingActive) {
+      logger.info(`[auto-update] ignore update available after startup sealed: ${info.version}`);
+      void settleAutoUpdateCheckResult("ignored after startup sealed", () => {
+        clearAvailableUpdateState();
+        clearDownloadingUpdateState();
+        setAutoUpdaterMenuState(buildIdleUpdateState());
+      });
+      return;
+    }
     logger.info(`[auto-update] new version available: ${info.version}`);
     const infoChannel = readUpdateInfoReleaseChannel(info);
     if (shouldIgnoreStaleAvailableUpdate(infoChannel)) {
@@ -1651,7 +1772,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
           `[auto-update] ignore skipped update channel=${channel} version=${info.version}`,
         );
         clearAvailableUpdateState();
-        setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+        setAutoUpdaterMenuState(buildIdleUpdateState());
         sendManualCheckResult({
           kind: "up-to-date",
           currentVersion: getCurrentAppVersionForUpdate(),
@@ -1707,7 +1828,7 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
 
       clearAvailableUpdateState();
       clearDownloadingUpdateState();
-      setAutoUpdaterMenuState({ kind: "idle", enabled: true });
+      setAutoUpdaterMenuState(buildIdleUpdateState());
       // 强制升级弹窗复用启动期检查时，也必须在无可用更新时给出闭环反馈，避免一直停在 checking。
       notifyForceAutoUpdate({
         kind: "error",
@@ -1721,6 +1842,10 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   });
 
   autoUpdater.on("download-progress", (progress) => {
+    if (!startupUpdateHandlingActive) {
+      logger.info("[auto-update] ignore download-progress after startup sealed");
+      return;
+    }
     // 用户快速取消下载后，electron-updater 可能还会补发旧下载流的 progress。
     // 如果继续接收这个陈旧事件，UI 会从“可更新”被重新推回“下载中”，看起来像取消后卡住。
     if (!downloadCancellationToken || downloadCancellationToken.cancelled) {
@@ -1753,8 +1878,20 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   });
 
   autoUpdater.on("update-downloaded", (info: UpdateDownloadedInfoLike) => {
+    if (!startupUpdateHandlingActive) {
+      logger.info(`[auto-update] ignore downloaded update after startup sealed: ${info.version}`);
+      clearAvailableUpdateState();
+      clearDownloadingUpdateState();
+      clearReadyUpdateState();
+      setAutoUpdaterMenuState(buildIdleUpdateState());
+      return;
+    }
     readyUpdateVersion = info.version;
     readyUpdateRestoredFromPendingReleaseNotes = false;
+    readyUpdateArtifact = readReadyUpdateArtifact(info);
+    if (!readyUpdateArtifact) {
+      logger.warn(`[auto-update] downloaded artifact path unavailable version=${info.version}`);
+    }
     readyUpdateChannel = downloadingUpdateChannel ?? availableUpdateChannel;
     readyUpdateReleaseNotes =
       toPostUpdateReleaseNotesPayload(info) ?? downloadingUpdateReleaseNotes;
@@ -1801,6 +1938,15 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
   });
 
   autoUpdater.on("error", (err) => {
+    if (!startupUpdateHandlingActive) {
+      logger.warn("[auto-update] ignore error after startup sealed:", err);
+      void settleAutoUpdateCheckResult("ignored error after startup sealed", () => {
+        clearAvailableUpdateState();
+        clearDownloadingUpdateState();
+        setAutoUpdaterMenuState(buildIdleUpdateState());
+      });
+      return;
+    }
     if (shouldIgnoreCancelledDownloadError(err)) {
       // electron-updater 在取消下载后可能异步补发 error("cancelled")。
       // 用户取消已经把状态恢复到可重试的 update-available，迟到取消事件不能再清空入口。
@@ -1822,12 +1968,19 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     void quitAndInstallUpdate();
   });
   ipcMain.handle(PlatformChannels.DownloadUpdate, () => {
+    if (!startupUpdateHandlingActive) {
+      throw new Error("Updates can only be downloaded during startup");
+    }
     downloadAvailableUpdate("renderer");
   });
   ipcMain.handle(PlatformChannels.CancelUpdateDownload, () => {
     cancelDownloadingUpdate("renderer");
   });
   ipcMain.handle(PlatformChannels.SkipUpdateVersion, async (_event, version: unknown) => {
+    if (!startupUpdateHandlingActive) {
+      logger.info("[auto-update] ignore skip version request after startup sealed");
+      return;
+    }
     const validatedVersion = typeof version === "string" ? version.trim() : "";
     if (!validatedVersion) {
       logger.warn("[auto-update] ignore empty skipped update version");
@@ -1836,14 +1989,32 @@ export async function initAutoUpdater(options: InitAutoUpdaterOptions = {}): Pro
     await skipAvailableUpdateVersion(validatedVersion, options.settingService);
   });
 
-  const startupUpdateCheck = triggerCheckForUpdates("startup");
+  return triggerCheckForUpdates("startup");
+}
 
-  autoUpdatePollTimer = setInterval(() => {
-    void triggerCheckForUpdates("poll");
-  }, AUTO_UPDATE_POLL_INTERVAL_MS);
-  autoUpdatePollTimer.unref?.();
-
-  return startupUpdateCheck;
+/**
+ * 主窗口创建前封存更新器。启动更新门已经结束，本次运行不再接受检查、下载或安装命令；
+ * 已下载包的持久化说明保留到下一次启动恢复，不在运行期继续推进。
+ */
+export function sealAutoUpdaterForCurrentRun(): void {
+  if (!startupUpdateHandlingActive) {
+    return;
+  }
+  startupUpdateHandlingActive = false;
+  activeForceAutoUpdateListener = null;
+  installAfterRestage = false;
+  if (downloadCancellationToken) {
+    markCancelledDownload(downloadCancellationToken);
+    downloadCancellationToken.cancel();
+  }
+  if (checkForUpdatesInFlight) {
+    finishAutoUpdateCheck("startup update handling sealed", activeAutoUpdateCheckId);
+  }
+  clearAvailableUpdateState();
+  clearDownloadingUpdateState();
+  clearReadyUpdateState();
+  setAutoUpdaterMenuState(buildIdleUpdateState());
+  logger.info("[auto-update] startup update handling sealed for current run");
 }
 
 export function requestForceAutoUpdate(
@@ -1861,6 +2032,13 @@ export function requestForceAutoUpdate(
   forceAutoUpdateLastLoggedProgressBucket = null;
   logger.info(`[force-update] 自动升级开始 reason=${reason}`);
   onStateChange({ kind: "checking" });
+
+  if (!startupUpdateHandlingActive) {
+    const message = "Updates can only be handled during startup";
+    logger.warn(`[force-update] 自动升级拒绝：${message}`);
+    onStateChange({ kind: "error", message });
+    return dispose;
+  }
 
   if (!canUseAutoUpdaterInCurrentRuntime()) {
     const message = "not packaged";
@@ -1904,7 +2082,7 @@ export function requestForceAutoUpdate(
       setAutoUpdaterMenuState(
         readyUpdateVersion
           ? buildUpdateDownloadedState(readyUpdateVersion)
-          : { kind: "idle", enabled: true },
+          : buildIdleUpdateState(),
       );
       onStateChange({ kind: "error", message });
     })
@@ -1947,6 +2125,14 @@ export function checkForUpdateMenuClick(originWindow?: BrowserWindow | null) {
     logger.info("[auto-update] skip manual check: updater disabled for this product flavor");
     targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
       kind: "dev-skipped",
+    } satisfies UpdateCheckResultPayload);
+    return;
+  }
+
+  if (!startupUpdateHandlingActive) {
+    logger.info("[auto-update] skip manual check: updates are only handled during startup");
+    targetWindow.webContents.send(PlatformChannels.UpdateCheckResult, {
+      kind: "startup-only",
     } satisfies UpdateCheckResultPayload);
     return;
   }

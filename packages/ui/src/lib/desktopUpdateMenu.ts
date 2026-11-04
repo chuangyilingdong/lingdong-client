@@ -22,6 +22,9 @@ export function getUpdateMenuLabelId(state: UpdateStatePayload | null) {
     case "update-downloaded":
       return "desktopMenu.help.restartToUpdate";
     case "idle":
+      return state.enabled
+        ? "titleBar.menu.help.checkForUpdates"
+        : "titleBar.menu.help.checkForUpdatesOnStartup";
     default:
       return "titleBar.menu.help.checkForUpdates";
   }

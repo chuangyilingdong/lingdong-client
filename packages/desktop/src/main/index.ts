@@ -93,6 +93,7 @@ import {
   onAutoUpdaterStateChanged,
   refreshAutoUpdaterReleaseChannel,
   resolveUpdateFeedSourceFromStartupConfig,
+  sealAutoUpdaterForCurrentRun,
   syncAutoUpdaterStateToWindow,
   syncPostUpdateReleaseNotesToWindow,
   syncReadyUpdateToWindow,
@@ -2482,6 +2483,10 @@ app.whenReady().then(async () => {
   if (forceUpdateGuardResult.blocked) {
     return;
   }
+
+  // 主窗口一旦放行，本次运行不再处理更新。启动检查、强制升级和待安装恢复都已完成；
+  // 运行期只显示“更新仅在启动时检查”，避免打开客户端后覆盖正在使用的安装目录。
+  sealAutoUpdaterForCurrentRun();
 
   logger.info("[startup] 创建主窗口");
   await primaryWindowCoordinator.ensurePrimaryWindow("app-ready");

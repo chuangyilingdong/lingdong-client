@@ -293,7 +293,7 @@ https://aicyld.com/downloads/manifest.json
 }
 ```
 
-客户端更新 Provider 会按当前平台与 CPU 架构精确选择 `win-x64` / `mac-arm64` / `mac-x64`：`windows-x86_64` → `win-x64`，`darwin-aarch64` → `mac-arm64`，`darwin-x86_64` → `mac-x64`。对应目标缺失时返回无更新，不会跨架构回退。`sha256` 映射为 electron-updater 的 SHA-256 校验字段，下载路径相对 `https://aicyld.com/downloads/` 解析；三个平台版本必须保持一致。
+客户端更新 Provider 会按当前平台与 CPU 架构精确选择 `win-x64` / `mac-arm64` / `mac-x64`：`windows-x86_64` → `win-x64`，`darwin-aarch64` → `mac-arm64`，`darwin-x86_64` → `mac-x64`。对应目标缺失时返回无更新，不会跨架构回退。`sha256` 映射为 electron-updater 的 SHA-256 校验字段，下载路径相对 `https://aicyld.com/downloads/` 解析；三个平台版本必须保持一致。自 2026-11-03 起，客户端只在启动更新门处理检查、下载和安装；主窗口放行后不再进行周期检查，并在启动安装器前再次校验已下载文件，校验失败不会进入安装。
 
 ### 更新联动的平台侧要求（2026-09-29 客户端已验证）
 

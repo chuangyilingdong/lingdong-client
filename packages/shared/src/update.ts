@@ -24,6 +24,7 @@ export type UpdateCheckResultPayload =
   | { kind: "already-downloading"; version: string; progress: string }
   | { kind: "ready"; version: string }
   | { kind: "dev-skipped" }
+  | { kind: "startup-only" }
   | { kind: "error"; message: string };
 
 /**
