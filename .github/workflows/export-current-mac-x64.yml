@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 240
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      SOURCE_SHA: 5265ada5ab5b38bc5c227c8c28cc5081cebfff54
+      SOURCE_SHA: 5daf2cec2748b1f29fa412c0bc3270dac089350a
       TARGET_BRANCH: ci/zcode-current-mac-x64
     steps:
       - uses: actions/checkout@v4
