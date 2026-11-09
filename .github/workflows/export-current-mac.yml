@@ -1,4 +1,4 @@
-# Release trigger: Lingdong 0.2.20 deferred browser tool hotfix.
+# Release trigger: export the matching macOS artifact for the current commit.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 
@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 240
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      SOURCE_SHA: 9cc3e2f09258853f0665261af5a3f759fb496c02
+      SOURCE_SHA: ${{ github.sha }}
       TARGET_BRANCH: ci/zcode-current-mac
     steps:
       - uses: actions/checkout@v4
