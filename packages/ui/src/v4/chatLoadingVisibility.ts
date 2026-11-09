@@ -35,6 +35,27 @@ function hasChatLoadingBlockingMaintenanceRow(rows: readonly ConversationRow[]):
   );
 }
 
+export type TurnChatLoadingPhase = "thinking" | "working";
+
+function hasAssistantVisibleOutput(row: ConversationRow): boolean {
+  switch (row.kind) {
+    case "reasoning":
+    case "assistantText":
+      return row.text.trim().length > 0;
+    case "toolCall":
+    case "subagent":
+      return true;
+    default:
+      return false;
+  }
+}
+
+export function resolveTurnChatLoadingPhase(
+  rows: readonly ConversationRow[],
+): TurnChatLoadingPhase {
+  return rows.some(hasAssistantVisibleOutput) ? "working" : "thinking";
+}
+
 export function shouldShowTurnChatLoading({
   blockedByActiveWork,
   blockedByInteraction,

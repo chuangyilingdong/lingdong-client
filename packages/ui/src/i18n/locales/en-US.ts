@@ -177,6 +177,7 @@ const enUS: Record<string, string> = {
   // Common
   "common.loading": "Loading...",
   "chat.loading.working": "Working",
+  "chat.loading.thinking": "Xiaoling is thinking",
   "common.listSeparator": ", ",
   "common.generating": "Generating...",
   "common.connecting": "Connecting...",
@@ -4622,6 +4623,7 @@ const enUS: Record<string, string> = {
   "chat.message.toolSnapshot.retry": "Load failed, retry",
   "chat.message.time.yesterday": "Yesterday {time}",
   "chat.message.retry": "Retry",
+  "chat.history.thinkingFor": "Xiaoling is thinking {duration}",
   "chat.history.workingFor": "Working for {duration}",
   "chat.history.workedFor": "Worked for {duration}",
   "chat.history.worked": "Worked",

@@ -49,9 +49,13 @@ try {
     .locator('[data-testid="v4-composer-input"]')
     .fill("请用选项卡帮我设置 AI 伙伴的人格。");
   await page.getByRole("button", { name: "发送", exact: true }).click();
-  const runningStatus = page.getByRole("status").filter({ hasText: "工作中" });
-  await runningStatus.waitFor({ timeout: 5_000 });
-  assert.match(await runningStatus.innerText(), /工作中\s+\d+\.\d+\s+秒/u);
+  const thinkingHistoryStatus = page.getByRole("button").filter({ hasText: "小灵正在思考" });
+  await thinkingHistoryStatus.waitFor({ timeout: 5_000 });
+  assert.match(await thinkingHistoryStatus.innerText(), /小灵正在思考\s+\d+\s+秒/u);
+
+  const thinkingStatus = page.getByRole("status").filter({ hasText: "小灵正在思考" });
+  await thinkingStatus.waitFor({ timeout: 5_000 });
+  assert.match(await thinkingStatus.innerText(), /小灵正在思考\s+\d+\.\d+\s+秒/u);
 
   await page
     .getByText("你希望 AI 伙伴偏向哪种性格？", { exact: true })

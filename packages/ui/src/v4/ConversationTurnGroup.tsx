@@ -15,6 +15,7 @@ import type {
   ApiRetryState,
   AttachmentRef,
   CommandAck,
+  ConversationRow,
   ConversationRowTarget,
   WorkflowNotificationMeta,
 } from "@zcode/shared/zcode-protocol-v4";
@@ -50,7 +51,10 @@ import {
   type AssistantCodeCommentCard,
 } from "@/lib/assistantCodeComment.js";
 import { useAssistantPreviewCardsForAssistantTextRow } from "@/v4/useAssistantPreviewCardsForRow.js";
-import { shouldShowTurnChatLoading } from "@/v4/chatLoadingVisibility.js";
+import {
+  resolveTurnChatLoadingPhase,
+  shouldShowTurnChatLoading,
+} from "@/v4/chatLoadingVisibility.js";
 import {
   buildAssistantWorkRenderItems,
   ENABLE_CHANGES_TOOL_CALL_GROUPING,
@@ -143,10 +147,12 @@ function TurnChatLoadingSlot({
   apiRetry,
   eligible,
   initialElapsedMs,
+  rows,
 }: {
   apiRetry: ApiRetryState | null;
   eligible: boolean;
   initialElapsedMs: number;
+  rows: readonly ConversationRow[];
 }) {
   const { intl, locale } = useZCodeIntl();
   const retryStatus = useMemo(() => (apiRetry ? toRetryStatus(apiRetry) : null), [apiRetry]);
@@ -156,6 +162,7 @@ function TurnChatLoadingSlot({
   const visibleRetryStatus =
     retryStatus && retryStatus.attempt >= MIN_VISIBLE_API_RETRY_ATTEMPT ? retryStatus : null;
   if (!visibleRetryStatus && !eligible) return null;
+  const phase = resolveTurnChatLoadingPhase(rows);
   return (
     <div data-zcode-chat-loading-slot="true" className="min-h-5">
       {visibleRetryStatus ? (
@@ -167,6 +174,7 @@ function TurnChatLoadingSlot({
           loading
           data-testid={TID_CHAT_LOADING}
           initialElapsedMs={initialElapsedMs}
+          phase={phase}
         />
       )}
     </div>
@@ -581,11 +589,15 @@ function AssistantHistoryStatus({
     intl,
     locale,
   );
+  const phase = resolveTurnChatLoadingPhase(segment.assistantWorkRows);
   const label =
     segment.workStatus?.state === "interrupted"
       ? intl.formatMessage({ id: "chat.history.stopped" })
       : segment.workStatus?.state === "running"
-        ? intl.formatMessage({ id: "chat.history.workingFor" }, { duration: durationLabel ?? "" })
+        ? intl.formatMessage(
+            { id: phase === "thinking" ? "chat.history.thinkingFor" : "chat.history.workingFor" },
+            { duration: durationLabel ?? "" },
+          )
         : durationLabel
           ? intl.formatMessage({ id: "chat.history.workedFor" }, { duration: durationLabel })
           : intl.formatMessage({ id: "chat.history.worked" });
@@ -836,6 +848,7 @@ function ConversationTurnFlow({
           apiRetry={apiRetry}
           eligible={showLoading}
           initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+          rows={unit.assistantWorkRows}
         />
       </div>
     );
@@ -902,10 +915,11 @@ function ConversationTurnFlow({
         />
       ))}
       <TurnChatLoadingSlot
-          apiRetry={apiRetry}
-          eligible={showLoading}
-          initialElapsedMs={unit.workStatus?.durationMs ?? 0}
-        />
+        apiRetry={apiRetry}
+        eligible={showLoading}
+        initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+        rows={unit.assistantWorkRows}
+      />
     </div>
   );
 }
@@ -1108,10 +1122,11 @@ function ConversationBackgroundResultWork({
         />
       ) : null}
       <TurnChatLoadingSlot
-          apiRetry={apiRetry}
-          eligible={showLoading}
-          initialElapsedMs={unit.workStatus?.durationMs ?? 0}
-        />
+        apiRetry={apiRetry}
+        eligible={showLoading}
+        initialElapsedMs={unit.workStatus?.durationMs ?? 0}
+        rows={unit.assistantWorkRows}
+      />
     </div>
   );
 }

@@ -166,6 +166,7 @@ const zhCN: Record<string, string> = {
   // 通用
   "common.loading": "加载中...",
   "chat.loading.working": "工作中",
+  "chat.loading.thinking": "小灵正在思考",
   "common.listSeparator": "、",
   "common.generating": "生成中...",
   "common.connecting": "连接中...",
@@ -4323,6 +4324,7 @@ const zhCN: Record<string, string> = {
   "chat.message.toolSnapshot.retry": "加载失败，重试",
   "chat.message.time.yesterday": "昨天 {time}",
   "chat.message.retry": "重试",
+  "chat.history.thinkingFor": "小灵正在思考 {duration}",
   "chat.history.workingFor": "工作中 {duration}",
   "chat.history.workedFor": "已工作 {duration}",
   "chat.history.worked": "已处理",

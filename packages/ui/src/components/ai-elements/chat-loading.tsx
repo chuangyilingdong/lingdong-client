@@ -5,9 +5,12 @@ import { cn } from "@/components/lib/utils.js";
 import { formatRunningWorkDuration } from "@/lib/workDuration.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 
+export type ChatLoadingPhase = "thinking" | "working";
+
 export interface ChatLoadingProps extends ComponentPropsWithoutRef<"div"> {
   loading: boolean;
   initialElapsedMs?: number;
+  phase?: ChatLoadingPhase;
   size?: "default" | "sm";
 }
 
@@ -38,6 +41,7 @@ export function ChatLoadingPixels() {
 export function ChatLoading({
   loading,
   initialElapsedMs = 0,
+  phase = "working",
   className,
   size: _size,
   ...props
@@ -64,7 +68,9 @@ export function ChatLoading({
     >
       <ChatLoadingPixels />
       <span className="zcode-loading-label text-ui-base font-medium">
-        {intl.formatMessage({ id: "chat.loading.working" })}
+        {intl.formatMessage({
+          id: phase === "thinking" ? "chat.loading.thinking" : "chat.loading.working",
+        })}
       </span>
       <span
         aria-hidden="true"
