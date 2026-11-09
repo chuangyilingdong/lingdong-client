@@ -1,4 +1,4 @@
-# Release trigger: Lingdong 0.2.17 auto-submit release.
+# Release trigger: Lingdong 0.2.20 deferred browser tool hotfix.
 # Export the matching macOS Intel build artifact through the CI branch.
 name: Export current ZCode mac Intel artifact
 
@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 240
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      SOURCE_SHA: ${{ github.sha }}
+      SOURCE_SHA: 9cc3e2f09258853f0665261af5a3f759fb496c02
       TARGET_BRANCH: ci/zcode-current-mac-x64
     steps:
       - uses: actions/checkout@v4
