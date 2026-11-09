@@ -93,3 +93,26 @@
 - Provider 实际请求体只包含 resident 和两个控制工具，不包含 deferred tool schema。
 - 打包态 E2E 能从 mock Provider 收到的请求体读取并校验工具面。
 - `pnpm typecheck`、定向测试和架构检查通过。
+
+## 2026-11-09 调度与分批路径回归
+
+现场：课堂模型先 `ToolSearch("select:mcp__node_repl__js")` 成功，再调用
+`DeferredToolCall({ name: "mcp__node_repl__js", input })`，执行器却返回
+`DeferredToolCall must be resolved before tool execution.`，模型因此误判浏览器工具不可用。
+
+根因：`executeToolSchedule` 与超并发 `executeToolBatch` 在重建单批 options 时丢掉了
+`toolSearch`。执行器拿不到当前 session 的 `ToolSearchRuntimeState`，无法在 permission、Hook
+和 handler 之前把 wrapper 改写成真实工具；handler 只能按失败语义报错。
+
+规则：
+
+1. `toolSearch` 是这次执行调用的必需上下文，必须从 runtime 透传到 direct、schedule、batch 三条路径。
+2. 调度器重建 options 时只能补充/覆盖调度字段，不能丢弃 `toolSearch`。
+3. 分批路径无论是否超过并发上限，DeferredToolCall 的解析结果必须一致。
+4. 回归测试必须经过 `executeSchedule` 和超并发 `executeBatch`，不能只测直接 `execute`。
+
+验收：
+
+1. `ToolSearch` 选中 `mcp__node_repl__js` 后，经 `executeSchedule` 调用的 DeferredToolCall 能执行真实工具。
+2. 工具数超过并发上限进入分批路径时，DeferredToolCall 仍能执行真实工具。
+3. 失败时仍按原工具错误、权限错误和 turnControl 语义返回，不新增兜底分支。

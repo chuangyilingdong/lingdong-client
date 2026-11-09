@@ -38,14 +38,9 @@ export async function executeToolBatch(
     const batch = toolCalls.slice(i, i + maxConcurrency);
     const batchResults = await Promise.all(
       batch.map((tc) =>
-        executeOne(tc, {
-          automationTurn: options?.automationTurn,
-          offPeakTurn: options?.offPeakTurn,
-          signal: options?.signal,
-          traceContext: options?.traceContext,
-          subagentModelOverride: options?.subagentModelOverride,
-          model: options?.model,
-        }),
+        // 修复原因：分批执行重建 options 时曾丢掉 toolSearch，导致 DeferredToolCall 无法在 handler 前改写。
+        // 展开原 options 而不是逐字段复制，后续新增执行上下文也不会再在这里漏传。
+        executeOne(tc, { ...options }),
       ),
     );
     results.push(...batchResults);
@@ -77,14 +72,9 @@ export async function* executeToolSchedule(
 
     yield { type: "batch_start", parallelGroupIndex: groupIndex, toolCallIds: group };
 
-    const groupResults = await executeBatch(groupTools, {
-      automationTurn: options?.automationTurn,
-      signal: options?.signal,
-      traceContext: options?.traceContext,
-      subagentModelOverride: options?.subagentModelOverride,
-      model: options?.model,
-      maxConcurrency,
-    });
+    // 修复原因：schedule 路径曾重建 options 并漏掉 toolSearch，浏览器 DeferredToolCall 因此无法解析。
+    // 保留上游全部执行上下文，只覆盖本层的并发上限。
+    const groupResults = await executeBatch(groupTools, { ...options, maxConcurrency });
     allResults.push(...groupResults);
 
     yield { type: "batch_complete", parallelGroupIndex: groupIndex, results: groupResults };

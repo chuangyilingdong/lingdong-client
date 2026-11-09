@@ -10,6 +10,8 @@ import {
 import { createToolRegistry } from "../src/tool/registry.js";
 import { registerBuiltInTools } from "../src/tool/handlers/index.js";
 import { ToolExecutorImpl } from "../src/tool/executor/impl.js";
+import { executeToolBatch, executeToolSchedule } from "../src/tool/executor/batch-runner.js";
+import type { ToolExecutionResult, ToolExecutorDeps } from "../src/tool/executor/types.js";
 import { createDenyPermissionBroker } from "../src/permission/broker.js";
 import { PermissionService } from "../src/permission/service.js";
 import type { ToolEntry } from "../src/tool/types.js";
@@ -289,4 +291,68 @@ test("executor rewrites DeferredToolCall before permission and handler execution
   assert.equal(result.toolName, "Echo");
   assert.equal(result.modelCallWrapper, "DeferredToolCall");
   assert.deepEqual(result.output, { echoed: { value: 1 } });
+});
+
+
+test("executeToolSchedule forwards toolSearch into scheduled batches", async () => {
+  const state: ToolSearchRuntimeState = {
+    mode: "local",
+    enabled: true,
+    maxResults: 5,
+    getCatalog: () => [],
+    isDeferred: (name) => name === "Echo",
+    search: (query) => ({ query, tools: [] }),
+  };
+  const call = {
+    id: "schedule-deferred-1",
+    name: "DeferredToolCall",
+    input: { name: "Echo", input: { value: 1 } },
+  };
+  const schedule = {
+    items: [{ toolCallId: call.id as never, dependencies: [], canRunParallel: true }],
+    parallelGroups: [[call.id as never]],
+    executionOrder: [call.id as never],
+  };
+  let captured: ToolSearchRuntimeState | undefined;
+  const iterator = executeToolSchedule(
+    { maxConcurrency: 1 } as ToolExecutorDeps,
+    async (_calls, options): Promise<ToolExecutionResult[]> => {
+      captured = options?.toolSearch;
+      return [];
+    },
+    [call],
+    schedule,
+    { toolSearch: state, maxConcurrency: 1 },
+  );
+  for await (const _event of iterator) {
+    // Drain the generator so the scheduled batch actually executes.
+  }
+  assert.equal(captured, state);
+});
+
+test("executeToolBatch preserves toolSearch when splitting over concurrency", async () => {
+  const state: ToolSearchRuntimeState = {
+    mode: "local",
+    enabled: true,
+    maxResults: 5,
+    getCatalog: () => [],
+    isDeferred: (name) => name === "Echo",
+    search: (query) => ({ query, tools: [] }),
+  };
+  const calls = [
+    { id: "batch-deferred-1", name: "DeferredToolCall", input: { name: "Echo", input: { value: 1 } } },
+    { id: "batch-deferred-2", name: "DeferredToolCall", input: { name: "Echo", input: { value: 2 } } },
+  ];
+  const captured: Array<ToolSearchRuntimeState | undefined> = [];
+  const results = await executeToolBatch(
+    { maxConcurrency: 1 } as ToolExecutorDeps,
+    async (_call, options): Promise<ToolExecutionResult> => {
+      captured.push(options?.toolSearch);
+      return { success: true } as ToolExecutionResult;
+    },
+    calls,
+    { toolSearch: state, maxConcurrency: 1 },
+  );
+  assert.equal(results.length, 2);
+  assert.deepEqual(captured, [state, state]);
 });
