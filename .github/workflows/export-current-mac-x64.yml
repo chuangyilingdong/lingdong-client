@@ -1,4 +1,4 @@
-# Release trigger: export the matching macOS artifact for the current commit.
+# Release trigger: Lingdong 0.2.21 thinking status release.
 # Export the matching macOS Intel build artifact through the CI branch.
 name: Export current ZCode mac Intel artifact
 
@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 240
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      SOURCE_SHA: ${{ github.sha }}
+      SOURCE_SHA: 5265ada5ab5b38bc5c227c8c28cc5081cebfff54
       TARGET_BRANCH: ci/zcode-current-mac-x64
     steps:
       - uses: actions/checkout@v4
