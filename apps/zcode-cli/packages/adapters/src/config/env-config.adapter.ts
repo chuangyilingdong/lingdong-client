@@ -57,6 +57,15 @@ export function parseEnvConfig(
       if (!config.toolConcurrency) config.toolConcurrency = {};
       config.toolConcurrency.maxConcurrency = normalizeNumber(value);
     }
+
+    // 课堂网关可能只发 SSE 心跳超过 10 分钟；非法值必须忽略，避免意外关闭 idle 保护。
+    else if (configKey === "MODEL_STREAM_IDLE_TIMEOUT_MS") {
+      const idleTimeoutMs = normalizePositiveNumber(value);
+      if (idleTimeoutMs !== undefined) {
+        if (!config.modelStream) config.modelStream = {};
+        config.modelStream.idleTimeoutMs = idleTimeoutMs;
+      }
+    }
   }
 
   return config;
@@ -78,6 +87,11 @@ export function getToolConcurrencyConfig(): { maxConcurrency: number } {
 function normalizeNumber(value: string): number {
   const num = Number(value);
   return isNaN(num) ? 0 : num;
+}
+
+function normalizePositiveNumber(value: string): number | undefined {
+  const num = Number(value);
+  return Number.isFinite(num) && num > 0 ? num : undefined;
 }
 
 function normalizeLogFormat(value: string): "text" | "json" {

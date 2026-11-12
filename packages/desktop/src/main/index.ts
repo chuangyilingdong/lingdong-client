@@ -127,6 +127,7 @@ import {
   runLingdongPlatformGate,
   setLingdongPrepLessonId,
 } from "./lingdongPlatformGate.js";
+import { resolveLingdongClassroomRuntimeEnv } from "./lingdongClassroomRuntimeEnv.js";
 import { resolveLingdongWebSearchSettings } from "./lingdongWebSearchSettings.js";
 import { createTempTextAttachment } from "./tempTextAttachment.js";
 import { flushMainE2ECoverage } from "./e2eCoverage.js";
@@ -2173,6 +2174,7 @@ app.whenReady().then(async () => {
     ZCODE_LINGDONG_CLASSROOM_ID: lingdongPlatform.context.classroom?.id ?? "",
     ZCODE_LINGDONG_QUOTA_FILE: lingdongPlatform.quotaFilePath,
     ZCODE_PLATFORM_SYSTEM_PROMPT_FILE: lingdongPlatform.systemPromptFilePath,
+    ...resolveLingdongClassroomRuntimeEnv(lingdongPlatform.context),
   });
   Object.assign(process.env, hostProcessLocalEnv);
   markMainLaunchAppReady();
