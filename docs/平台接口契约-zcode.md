@@ -149,6 +149,40 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
   `copyrightConfirmed=false`，且不采集封面
 - 客户端整单上限为 100MB 实际数据字节（文件 + 封面 + meta），multipart 协议开销由平台额外允许
 
+### submit-upload 直传 OSS
+
+新客户端优先使用平台直传接口；旧 JSON / multipart 入口继续兼容旧客户端。完整规则见
+`docs/specs/lingdong-submit-upload-direct-oss.md`。
+
+1. `POST /api/student/runtime/submit-upload/prepare`
+
+请求提交入口名、任务/课堂字段和文件清单：
+
+- 二进制文件：`{ name, binary: true, size, md5 }`，`md5` 为 32 位 hex
+- 文本文件：`{ name, binary: false, size }`
+- `mimeType` 可不传，平台按文件名补齐
+
+响应返回 `uploadToken`、过期时间和每个二进制文件的预签名 PUT `url` / `headers`。uploadToken 有效 30 分钟，
+PUT URL 有效 15 分钟；PUT 必须原样携带返回的 `content-type`，它参与签名。
+
+2. 客户端并发 3 PUT 二进制文件；单个上传失败重试一次。
+
+3. `POST /api/student/runtime/submit-upload/direct`
+
+请求包含：
+
+- `uploadToken`
+- 入口名、标题、`copyrightConfirmed`
+- 文本文件 `content`
+- 二进制文件引用 `{ name, binary: true }`
+- 可选 `cover: true`
+- `taskId` / `sessionId` / `autoSubmit` / `classroomId` / `workspaceIdentity`
+
+平台会 HEAD 校验大小/ETag，读取前 64 字节做 magic 校验，通过后登记资产并落作品。
+
+限制：单次最多 60 个文件，文件与封面总字节不超过 100MB，封面不超过 1.5MB。prepare 返回 `501`、`404`、
+`DIRECT_UPLOAD_UNAVAILABLE` 或 PUT 失败时客户端回退 multipart；direct finalize 的业务错误不回退。
+
 平台按 `(conversation_id, client_task_id, entry_file)` 判重：同一任务同一入口覆盖并递增 round，
 不同任务同名入口为独立作品。提交响应顶层和 `works[]`、以及 `GET /student/works` 每条都必须回显 `taskId`。
 

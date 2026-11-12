@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 const cdp = process.env.LINGDONG_E2E_CDP || "http://127.0.0.1:9229";
 const mock = process.env.LINGDONG_E2E_MOCK || "http://127.0.0.1:19090";
+const expectedTransport = process.env.LINGDONG_E2E_EXPECT_TRANSPORT || "direct";
 for (const url of [cdp, mock]) {
   assert.ok(
     ["localhost", "127.0.0.1", "[::1]"].includes(new URL(url).hostname),
@@ -19,6 +20,11 @@ const classroomSetup = await fetch(`${mock}/__test/classrooms`, {
   body: JSON.stringify({ mode: "active", count: 1 }),
 });
 assert.equal(classroomSetup.status, 200, "重置课堂形态失败");
+const directSetup = await fetch(`${mock}/__test/direct-upload`, {
+  method: "POST",
+  body: JSON.stringify({ enabled: expectedTransport === "direct", failNextPut: true }),
+});
+assert.equal(directSetup.status, 200, "重置直传形态失败");
 // 平台网关历史截断标记：开启后每个 /chat/completions 响应都带 x-platform-history-dropped。
 // 只发 dropped（不发保留上限），用于验证客户端不依赖 limit 也能提示。
 const historySetup = await fetch(`${mock}/__test/history`, {
@@ -201,11 +207,16 @@ try {
   await submittedButton.waitFor({ timeout: 10_000 });
   assert.equal(await submittedButton.isDisabled(), true, "没有新产出时提交按钮必须置灰");
   const result = await (await fetch(`${mock}/__test/state`)).json();
-  assert.match(
-    result.lastSubmitContentType,
-    /^multipart\/form-data;\s*boundary=/iu,
-    "submit-upload 必须使用 multipart/form-data",
-  );
+  assert.equal(result.lastSubmitTransport, expectedTransport, "submit-upload transport 不符合预期");
+  if (expectedTransport === "multipart") {
+    assert.match(
+      result.lastSubmitContentType,
+      /^multipart\/form-data;\s*boundary=/iu,
+      "fallback 必须使用 multipart/form-data",
+    );
+  } else {
+    assert.ok(result.directPutRetries >= 1, "direct PUT 必须实际执行一次失败重试");
+  }
   await dialog.getByText("我的作品", { exact: true }).waitFor({ timeout: 10_000 });
   await dialog.getByRole("button", { name: "预览", exact: true }).first().click();
   const previewFrame = page.frameLocator("iframe[sandbox]").last();

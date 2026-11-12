@@ -1,5 +1,6 @@
 /* oxlint-disable eslint(max-lines) -- mock 平台在单文件里复刻生产契约，拆开会让各场景响应形状漂移。 */
 import http from "node:http";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve, join } from "node:path";
 const root = resolve(".tmp/windows-platform-e2e");
@@ -87,6 +88,12 @@ const works = [];
 const workFileContents = new Map();
 const workSubmissions = [];
 let lastSubmitContentType = "";
+let lastSubmitTransport = "";
+const directUploads = new Map();
+let directUploadEnabled = true;
+let directPutAttempts = 0;
+let directPutRetries = 0;
+let failNextDirectPut = true;
 let classroomEndedAt = null;
 let used = 0;
 let quotaLimit = 10;
@@ -145,6 +152,11 @@ async function body(req) {
   let raw = "";
   for await (const c of req) raw += c;
   return raw ? JSON.parse(raw) : {};
+}
+async function rawBody(req) {
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  return Buffer.concat(chunks);
 }
 /**
  * submit-upload 的两种形态：老 JSON 与新 multipart。
@@ -283,6 +295,24 @@ function context(sessionId) {
 const server = http.createServer(async (req, res) => {
   try {
     const pathname = new URL(req.url, origin).pathname;
+    const directPutMatch = /^\/__test\/oss\/([^/]+)\/(.+)$/u.exec(pathname);
+    if (directPutMatch && req.method === "PUT") {
+      directPutAttempts += 1;
+      if (failNextDirectPut) {
+        failNextDirectPut = false;
+        directPutRetries += 1;
+        return fail(res, 503, "MOCK_PUT_RETRY", "模拟一次预签名上传失败");
+      }
+      if (String(req.headers["content-type"] || "") !== "application/octet-stream") {
+        return fail(res, 403, "MOCK_PUT_SIGNATURE_MISMATCH", "content-type 必须与签名一致");
+      }
+      const token = decodeURIComponent(directPutMatch[1]);
+      const name = decodeURIComponent(directPutMatch[2]);
+      const prepared = directUploads.get(token);
+      if (!prepared) return fail(res, 404, "MOCK_DIRECT_TOKEN_MISSING", "上传票据不存在");
+      prepared.objects.set(name, await rawBody(req));
+      return json(res, 200, { ok: true, etag: `etag-${name}` });
+    }
     if (pathname === "/__test/usage" && req.method === "POST") {
       const data = await body(req);
       usageOverride = {
@@ -325,6 +355,14 @@ const server = http.createServer(async (req, res) => {
       toolRound = 0;
       return json(res, 200, { mode });
     }
+    if (pathname === "/__test/direct-upload" && req.method === "POST") {
+      const data = await body(req);
+      directUploadEnabled = data.enabled !== false;
+      failNextDirectPut = data.failNextPut !== false;
+      directPutAttempts = 0;
+      directPutRetries = 0;
+      return json(res, 200, { directUploadEnabled, failNextDirectPut });
+    }
     if (pathname === "/__test/history" && req.method === "POST") {
       const data = await body(req);
       historyTruncation = { dropped: Number(data.dropped ?? 0) };
@@ -349,6 +387,10 @@ const server = http.createServer(async (req, res) => {
         works,
         workSubmissions,
         lastSubmitContentType,
+        lastSubmitTransport,
+        directPutAttempts,
+        directPutRetries,
+        directUploadEnabled,
         classroomEndedAt,
         used,
         revision,
@@ -396,7 +438,102 @@ const server = http.createServer(async (req, res) => {
       if (submitIncludesWorks) return ok(res, { items: [], total: 0 });
       return ok(res, { items: works, total: works.length });
     }
+    if (pathname === "/api/student/runtime/submit-upload/prepare" && req.method === "POST") {
+      if (!directUploadEnabled) {
+        return fail(res, 501, "DIRECT_UPLOAD_UNAVAILABLE", "mock 直传未启用");
+      }
+      const data = await body(req);
+      const token = `direct-${Date.now()}-${directUploads.size}`;
+      const files = Array.isArray(data.files) ? data.files : [];
+      directUploads.set(token, { files, objects: new Map() });
+      return ok(res, {
+        uploadToken: token,
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
+        files: files.map((file) => ({
+          name: String(file?.name ?? ""),
+          binary: file?.binary === true,
+          method: "PUT",
+          ...(file?.binary === true
+            ? {
+                url: `${origin}/__test/oss/${encodeURIComponent(token)}/${encodeURIComponent(String(file.name))}`,
+                headers: { "content-type": "application/octet-stream" },
+              }
+            : {}),
+        })),
+      });
+    }
+    if (pathname === "/api/student/runtime/submit-upload/direct" && req.method === "POST") {
+      const data = await body(req);
+      const token = String(data.uploadToken || "");
+      const prepared = directUploads.get(token);
+      if (!prepared) return fail(res, 400, "DIRECT_UPLOAD_TOKEN_INVALID", "上传票据无效");
+      for (const manifestFile of prepared.files) {
+        if (manifestFile?.binary !== true) continue;
+        const object = prepared.objects.get(String(manifestFile.name));
+        if (!object) {
+          return fail(res, 400, "DIRECT_UPLOAD_OBJECT_MISSING", `缺少对象：${manifestFile.name}`);
+        }
+        if (object.byteLength !== Number(manifestFile.size)) {
+          return fail(res, 400, "DIRECT_UPLOAD_SIZE_MISMATCH", `大小不一致：${manifestFile.name}`);
+        }
+        const md5 = createHash("md5").update(object).digest("hex");
+        if (manifestFile.md5 && md5 !== String(manifestFile.md5)) {
+          return fail(
+            res,
+            400,
+            "DIRECT_UPLOAD_CHECKSUM_MISMATCH",
+            `md5 不一致：${manifestFile.name}`,
+          );
+        }
+      }
+      const sessionId =
+        typeof data.sessionId === "string" ? data.sessionId.trim() : activeClassroom.id;
+      const autoSubmit = data.autoSubmit === true;
+      const files = (Array.isArray(data.files) ? data.files : []).map((file) => {
+        const name = String(file?.name ?? "");
+        if (file?.binary === true) {
+          return { name, binary: true, content: prepared.objects.get(name).toString("base64") };
+        }
+        return { name, binary: false, content: String(file?.content ?? "") };
+      });
+      const work = {
+        id: "work-" + (works.length + 1),
+        name: data.name,
+        entryFile: data.name,
+        classSessionId: sessionId,
+        source: "VIBECODING",
+        submittedAt: new Date().toISOString(),
+        title: data.title,
+        autoSubmitted: autoSubmit,
+        copyrightConfirmed: autoSubmit ? false : data.copyrightConfirmed === true,
+        ...(typeof data.taskId === "string" && data.taskId.trim()
+          ? { taskId: data.taskId.trim() }
+          : {}),
+        files: files.map((file) => ({ name: file.name, binary: file.binary })),
+        cover: data.cover === true,
+      };
+      works.push(work);
+      workFileContents.set(
+        work.id,
+        Object.fromEntries(files.map((file) => [file.name, file.content])),
+      );
+      workSubmissions.push({
+        ...data,
+        files: work.files,
+        at: Date.now(),
+      });
+      lastSubmitTransport = "direct";
+      return ok(res, {
+        ok: true,
+        id: work.id,
+        autoSubmitted: autoSubmit,
+        warnings: [],
+        missing: [],
+        works: [work],
+      });
+    }
     if (pathname === "/api/student/runtime/submit-upload" && req.method === "POST") {
+      lastSubmitTransport = "multipart";
       lastSubmitContentType = String(req.headers["content-type"] || "");
       const data = await submitBody(req);
       const autoSubmit = data.autoSubmit === true;

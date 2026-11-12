@@ -1441,6 +1441,155 @@ async function captureHtmlCover(
   }
 }
 
+type DirectPrepareTarget = Readonly<{
+  name: string;
+  binary: boolean;
+  method?: string;
+  url?: string;
+  headers?: Record<string, string>;
+}>;
+type DirectPrepareResponse = Readonly<{
+  uploadToken: string;
+  expiresAt?: string;
+  files: DirectPrepareTarget[];
+}>;
+
+function directUploadUnavailable(error: unknown): boolean {
+  return (
+    error instanceof PlatformRequestError &&
+    (error.code === "DIRECT_UPLOAD_UNAVAILABLE" || error.status === 501 || error.status === 404)
+  );
+}
+
+async function mapWithConcurrency<T>(
+  items: readonly T[],
+  limit: number,
+  worker: (item: T) => Promise<void>,
+): Promise<void> {
+  let cursor = 0;
+  const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    for (;;) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      await worker(items[index]!);
+    }
+  });
+  await Promise.all(runners);
+}
+
+async function putDirectUploadFile(input: {
+  file: { name: string; buffer: Buffer };
+  target: DirectPrepareTarget;
+}): Promise<void> {
+  const url = input.target.url;
+  if (!url) throw new Error(`缺少上传地址：${input.file.name}`);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await fetch(url, {
+        method: input.target.method || "PUT",
+        headers: input.target.headers,
+        body: input.file.buffer,
+      });
+      if (response.ok) return;
+      lastError = new Error(`上传 ${input.file.name} 失败（HTTP ${response.status}）`);
+    } catch (error) {
+      lastError = error;
+    }
+    if (attempt === 1) await new Promise((resolveRetry) => setTimeout(resolveRetry, 250));
+  }
+  throw lastError instanceof Error ? lastError : new Error(`上传 ${input.file.name} 失败`);
+}
+
+/**
+ * 直传 OSS（2026-11-12）：prepare 拿预签名 PUT → 客户端直接上传 → direct 提交文本/引用。
+ * 返回 null 表示平台未启用直传或上传阶段网络失败，调用方回退 multipart。
+ * 平台校验失败（票据/大小/md5/magic）会如实抛错，不吞。
+ */
+async function submitWorkDirect(input: {
+  files: readonly WorkFilePayload[];
+  entryName: string;
+  taskId: string | null;
+  taskTitle: string;
+  autoSubmit: boolean;
+  sessionId: string;
+  copyrightConfirmed: boolean;
+  cover?: { readonly buffer: Buffer };
+}): Promise<unknown | null> {
+  const uploadFiles: Array<{ name: string; buffer: Buffer; binary: boolean }> = input.files.map(
+    (file) => ({
+      name: file.name,
+      buffer: file.buffer,
+      binary: file.binary,
+    }),
+  );
+  if (input.cover)
+    uploadFiles.push({ name: "cover.png", buffer: input.cover.buffer, binary: true });
+  const manifest = uploadFiles.map((file) => ({
+    name: file.name,
+    binary: file.binary,
+    size: file.buffer.byteLength,
+    ...(file.binary ? { md5: createHash("md5").update(file.buffer).digest("hex") } : {}),
+  }));
+
+  let prepared: DirectPrepareResponse;
+  try {
+    prepared = unwrap<DirectPrepareResponse>(
+      await callPlatform("/api/student/runtime/submit-upload/prepare", {
+        method: "POST",
+        body: JSON.stringify({
+          name: input.entryName,
+          ...(input.taskId ? { taskId: input.taskId } : {}),
+          ...(input.autoSubmit ? { sessionId: input.sessionId, autoSubmit: true } : {}),
+          files: manifest,
+        }),
+      }),
+    );
+  } catch (error) {
+    if (directUploadUnavailable(error)) return null;
+    throw error;
+  }
+  const targets = new Map(prepared.files.map((file) => [file.name, file]));
+  const binaryFiles = uploadFiles.filter((file) => file.binary);
+  try {
+    await mapWithConcurrency(binaryFiles, 3, async (file) => {
+      const target = targets.get(file.name);
+      if (!target) throw new Error(`缺少上传地址：${file.name}`);
+      await putDirectUploadFile({ file, target });
+    });
+  } catch (error) {
+    // 上传阶段网络/OSS 失败：回退 multipart；已经在 OSS 上的对象由平台侧后续清理。
+    console.warn("[lingdong-gate] 直传 OSS 失败，回退 multipart。", error);
+    return null;
+  }
+
+  return unwrap<Record<string, unknown>>(
+    await callPlatform("/api/student/runtime/submit-upload/direct", {
+      method: "POST",
+      body: JSON.stringify({
+        uploadToken: prepared.uploadToken,
+        name: input.entryName,
+        title: input.taskTitle || input.entryName,
+        copyrightConfirmed: input.autoSubmit ? false : input.copyrightConfirmed,
+        files: uploadFiles.map((file) =>
+          file.binary
+            ? { name: file.name, binary: true }
+            : { name: file.name, binary: false, content: file.buffer.toString("utf8") },
+        ),
+        ...(input.cover ? { cover: true } : {}),
+        ...(input.taskId ? { taskId: input.taskId } : {}),
+        ...(input.autoSubmit
+          ? { sessionId: input.sessionId, autoSubmit: true }
+          : {
+              classroomId: activeState?.context.classroom?.id,
+              workspaceIdentity: activeState?.workspaceIdentity,
+            }),
+      }),
+    }),
+  );
+}
+
 async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   const submitStartedAt = Date.now();
@@ -1482,20 +1631,6 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   const cover = autoSubmit ? undefined : await captureHtmlCover(prepared.entryPath);
   const coverMs = Date.now() - coverStartedAt;
   if (cover) meta.cover = true;
-  // 2026-11-12：改 multipart —— 不再 base64 编码，文件字节直接进 part；
-  // meta 里只留文件名与 binary 标记，与平台 `file:<i>` 顺序对应。
-  const form = new FormData();
-  form.append("meta", JSON.stringify(meta));
-  files.forEach((file, index) => {
-    form.append(
-      `file:${index}`,
-      new Blob([file.buffer], { type: "application/octet-stream" }),
-      file.name,
-    );
-  });
-  if (cover) {
-    form.append("cover", new Blob([cover.buffer], { type: "image/png" }), "cover.png");
-  }
   const requestBytes =
     files.reduce((sum, file) => sum + file.buffer.byteLength, 0) +
     (cover?.buffer.byteLength ?? 0) +
@@ -1503,16 +1638,43 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   if (requestBytes > MAX_WORK_REQUEST_BYTES) {
     throw new Error("作品编码后太大，请减少素材后再提交。");
   }
-  // 平台新版在提交响应里直接回 works（形状同 GET /student/works）；解包后交给 renderer。
   const uploadStartedAt = Date.now();
-  const result = unwrap<Record<string, unknown>>(
-    await callPlatformMultipart("/api/student/runtime/submit-upload", form),
-  );
+  let transport = "direct";
+  // 2026-11-12 长期方案：先试预签名直传（服务端只收文本/引用）；平台未启用或上传失败再回退 multipart。
+  let result = await submitWorkDirect({
+    files,
+    entryName: entry.name,
+    taskId,
+    taskTitle,
+    autoSubmit,
+    sessionId,
+    copyrightConfirmed: input.copyrightConfirmed === true,
+    cover,
+  });
+  if (!result) {
+    transport = "multipart";
+    // 老通道：不再 base64 编码，文件字节直接进 part；meta 里只留文件名与 binary 标记。
+    const form = new FormData();
+    form.append("meta", JSON.stringify(meta));
+    files.forEach((file, index) => {
+      form.append(
+        `file:${index}`,
+        new Blob([file.buffer], { type: "application/octet-stream" }),
+        file.name,
+      );
+    });
+    if (cover) {
+      form.append("cover", new Blob([cover.buffer], { type: "image/png" }), "cover.png");
+    }
+    result = unwrap<Record<string, unknown>>(
+      await callPlatformMultipart("/api/student/runtime/submit-upload", form),
+    );
+  }
   const uploadMs = Date.now() - uploadStartedAt;
   // 平台 submit-upload 已返回分阶段 timings；没有这行日志时只能看到“处理中”，
   // 没法判断时间花在客户端封面采集、请求传输还是平台落盘/入库。
   console.info(
-    `[lingdong-gate] submit-upload done mode=${autoSubmit ? "auto" : "manual"} preparedMs=${preparedMs} coverMs=${coverMs} uploadMs=${uploadMs} totalMs=${Date.now() - submitStartedAt} timings=${JSON.stringify(record<unknown>(result) ? (result.timings ?? null) : null)}`,
+    `[lingdong-gate] submit-upload done transport=${transport} mode=${autoSubmit ? "auto" : "manual"} preparedMs=${preparedMs} coverMs=${coverMs} uploadMs=${uploadMs} totalMs=${Date.now() - submitStartedAt} timings=${JSON.stringify(record<unknown>(result) ? (result.timings ?? null) : null)}`,
   );
   const autoSubmitSkipped = record<unknown>(result) && result.autoSubmitSkipped === true;
   if (!autoSubmitSkipped) {
