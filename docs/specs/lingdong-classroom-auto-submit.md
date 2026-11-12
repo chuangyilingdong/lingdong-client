@@ -5,7 +5,8 @@
 老师结束课堂后，平台在 10 分钟宽限期内允许客户端为刚结束的 VibeCoding 课堂补交作品。
 学生没有在课堂内点「提交作品」时，只要客户端仍开着，就应在检测到课堂结束后自动提交本节课产生的任务。
 
-平台接口：`POST /api/student/runtime/submit-upload`。自动提交时请求额外携带：
+平台接口：`POST /api/student/runtime/submit-upload`，请求为 `multipart/form-data`。
+自动提交时 `meta` part 里的 JSON 额外携带：
 
 ```jsonc
 {
@@ -13,8 +14,11 @@
   "sessionId": "csession_...",
   "autoSubmit": true,
   "copyrightConfirmed": false,
+  "files": [{ "name": "index.html", "binary": false }],
 }
 ```
+
+入口文件和素材分别放在 `file:0`、`file:1` … part；自动提交不发送 `cover`。
 
 平台只接受 ENDED、结束时间在宽限期内、学生在名单内且课时为 VibeCoding 的课堂。
 手动提交过的同 `taskId + entryFile` 不覆盖；自动提交结果允许 `autoSubmitSkipped`。

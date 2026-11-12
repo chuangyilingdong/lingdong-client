@@ -86,6 +86,7 @@ const requests = [];
 const works = [];
 const workFileContents = new Map();
 const workSubmissions = [];
+let lastSubmitContentType = "";
 let classroomEndedAt = null;
 let used = 0;
 let quotaLimit = 10;
@@ -144,6 +145,43 @@ async function body(req) {
   let raw = "";
   for await (const c of req) raw += c;
   return raw ? JSON.parse(raw) : {};
+}
+/**
+ * submit-upload 的两种形态：老 JSON 与新 multipart。
+ * mock 只复刻 E2E 需要的字段；文件内容仍还原成 content 供作品预览接口使用。
+ */
+async function submitBody(req) {
+  const contentType = String(req.headers["content-type"] || "");
+  if (!contentType.toLowerCase().startsWith("multipart/form-data")) return body(req);
+  const chunks = [];
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  const request = new Request(`${origin}/api/student/runtime/submit-upload`, {
+    method: "POST",
+    headers: { "content-type": contentType },
+    body: Buffer.concat(chunks),
+  });
+  const form = await request.formData();
+  const meta = JSON.parse(String(form.get("meta") || "{}"));
+  const declared = Array.isArray(meta.files) ? meta.files : [];
+  const files = await Promise.all(
+    declared.map(async (item, index) => {
+      const part = form.get(`file:${index}`);
+      const buffer =
+        part && typeof part === "object" && typeof part.arrayBuffer === "function"
+          ? Buffer.from(await part.arrayBuffer())
+          : Buffer.alloc(0);
+      return {
+        name: String(item?.name ?? ""),
+        binary: item?.binary === true,
+        content: item?.binary === true ? buffer.toString("base64") : buffer.toString("utf8"),
+      };
+    }),
+  );
+  return {
+    ...meta,
+    files,
+    ...(form.has("cover") ? { cover: { content: "" } } : {}),
+  };
 }
 /**
  * 老师端「VibeCoding 备课」上下文（对齐平台生产响应）。
@@ -310,6 +348,7 @@ const server = http.createServer(async (req, res) => {
         prepContexts,
         works,
         workSubmissions,
+        lastSubmitContentType,
         classroomEndedAt,
         used,
         revision,
@@ -358,7 +397,8 @@ const server = http.createServer(async (req, res) => {
       return ok(res, { items: works, total: works.length });
     }
     if (pathname === "/api/student/runtime/submit-upload" && req.method === "POST") {
-      const data = await body(req);
+      lastSubmitContentType = String(req.headers["content-type"] || "");
+      const data = await submitBody(req);
       const autoSubmit = data.autoSubmit === true;
       const sessionId =
         typeof data.sessionId === "string" ? data.sessionId.trim() : activeClassroom.id;

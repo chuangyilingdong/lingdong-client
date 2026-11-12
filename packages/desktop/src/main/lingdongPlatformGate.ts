@@ -191,16 +191,8 @@ function messageFrom(value: unknown, fallback: string): string {
   return fallback;
 }
 
-async function apiRequest(path: string, init: RequestInit = {}, token?: string): Promise<unknown> {
-  const headers = new Headers(init.headers);
-  headers.set("content-type", "application/json");
-  if (token) headers.set("authorization", `Bearer ${token}`);
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
-  } catch (error) {
-    throw new PlatformRequestError(describePlatformNetworkError(error), { code: "NETWORK_ERROR" });
-  }
+/** 两个请求助手共用的响应处理：JSON 解析 + 平台错误码归一化。 */
+async function readPlatformResponse(response: Response): Promise<unknown> {
   const text = await response.text();
   let payload: unknown = null;
   try {
@@ -219,6 +211,35 @@ async function apiRequest(path: string, init: RequestInit = {}, token?: string):
     );
   }
   return payload;
+}
+
+async function apiRequest(path: string, init: RequestInit = {}, token?: string): Promise<unknown> {
+  const headers = new Headers(init.headers);
+  headers.set("content-type", "application/json");
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  } catch (error) {
+    throw new PlatformRequestError(describePlatformNetworkError(error), { code: "NETWORK_ERROR" });
+  }
+  return readPlatformResponse(response);
+}
+
+/**
+ * multipart 提交（2026-11-12）：不设 content-type，交给 fetch 自己带 boundary。
+ * 只给 submit-upload 用；其它平台请求仍然走 apiRequest。
+ */
+async function apiRequestMultipart(path: string, form: FormData, token?: string): Promise<unknown> {
+  const headers = new Headers();
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}${path}`, { method: "POST", headers, body: form });
+  } catch (error) {
+    throw new PlatformRequestError(describePlatformNetworkError(error), { code: "NETWORK_ERROR" });
+  }
+  return readPlatformResponse(response);
 }
 
 function serializePlatformOperationError(error: unknown): {
@@ -862,7 +883,7 @@ async function scanLingdongWorkspaceFiles(input?: unknown): Promise<unknown> {
 }
 
 type SubmitItem = Readonly<{ path?: unknown; relativePath?: unknown; name?: unknown }>;
-type WorkFilePayload = Readonly<{ name: string; content: string; binary: boolean }>;
+type WorkFilePayload = Readonly<{ name: string; buffer: Buffer; binary: boolean }>;
 const WORK_TEXT_EXTENSIONS = new Set([
   ".css",
   ".csv",
@@ -933,8 +954,9 @@ const MAX_WORK_FILES = 60;
 // 整单上限跟平台对齐：平台侧是 RUNTIME_UPLOAD_MAX_BYTES（生产 100MB）。
 // 16MB 是旧值——那时一节带视频的作品根本交不上去（视频被静默跳过）。
 const MAX_WORK_TOTAL_BYTES = 100 * 1024 * 1024;
-// base64 会把 100MB 撑到约 133MB；留出余量，但仍远低于平台 201MB 的 body 上限。
-const MAX_WORK_REQUEST_BYTES = 140 * 1024 * 1024;
+// 2026-11-12：改成 multipart 后按**实际字节**算（不再有 base64 膨胀）。
+// 平台侧请求上限是 RUNTIME_UPLOAD_MAX_BYTES + 8MB（生产 100MB → ~108MB）。
+const MAX_WORK_REQUEST_BYTES = 100 * 1024 * 1024;
 const COVER_MAX_BYTES = Math.floor(1.5 * 1024 * 1024);
 const COVER_TIMEOUT_MS = 12_000;
 const HTML_ENTRY_EXTENSIONS = new Set([".htm", ".html"]);
@@ -1247,14 +1269,11 @@ async function prepareSubmitFiles(items: readonly SubmitItem[]): Promise<{
 }> {
   const plan = await resolveSubmitPlan(items);
   const files = await Promise.all(
-    plan.files.map(async (file) => {
-      const bytes = await readFile(file.absolute);
-      return {
-        name: file.name,
-        content: file.binary ? bytes.toString("base64") : bytes.toString("utf8"),
-        binary: file.binary,
-      };
-    }),
+    plan.files.map(async (file) => ({
+      name: file.name,
+      buffer: await readFile(file.absolute),
+      binary: file.binary,
+    })),
   );
   return {
     files,
@@ -1340,7 +1359,7 @@ function coverMimeType(path: string): string {
 
 async function captureHtmlCover(
   entryPath: string,
-): Promise<{ readonly content: string } | undefined> {
+): Promise<{ readonly buffer: Buffer } | undefined> {
   if (![".html", ".htm"].includes(extname(entryPath).toLowerCase())) return undefined;
   const root = await realpath(activeState?.workspacePath || "").catch(() => "");
   const entry = await realpath(entryPath).catch(() => "");
@@ -1405,7 +1424,7 @@ async function captureHtmlCover(
       let png = image.toPNG();
       if (png.byteLength > COVER_MAX_BYTES)
         png = image.resize({ width: 1024, height: 576 }).toPNG();
-      return png.byteLength <= COVER_MAX_BYTES ? { content: png.toString("base64") } : undefined;
+      return png.byteLength <= COVER_MAX_BYTES ? { buffer: png } : undefined;
     } finally {
       if (timeout) clearTimeout(timeout);
       window.destroy();
@@ -1445,11 +1464,11 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   );
   if (!entry || !prepared.entryPath)
     throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
-  const body: Record<string, unknown> = {
+  const meta: Record<string, unknown> = {
     name: entry.name,
     title: taskTitle || entry.name,
     copyrightConfirmed: autoSubmit ? false : input.copyrightConfirmed === true,
-    files,
+    files: files.map((file) => ({ name: file.name, binary: file.binary })),
     ...(taskId ? { taskId } : {}),
     ...(autoSubmit
       ? { sessionId, autoSubmit: true }
@@ -1462,17 +1481,32 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
   // 自动补交受 10 分钟窗口约束，优先把时间留给正文和素材；封面仍由手动提交链路采集。
   const cover = autoSubmit ? undefined : await captureHtmlCover(prepared.entryPath);
   const coverMs = Date.now() - coverStartedAt;
-  if (cover) body.cover = cover;
-  if (Buffer.byteLength(JSON.stringify(body), "utf8") > MAX_WORK_REQUEST_BYTES) {
+  if (cover) meta.cover = true;
+  // 2026-11-12：改 multipart —— 不再 base64 编码，文件字节直接进 part；
+  // meta 里只留文件名与 binary 标记，与平台 `file:<i>` 顺序对应。
+  const form = new FormData();
+  form.append("meta", JSON.stringify(meta));
+  files.forEach((file, index) => {
+    form.append(
+      `file:${index}`,
+      new Blob([file.buffer], { type: "application/octet-stream" }),
+      file.name,
+    );
+  });
+  if (cover) {
+    form.append("cover", new Blob([cover.buffer], { type: "image/png" }), "cover.png");
+  }
+  const requestBytes =
+    files.reduce((sum, file) => sum + file.buffer.byteLength, 0) +
+    (cover?.buffer.byteLength ?? 0) +
+    Buffer.byteLength(JSON.stringify(meta), "utf8");
+  if (requestBytes > MAX_WORK_REQUEST_BYTES) {
     throw new Error("作品编码后太大，请减少素材后再提交。");
   }
   // 平台新版在提交响应里直接回 works（形状同 GET /student/works）；解包后交给 renderer。
   const uploadStartedAt = Date.now();
   const result = unwrap<Record<string, unknown>>(
-    await callPlatform("/api/student/runtime/submit-upload", {
-      method: "POST",
-      body: JSON.stringify(body),
-    }),
+    await callPlatformMultipart("/api/student/runtime/submit-upload", form),
   );
   const uploadMs = Date.now() - uploadStartedAt;
   // 平台 submit-upload 已返回分阶段 timings；没有这行日志时只能看到“处理中”，
@@ -1502,6 +1536,11 @@ async function submitWorkFromDesktop(payload: unknown): Promise<unknown> {
 async function callPlatform(path: string, init: RequestInit = {}): Promise<unknown> {
   if (!activeState) throw new Error("平台登录尚未完成。");
   return apiRequest(path, init, activeState.session.token);
+}
+
+async function callPlatformMultipart(path: string, form: FormData): Promise<unknown> {
+  if (!activeState) throw new Error("平台登录尚未完成。");
+  return apiRequestMultipart(path, form, activeState.session.token);
 }
 
 function getWorkPreviewServer(): ReturnType<typeof createLingdongWorkPreviewServer> {

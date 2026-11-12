@@ -201,6 +201,11 @@ try {
   await submittedButton.waitFor({ timeout: 10_000 });
   assert.equal(await submittedButton.isDisabled(), true, "没有新产出时提交按钮必须置灰");
   const result = await (await fetch(`${mock}/__test/state`)).json();
+  assert.match(
+    result.lastSubmitContentType,
+    /^multipart\/form-data;\s*boundary=/iu,
+    "submit-upload 必须使用 multipart/form-data",
+  );
   await dialog.getByText("我的作品", { exact: true }).waitFor({ timeout: 10_000 });
   await dialog.getByRole("button", { name: "预览", exact: true }).first().click();
   const previewFrame = page.frameLocator("iframe[sandbox]").last();

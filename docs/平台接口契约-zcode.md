@@ -13,7 +13,7 @@ ZCode 作为客户端底座，平台服务端继续保持现有账号、课堂�
 | GET  | `/api/student/runtime/client-context` | 当前课堂、网关、模型、预设、发送次数、课堂工作区 |
 | POST | `/api/student/runtime/submit-upload`  | 上传/提交课堂作品                                |
 | GET  | `/api/student/works?page=1&limit=20`  | 查询历史作品                                     |
-| GET  | `/api/student/works/VIBECODING/:id`  | 查询本人作品详情、文件快照与 worksLlm            |
+| GET  | `/api/student/works/VIBECODING/:id`   | 查询本人作品详情、文件快照与 worksLlm            |
 
 接口响应可以是 `{ data: payload }` 或直接返回 payload；错误建议继续返回 `{ error: { code, message } }` 或 `{ message }`。
 
@@ -115,14 +115,39 @@ ZCode 第一阶段固定使用 OpenAI Chat Completions 兼容协议：
 
 ## 作品提交
 
-当前 `submit-upload` 接口继续兼容即可。建议支持：
+平台生产已支持 `multipart/form-data`，同时保留旧 JSON 入口。新客户端使用 multipart，
+旧客户端无需强制升级。协议详见 `docs/specs/lingdong-submit-upload-multipart.md`。
 
-- `files[]`，每项为 `{ name, content, binary }`；文本文件 `content` 为 UTF-8，二进制文件 `content` 为 base64
-- `cover`（可选 PNG base64 或平台已有文件引用）
-- `copyrightConfirmed`
+请求由以下 part 组成：
+
+- `meta`：JSON 字符串，至少包含 `name`、`title`、`copyrightConfirmed` 和 `files` 元数据
+- `file:0`、`file:1` …：按索引与 `meta.files` 对应的原始文件字节
+- `cover`（可选）：PNG 原始字节；存在时 `meta.cover=true`
+
+`meta` 示例：
+
+```json
+{
+  "name": "index.html",
+  "title": "我的课堂作品",
+  "copyrightConfirmed": true,
+  "files": [
+    { "name": "index.html", "binary": false },
+    { "name": "assets/hero.png", "binary": true }
+  ],
+  "taskId": "3f2c..."
+}
+```
+
+字段规则：
+
+- `files[i].binary` 只描述素材类型，文件 part 本身始终是原始字节，不做 base64/UTF-8 转换
 - `taskId`（可选 string，trim 后 ≤200；有当前 ZCode 任务时必带，草稿态不传）
 - `sessionId`（课后自动补交必填，值为刚刚结束的课堂 id）
 - `autoSubmit`（可选 boolean；true 表示老师结束课堂后的自动补交）
+- 手动提交可带 `classroomId` / `workspaceIdentity`；自动补交带 `sessionId`、`autoSubmit=true`、
+  `copyrightConfirmed=false`，且不采集封面
+- 客户端整单上限为 100MB 实际数据字节（文件 + 封面 + meta），multipart 协议开销由平台额外允许
 
 平台按 `(conversation_id, client_task_id, entry_file)` 判重：同一任务同一入口覆盖并递增 round，
 不同任务同名入口为独立作品。提交响应顶层和 `works[]`、以及 `GET /student/works` 每条都必须回显 `taskId`。
