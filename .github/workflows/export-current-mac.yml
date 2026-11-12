@@ -1,4 +1,4 @@
-# Release trigger: export the matching macOS artifact for the current commit.
+# Release trigger: Lingdong 0.2.22 classroom stream timeout release.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 
@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 240
     env:
       GITHUB_TOKEN: ${{ github.token }}
-      SOURCE_SHA: ${{ github.sha }}
+      SOURCE_SHA: 3c5857a63bfefd2074132535555a5817698b5eb1
       TARGET_BRANCH: ci/zcode-current-mac
     steps:
       - uses: actions/checkout@v4
