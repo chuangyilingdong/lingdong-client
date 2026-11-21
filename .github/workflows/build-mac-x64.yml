@@ -79,12 +79,19 @@ jobs:
           test -n "$app"
           version="${{ steps.package.outputs.version }}"
           dmg="dist/mac-x64/lingdong-client-${version}-mac-x64.dmg"
+          for volume in /Volumes/*; do
+            case "$(basename "$volume")" in
+              *灵动ai* | *lingdong* | *Lingdong*)
+                hdiutil detach "$volume" -force || true
+                ;;
+            esac
+          done
           staging="$(mktemp -d "${RUNNER_TEMP}/lingdong-dmg.XXXXXX")"
           ditto "$app" "${staging}/$(basename "$app")"
           ln -s /Applications "${staging}/Applications"
           rm -f "$dmg"
           hdiutil create \
-            -volname "灵动ai创作客户端 ${version}" \
+            -volname "lingdong-client-${version}" \
             -srcfolder "$staging" \
             -ov \
             -format UDZO \
