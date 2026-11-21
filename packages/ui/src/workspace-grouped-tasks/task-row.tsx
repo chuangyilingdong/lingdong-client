@@ -3,7 +3,12 @@ import { memo, useState } from "react";
 import type { KeyboardEvent, MouseEvent } from "react";
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { UniqueIdentifier } from "@dnd-kit/core";
-import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
+import {
+  isCronTask,
+  isOffPeakTask,
+  isRemoteWorkspaceIdentity,
+  type ZCodeTaskMeta,
+} from "@zcode/shared";
 import { ArrowUpToLine, Clock, Cloud, Folder, ListTree, LoaderIcon, Moon, X } from "lucide-react";
 import { cn } from "@/components/lib/utils.js";
 import { Badge } from "@/components/ui/badge.js";
@@ -100,13 +105,18 @@ function GroupedTaskRowComponent({
   const workspaceKey = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
   const taskActivity = getTaskListRowActivity(task);
   const taskAttention = getTaskListAttention(task);
+  const isRemoteTask = Boolean(
+    task.workspaceIdentity?.trim() &&
+      isRemoteWorkspaceIdentity(task.workspaceIdentity.trim()),
+  );
   // 交互胶囊是当前最高优先级的右侧状态；无论来自 sessions-index 摘要还是
   // activity attention，都不应再并排显示相对时间并挤压任务标题。
   const hasPendingInteraction = Boolean(task.pendingInteraction) || taskAttention !== null;
   // 远端 session 未就绪时打开文件树必然会被 resolver 拒绝，因此不要暴露
   // 无效 action；本地 task 不需要 remoteSessionId，仍保持入口可用。
   const canOpenFileTree =
-    Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
+    Boolean(onOpenFileTree) &&
+    (!isRemoteTask || Boolean(remoteSessionId));
   const taskAttentionLabel = taskAttention
     ? intl.formatMessage({
         id: taskAttention.kind === "userInput" ? "taskList.userInputTag" : "taskList.permissionTag",

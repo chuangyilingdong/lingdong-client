@@ -11,7 +11,10 @@ import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getTaskTimelineGroupMessage, groupTaskTimelineItems } from "@/lib/taskTimelineGroups.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
 import { compareZCodeTaskListItems } from "@/lib/taskListOrdering.js";
-import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
+import {
+  buildWorkspaceServiceLookup,
+  isRemoteWorkspaceTarget,
+} from "@/lib/workspaceServiceResolver.js";
 import { logger } from "@/logger.js";
 import { MemoTaskItem, TaskListItemContextMenuContent } from "@/TaskListItem.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
@@ -161,7 +164,14 @@ export function WorkspaceTimelineTasksSection({
     () => [
       ...new Set(
         workspaceTabs
-          .filter((tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId)
+          .filter((tab) =>
+            isRemoteWorkspaceTarget({
+              workspacePath: tab.workspacePath,
+              workspaceIdentity: tab.workspaceIdentity,
+              remoteSessionId: tab.remoteSessionId,
+              remoteTarget: tab.remoteTarget,
+            }),
+          )
           .map((tab) => buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity)),
       ),
     ],
@@ -227,9 +237,15 @@ export function WorkspaceTimelineTasksSection({
     (workspaceKey) => remoteTimelineHasMoreByWorkspaceKey[workspaceKey],
   );
   const syncingRemoteWorkspaces = workspaceTabs.some((tab) => {
-    if (!tab.workspaceIdentity && !tab.remoteTarget && !tab.remoteSessionId) {
+    if (
+      !isRemoteWorkspaceTarget({
+        workspacePath: tab.workspacePath,
+        workspaceIdentity: tab.workspaceIdentity,
+        remoteSessionId: tab.remoteSessionId,
+        remoteTarget: tab.remoteTarget,
+      })
+    )
       return false;
-    }
     return Boolean(
       remoteTimelineLoadingByWorkspaceKey[
         buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity)
@@ -268,8 +284,13 @@ export function WorkspaceTimelineTasksSection({
   }, [remoteItems.length, scopedWorkspaceTabs, workspaceTabs]);
 
   useEffect(() => {
-    const remoteTabs = workspaceTabs.filter(
-      (tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId,
+    const remoteTabs = workspaceTabs.filter((tab) =>
+      isRemoteWorkspaceTarget({
+        workspacePath: tab.workspacePath,
+        workspaceIdentity: tab.workspaceIdentity,
+        remoteSessionId: tab.remoteSessionId,
+        remoteTarget: tab.remoteTarget,
+      }),
     );
     if (remoteTabs.length === 0) {
       return;

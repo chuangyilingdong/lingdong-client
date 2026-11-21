@@ -2,6 +2,7 @@ import { createOpenInEditorRemoteTarget } from "@zcode/shared";
 import { useMemo } from "react";
 import { useOptionalTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab, type WindowTabState, type WorkspaceTabState } from "@/store/tabStore.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 
 interface WorkspaceOpenInEditorScope {
   workspacePath?: string;
@@ -36,7 +37,12 @@ function resolveWorkspaceOpenInEditorTarget(
   // identity/session 已提供时精确匹配，旧调用仅在工作区匹配唯一时提取既有脱敏目标。
   const matchedTab = matches.length === 1 ? matches[0] : undefined;
   const hasRemoteMatch = matches.some((tab) =>
-    Boolean(tab.workspaceIdentity || tab.remoteSessionId || tab.remoteTarget),
+    isRemoteWorkspaceTarget({
+      workspacePath: tab.workspacePath,
+      workspaceIdentity: tab.workspaceIdentity,
+      remoteSessionId: tab.remoteSessionId,
+      remoteTarget: tab.remoteTarget,
+    }),
   );
   const remoteTarget = matchedTab?.remoteTarget;
   return {

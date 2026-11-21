@@ -1,3 +1,5 @@
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
+
 interface ConnectivityWorkspaceTab {
   workspacePath: string;
   workspaceIdentity?: string | null;
@@ -7,8 +9,11 @@ interface ConnectivityWorkspaceTab {
 }
 
 function isRemoteWorkspaceTab(tab: ConnectivityWorkspaceTab | null | undefined): boolean {
+  const workspaceIdentity = tab?.workspaceIdentity?.trim();
   return Boolean(
-    tab?.workspaceIdentity?.trim() || tab?.remoteSessionId?.trim() || tab?.remoteTarget,
+    tab?.remoteSessionId?.trim() ||
+      tab?.remoteTarget ||
+      (workspaceIdentity && isRemoteWorkspaceIdentity(workspaceIdentity)),
   );
 }
 
@@ -30,7 +35,9 @@ export function resolveModelProviderConnectivityWorkspacePath(params: {
   // 旧 tab 可能只有 remoteSessionId 或 remoteTarget，没有 workspaceIdentity。
   // 这些 tab 的 workspacePath 仍是远端路径，不能因 identity 缺失而交给 Local Host。
   const activeWorkspaceIsRemote = Boolean(
-    params.activeWorkspaceIdentity?.trim() || isRemoteWorkspaceTab(params.activeWorkspaceTab),
+    (params.activeWorkspaceIdentity?.trim() &&
+      isRemoteWorkspaceIdentity(params.activeWorkspaceIdentity.trim())) ||
+      isRemoteWorkspaceTab(params.activeWorkspaceTab),
   );
   if (!activeWorkspaceIsRemote) {
     const activeLocalPath = params.activeWorkspaceTab?.workspacePath.trim();

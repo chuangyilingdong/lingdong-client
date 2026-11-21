@@ -93,6 +93,7 @@ import {
 import { useShortcutCommandLabel } from "@/shortcuts/useShortcutBindings.js";
 import { setPendingSettingsSectionIntent } from "@/lib/settingsNavigation.js";
 import { buildTaskWorkspaceKey } from "@/lib/taskQueryCache.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 import {
   increaseWorkspaceTaskVisibleLimit,
   resolveVisibleWorkspaceTaskKeys,
@@ -185,7 +186,12 @@ const EMPTY_RECONNECTING_REMOTE_WORKSPACE_LOGS_BY_WORKSPACE_KEY: Record<
 > = {};
 
 function WorkspaceDragOverlay({ tab, width }: { tab: WorkspaceTabState; width: number | null }) {
-  const isRemote = Boolean(tab.remoteSessionId || tab.remoteTarget || tab.workspaceIdentity);
+  const isRemote = isRemoteWorkspaceTarget({
+    workspacePath: tab.workspacePath,
+    workspaceIdentity: tab.workspaceIdentity,
+    remoteSessionId: tab.remoteSessionId,
+    remoteTarget: tab.remoteTarget,
+  });
   return (
     <div
       data-testid="workspace-drag-overlay"

@@ -1,7 +1,7 @@
 /* eslint-disable max-lines -- pinned 列表现在同时承载本地查询、远端主动注入结果和任务操作分发，先集中保持交互一致。 */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
-import type { ZCodeTaskMeta } from "@zcode/shared";
+import { isRemoteWorkspaceIdentity, type ZCodeTaskMeta } from "@zcode/shared";
 import { toast } from "@/components/ui/toast.js";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu.js";
 import { useGlobalTaskList } from "@/hooks/useGlobalTaskList.js";
@@ -16,6 +16,7 @@ import { TaskRenameDialog } from "@/TaskRenameDialog.js";
 import { useZCodeSessionStore } from "@/store/zcodeSessionStore.js";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
 import { applyTaskQueryCacheMutation } from "@/store/taskQueryCacheStore.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 import { TaskListRemoteSyncHint } from "@/TaskListRemoteSyncHint.js";
 import { useRemotePinnedTaskStore } from "@/store/remotePinnedTaskStore.js";
 import { useRemoteTimelineTaskStore } from "@/store/remoteTimelineTaskStore.js";
@@ -127,7 +128,14 @@ export function WorkspacePinnedTasksSection({
   const remoteItems = useMemo(() => {
     const remoteWorkspaceKeys = new Set(
       workspaceTabs
-        .filter((tab) => tab.workspaceIdentity || tab.remoteTarget || tab.remoteSessionId)
+        .filter((tab) =>
+          isRemoteWorkspaceTarget({
+            workspacePath: tab.workspacePath,
+            workspaceIdentity: tab.workspaceIdentity,
+            remoteSessionId: tab.remoteSessionId,
+            remoteTarget: tab.remoteTarget,
+          }),
+        )
         .map((tab) => buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity)),
     );
     return [...remoteWorkspaceKeys].flatMap(
@@ -142,9 +150,15 @@ export function WorkspacePinnedTasksSection({
   const items = showAllTasks ? sortedItems : sortedItems.slice(0, collapsedLimit);
   const total = sortedItems.length;
   const syncingRemoteWorkspaces = workspaceTabs.some((tab) => {
-    if (!tab.workspaceIdentity && !tab.remoteTarget && !tab.remoteSessionId) {
+    if (
+      !isRemoteWorkspaceTarget({
+        workspacePath: tab.workspacePath,
+        workspaceIdentity: tab.workspaceIdentity,
+        remoteSessionId: tab.remoteSessionId,
+        remoteTarget: tab.remoteTarget,
+      })
+    )
       return false;
-    }
     return Boolean(
       remotePinnedLoadingByWorkspaceKey[
         buildTaskWorkspaceKey(tab.workspacePath, tab.workspaceIdentity)
@@ -173,10 +187,11 @@ export function WorkspacePinnedTasksSection({
 
   const resolveTaskServices = useCallback(
     (workspaceIdentity?: string) => {
-      if (!workspaceIdentity) {
+      const normalizedIdentity = workspaceIdentity?.trim();
+      if (!normalizedIdentity || !isRemoteWorkspaceIdentity(normalizedIdentity)) {
         return baseServices;
       }
-      return getRemoteWorkspaceServicesForIdentity(workspaceIdentity);
+      return getRemoteWorkspaceServicesForIdentity(normalizedIdentity);
     },
     [baseServices],
   );

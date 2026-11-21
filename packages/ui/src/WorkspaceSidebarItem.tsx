@@ -69,6 +69,7 @@ import {
   applyTaskQueryCacheMutation,
   invalidateTaskQueryCacheByScopes,
 } from "@/store/taskQueryCacheStore.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 import { useRemotePinnedTaskStore } from "@/store/remotePinnedTaskStore.js";
 import { useRemoteTimelineTaskStore } from "@/store/remoteTimelineTaskStore.js";
 import { logger } from "@/logger.js";
@@ -224,9 +225,12 @@ export const WorkspaceSidebarItem = memo(function WorkspaceSidebarItem({
       ? intl.formatMessage({ id: "workspaceSidebar.unavailableLocalDirectory" })
       : undefined;
   const remoteWorkspaceKey = buildWorkspaceSessionKey(tab);
-  const isRemoteWorkspace = Boolean(
-    tab.remoteSessionId || tab.remoteTarget || tab.workspaceIdentity,
-  );
+  const isRemoteWorkspace = isRemoteWorkspaceTarget({
+    workspacePath: tab.workspacePath,
+    workspaceIdentity: tab.workspaceIdentity,
+    remoteSessionId: tab.remoteSessionId,
+    remoteTarget: tab.remoteTarget,
+  });
   const isDisconnectedRemoteWorkspace = Boolean(isRemoteWorkspace && !tab.remoteSessionId);
   const isReconnectPending = Boolean(
     isDisconnectedRemoteWorkspace && reconnectingRemoteWorkspaceKeys.includes(remoteWorkspaceKey),

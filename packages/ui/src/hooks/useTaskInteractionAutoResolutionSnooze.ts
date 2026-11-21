@@ -2,7 +2,10 @@ import { useCallback, useRef } from "react";
 import { ensureAgentV4ConnectionHandshake } from "@/v4/agentV4ConnectionHandshake.js";
 import { useOptionalServices } from "@/hooks/useServices.js";
 import { logger } from "@/logger.js";
-import { resolveWorkspaceRemoteSessionId } from "@/lib/workspaceServiceResolver.js";
+import {
+  isRemoteWorkspaceTarget,
+  resolveWorkspaceRemoteSessionId,
+} from "@/lib/workspaceServiceResolver.js";
 import { useRemoteWorkspaceSessionStore } from "@/store/remoteWorkspaceSessionStore.js";
 import { sendInteractionAutoResolutionSnooze } from "@/v4/interactionAutoResolutionCommand.js";
 
@@ -24,7 +27,11 @@ export function useTaskInteractionAutoResolutionSnooze(
   const contextServices = useOptionalServices();
   const workspaceIdentity = target.workspaceIdentity?.trim() || undefined;
   const remoteSessionId = target.remoteSessionId?.trim() || undefined;
-  const isRemoteTarget = Boolean(workspaceIdentity || remoteSessionId);
+  const isRemoteTarget = isRemoteWorkspaceTarget({
+    workspacePath: target.workspacePath,
+    workspaceIdentity,
+    remoteSessionId,
+  });
   const selectTargetServices = useCallback(
     (state: ReturnType<typeof useRemoteWorkspaceSessionStore.getState>) => {
       if (!isRemoteTarget) {

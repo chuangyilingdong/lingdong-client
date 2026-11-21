@@ -3,6 +3,7 @@ import type { WorkspacePurpose } from "@zcode/shared";
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab, type WorkspaceTabState } from "@/store/tabStore.js";
 import { useLocalWorkspaceScopes } from "@/hooks/useLocalWorkspaceScopes.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 
 interface AutomationProjectOption {
   workspacePath: string;
@@ -11,7 +12,15 @@ interface AutomationProjectOption {
 }
 
 export function isRemoteAutomationWorkspace(tab: WorkspaceTabState | undefined): boolean {
-  return Boolean(tab?.remoteSessionId || tab?.remoteTarget || tab?.workspaceIdentity);
+  return Boolean(
+    tab &&
+      isRemoteWorkspaceTarget({
+        workspacePath: tab.workspacePath,
+        workspaceIdentity: tab.workspaceIdentity,
+        remoteSessionId: tab.remoteSessionId,
+        remoteTarget: tab.remoteTarget,
+      }),
+  );
 }
 
 interface AutomationProjectOptionsConfig {

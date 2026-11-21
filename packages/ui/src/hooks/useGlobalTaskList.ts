@@ -12,6 +12,7 @@ import { attachTaskListRowActivity } from "@/v4/taskListRowActivity.js";
 import { stabilizeTaskListItems } from "@/v4/taskListItemStabilization.js";
 import { getWindowControllerTaskListRegistry } from "@/v4/windowControllerTaskListRegistry.js";
 import type { WindowControllerTaskListVersion } from "@/v4/windowControllerTaskListRegistry.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 
 type GlobalTaskListItem = WindowHostControllerTaskListItem;
 
@@ -201,7 +202,14 @@ export function useGlobalTaskList(params: {
     });
   }, [controllerRevision, load, taskListVersionSignature, workspaceSourceGenerationSignature]);
 
-  const hasRemoteScope = params.workspaceTabs.some((tab) => Boolean(tab.workspaceIdentity));
+  const hasRemoteScope = params.workspaceTabs.some((tab) =>
+    isRemoteWorkspaceTarget({
+      workspacePath: tab.workspacePath,
+      workspaceIdentity: tab.workspaceIdentity,
+      remoteSessionId: tab.remoteSessionId,
+      remoteTarget: tab.remoteTarget,
+    }),
+  );
   return {
     items,
     total,

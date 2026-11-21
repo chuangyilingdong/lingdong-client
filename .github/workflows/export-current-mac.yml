@@ -1,4 +1,4 @@
-# Release trigger: export the 0.2.25 macOS artifact for the current commit.
+# Release trigger: export the 0.2.26 macOS artifact for the current commit.
 # Export the matching macOS build artifact through the CI branch.
 name: Export current ZCode mac artifact
 

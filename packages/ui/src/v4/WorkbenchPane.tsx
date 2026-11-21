@@ -11,7 +11,7 @@ import {
   type DragEvent,
   type ReactNode,
 } from "react";
-import { TID_V4_PANE_SHELL, testId } from "@zcode/shared";
+import { isRemoteWorkspaceIdentity, TID_V4_PANE_SHELL, testId } from "@zcode/shared";
 import type {
   GitChangeSourceId,
   GitRepositorySummary,
@@ -330,10 +330,14 @@ interface WorkbenchLeafPaneProps {
 
 function workspaceBadgeFor(scope: PaneWorkspaceScope): PaneWorkspaceBadge {
   const label = scope.workspacePath.split(/[\\/]/).filter(Boolean).pop() ?? scope.workspacePath;
+  const workspaceIdentity = scope.workspaceIdentity?.trim();
   return {
     label,
     workspacePath: scope.workspacePath,
-    remote: Boolean(scope.workspaceIdentity || scope.remoteSessionId),
+    remote: Boolean(
+      scope.remoteSessionId ||
+        (workspaceIdentity && isRemoteWorkspaceIdentity(workspaceIdentity)),
+    ),
   };
 }
 

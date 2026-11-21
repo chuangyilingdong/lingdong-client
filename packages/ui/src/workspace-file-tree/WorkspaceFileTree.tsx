@@ -58,6 +58,7 @@ import {
   resolveWorkspaceEditorSelection,
   resolveWorkspaceFileManagerEditor,
 } from "@/lib/workspaceEditorSelection.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 import { useWorkspaceFileTreeData } from "@/workspace-file-tree/useWorkspaceFileTreeData.js";
 import { useWorkspaceFileTreeStickyFolders } from "@/workspace-file-tree/useWorkspaceFileTreeStickyFolders.js";
 import {
@@ -125,7 +126,11 @@ export function WorkspaceFileTree({
     enableWorkspaceFeatures: !temporaryExternalDirectory,
   });
   const { installedEditors } = useInstalledFileTreeEditors();
-  const isRemoteWorkspaceFileTree = Boolean(workspaceRemoteSessionId || workspaceIdentity);
+  const isRemoteWorkspaceFileTree = isRemoteWorkspaceTarget({
+    workspacePath,
+    workspaceIdentity,
+    remoteSessionId: workspaceRemoteSessionId,
+  });
   const { remoteTarget } = useWorkspaceOpenInEditorTarget({
     workspacePath,
     workspaceIdentity,

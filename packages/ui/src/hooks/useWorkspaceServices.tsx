@@ -10,6 +10,7 @@ import { useResolvedRemoteWorkspaceSessionId } from "@/hooks/useResolvedRemoteWo
 import { useTabStore } from "@/store/TabStoreProvider.js";
 import { isWorkspaceTab } from "@/store/tabStore.js";
 import { REMOTE_WORKSPACE_DISCONNECTED_ERROR_CODE } from "@/lib/remoteWorkspaceServiceError.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 
 let disconnectedRemoteServices: IServiceAccessor | null = null;
 
@@ -80,7 +81,13 @@ function resolveBaseWorkspaceServices(
 
 function hasRemoteWorkspaceMetadata(tab: WorkspaceServiceTargetTab | null | undefined): boolean {
   return Boolean(
-    tab?.workspaceIdentity?.trim() || tab?.remoteSessionId?.trim() || tab?.remoteTarget,
+    tab &&
+      isRemoteWorkspaceTarget({
+        workspacePath: tab.workspacePath,
+        workspaceIdentity: tab.workspaceIdentity ?? undefined,
+        remoteSessionId: tab.remoteSessionId ?? undefined,
+        remoteTarget: tab.remoteTarget,
+      }),
   );
 }
 
@@ -92,8 +99,16 @@ function resolveWorkspaceServiceIsRemoteTarget(params: {
   activeWorkspaceIdentity?: string | null;
   activeTab?: WorkspaceServiceTargetTab | null;
   workspaceTabs?: readonly WorkspaceServiceTargetTab[];
+  remoteTarget?: unknown;
 }): boolean {
-  if (params.workspaceIdentity?.trim() || params.preferredRemoteSessionId?.trim()) {
+  if (
+    isRemoteWorkspaceTarget({
+      workspacePath: params.workspacePath ?? "",
+      workspaceIdentity: params.workspaceIdentity ?? undefined,
+      remoteSessionId: params.preferredRemoteSessionId ?? undefined,
+      remoteTarget: params.remoteTarget,
+    })
+  ) {
     return true;
   }
 
@@ -103,7 +118,12 @@ function resolveWorkspaceServiceIsRemoteTarget(params: {
   }
 
   if (params.activeWorkspacePath === params.workspacePath) {
-    if (params.activeWorkspaceIdentity?.trim()) {
+    if (
+      isRemoteWorkspaceTarget({
+        workspacePath: params.workspacePath ?? "",
+        workspaceIdentity: params.activeWorkspaceIdentity ?? undefined,
+      })
+    ) {
       return true;
     }
 
@@ -171,6 +191,7 @@ export function useWorkspaceServicesResolution(
       workspacePath,
       workspaceIdentity,
       preferredRemoteSessionId,
+      remoteTarget,
       activeWorkspacePath: state.activeWorkspacePath,
       activeWorkspaceIdentity: state.activeWorkspaceIdentity,
       activeTab: (() => {

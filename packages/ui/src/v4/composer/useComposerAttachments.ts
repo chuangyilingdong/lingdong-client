@@ -29,7 +29,7 @@ import {
 import { useWhiteboardStore } from "@/store/whiteboardStore.js";
 import type { ChatComposerPasteEvent } from "@/LexicalChatInput.js";
 import type { IPromptAttachmentTransferService } from "@zcode/services";
-import type { IPlatformService } from "@zcode/shared";
+import { isRemoteWorkspaceIdentity, type IPlatformService } from "@zcode/shared";
 import { usePlatform } from "@/hooks/usePlatform.js";
 import { useServices } from "@/hooks/useServices.js";
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
@@ -179,10 +179,12 @@ function progressPercent(uploadedBytes: number, totalBytes: number): number {
 function isRemoteAttachmentTarget(
   target: Pick<UploadTarget, "remoteSessionId" | "workspaceIdentity">,
 ) {
-  // 这里曾要求 workspaceIdentity 能被当前解析器识别。远端 identity 新增格式或
-  // 暂时非规范时，在 remoteSessionId 注入前会被误判为本地 workspace，使 host localPath
-  // 直接走零复制交给远端 Agent。identity 只承担隔离语义；任意非空值都必须按远端 fail closed。
-  return Boolean(target.remoteSessionId?.trim() || target.workspaceIdentity?.trim());
+  // workspaceIdentity 也用于本地课堂等非远端隔离，必须由共享解析器判断格式。
+  const workspaceIdentity = target.workspaceIdentity?.trim();
+  return Boolean(
+    target.remoteSessionId?.trim() ||
+      (workspaceIdentity && isRemoteWorkspaceIdentity(workspaceIdentity)),
+  );
 }
 
 export function useComposerAttachments(

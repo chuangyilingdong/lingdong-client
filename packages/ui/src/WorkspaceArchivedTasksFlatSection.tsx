@@ -20,6 +20,7 @@ import { TaskListRemoteSyncHint } from "@/TaskListRemoteSyncHint.js";
 import { TaskListLoadingHint } from "@/TaskListLoadingHint.js";
 import { buildWorkspaceServiceLookup } from "@/lib/workspaceServiceResolver.js";
 import { DeleteAllArchivedTasksButton } from "@/DeleteAllArchivedTasksButton.js";
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
 
 export function WorkspaceArchivedTasksFlatSection({
   workspaceTabs,
@@ -136,7 +137,10 @@ export function WorkspaceArchivedTasksFlatSection({
           const workspaceKey = buildTaskWorkspaceKey(task.workspacePath, task.workspaceIdentity);
           const workspaceLabel =
             workspaceLabelByKey.get(workspaceKey) ?? getPathLeaf(task.workspacePath);
-          const isRemoteTask = Boolean(task.workspaceIdentity?.trim());
+          const isRemoteTask = Boolean(
+            task.workspaceIdentity?.trim() &&
+              isRemoteWorkspaceIdentity(task.workspaceIdentity.trim()),
+          );
           const unarchiveLabel = intl.formatMessage({ id: "taskList.unarchive" });
           const deleteLabel = intl.formatMessage({ id: "taskList.delete" });
           // archived 平铺列表同样是跨 workspace 视图，选中态要按 workspaceKey 隔离。

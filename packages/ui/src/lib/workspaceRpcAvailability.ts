@@ -1,3 +1,5 @@
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
+
 interface WorkspaceRpcAvailabilityTarget {
   workspaceIdentity?: string | null;
   remoteSessionId?: string | null;
@@ -5,8 +7,11 @@ interface WorkspaceRpcAvailabilityTarget {
 }
 
 function isRemoteWorkspaceRpcTarget(target: WorkspaceRpcAvailabilityTarget): boolean {
+  const workspaceIdentity = target.workspaceIdentity?.trim();
   return Boolean(
-    target.workspaceIdentity?.trim() || target.remoteSessionId?.trim() || target.remoteTarget,
+    target.remoteSessionId?.trim() ||
+      target.remoteTarget ||
+      (workspaceIdentity && isRemoteWorkspaceIdentity(workspaceIdentity)),
   );
 }
 

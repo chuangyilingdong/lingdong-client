@@ -1,3 +1,5 @@
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
+
 interface WorkspaceTabIdentityLike {
   workspacePath: string;
   remoteSessionId?: string;
@@ -10,7 +12,11 @@ interface WorkspaceTabMatchOptions {
 }
 
 function hasRemoteTabIdentity(tab: WorkspaceTabIdentityLike): boolean {
-  return Boolean(tab.workspaceIdentity || tab.remoteSessionId);
+  const workspaceIdentity = tab.workspaceIdentity?.trim();
+  return Boolean(
+    tab.remoteSessionId ||
+      (workspaceIdentity && isRemoteWorkspaceIdentity(workspaceIdentity)),
+  );
 }
 
 function isLocalWorkspaceTab(tab: WorkspaceTabIdentityLike): boolean {

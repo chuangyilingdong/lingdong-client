@@ -13,6 +13,7 @@ import {
 import { useZCodeIntl } from "@/i18n/IntlProvider.js";
 import { getWorkspaceKey } from "@/lib/workspaceKey.js";
 import type { WorkspaceTabState } from "@/store/tabStore.js";
+import { isRemoteWorkspaceIdentity } from "@zcode/shared";
 
 export function getPluginWorkspaceKey(tab: WorkspaceTabState): string {
   return getWorkspaceKey(tab.workspacePath, tab.workspaceIdentity);
@@ -25,7 +26,10 @@ export function isPluginScopeWorkspaceConnected(tab: WorkspaceTabState): boolean
     return false;
   }
   const isRemote = Boolean(
-    tab.workspaceIdentity?.trim() || tab.remoteTarget || tab.remoteSessionId,
+    tab.remoteTarget ||
+      tab.remoteSessionId ||
+      (tab.workspaceIdentity?.trim() &&
+        isRemoteWorkspaceIdentity(tab.workspaceIdentity.trim())),
   );
   if (!isRemote) {
     return true;

@@ -31,6 +31,7 @@ import { logger } from "@/logger.js";
 import { useZCodeStore } from "@/store/StoreProvider.js";
 import { resolveTheme } from "@/useTheme.js";
 import { getWorkspaceFileRelativePath } from "@/workspace-file-tree/model.js";
+import { isRemoteWorkspaceTarget } from "@/lib/workspaceServiceResolver.js";
 
 interface GitDiffLoadState {
   loading: boolean;
@@ -83,7 +84,11 @@ export function GitPane({
   const fileActions = useFileContextActions({
     canOpenLocalFileManager: Boolean(isDesktop),
     isRemoteWorkspace:
-      Boolean(workspaceRemoteSessionId || workspaceIdentity?.trim()) ||
+      isRemoteWorkspaceTarget({
+        workspacePath,
+        workspaceIdentity,
+        remoteSessionId: workspaceRemoteSessionId,
+      }) ||
       workspaceOpenTarget.isRemoteWorkspace,
     remoteTarget: workspaceOpenTarget.remoteTarget,
     workspaceIdentity,

@@ -10,7 +10,12 @@ import {
   Pin,
   Smartphone,
 } from "lucide-react";
-import { isCronTask, isOffPeakTask, type ZCodeTaskMeta } from "@zcode/shared";
+import {
+  isCronTask,
+  isOffPeakTask,
+  isRemoteWorkspaceIdentity,
+  type ZCodeTaskMeta,
+} from "@zcode/shared";
 import { TID_TASK_ARCHIVE, TID_TASK_ITEM, testId } from "@zcode/shared";
 import { Badge } from "@/components/ui/badge.js";
 import { Button } from "@/components/ui/button.js";
@@ -377,7 +382,10 @@ export const MemoTaskItem = memo(function TaskListItem({
   const shouldSuppressWorkspaceTaskMetadata = hoverActionsVisible || focusActionsVisible;
   const taskTimeLabel = formatTaskRelativeTime(task.updatedAt, intl);
   const taskChangeSummary = getTaskChangeSummary(task);
-  const isRemoteTask = Boolean(task.workspaceIdentity?.trim());
+  const isRemoteTask = Boolean(
+    task.workspaceIdentity?.trim() &&
+      isRemoteWorkspaceIdentity(task.workspaceIdentity.trim()),
+  );
   const archiveLabel = intl.formatMessage({
     id: isArchiveConfirming ? "common.confirm" : "taskList.archive",
   });
@@ -461,7 +469,8 @@ export const MemoTaskItem = memo(function TaskListItem({
   // 远端 task 的 session 未就绪时 resolver 会拒绝打开；渲染层同步隐藏入口，
   // 避免展示一个点击后无反馈的按钮。本地 task 不依赖已打开 tab，仍可直接按路径打开。
   const canOpenFileTree =
-    Boolean(onOpenFileTree) && (!task.workspaceIdentity?.trim() || Boolean(remoteSessionId));
+    Boolean(onOpenFileTree) &&
+    (!isRemoteTask || Boolean(remoteSessionId));
   const fileTreeActionNode =
     canOpenFileTree &&
     !workspaceActionsDisabled &&
