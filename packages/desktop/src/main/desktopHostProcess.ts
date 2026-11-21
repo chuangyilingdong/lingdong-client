@@ -59,6 +59,7 @@ export interface WindowBootstrapOptions {
   restoreSession?: boolean;
   supportsSettings?: boolean;
   initialWorkspacePath?: string;
+  initialWorkspaceIdentity?: string;
   initialWorkspacePurpose?: WorkspacePurpose;
   unavailableWorkspacePath?: string;
   windowKind?: "main" | "update-status";
@@ -123,6 +124,7 @@ export function loadWindow(
       supportsSettings:
         bootstrap?.supportsSettings == null ? undefined : String(bootstrap.supportsSettings),
       initialWorkspacePath: bootstrap?.initialWorkspacePath,
+      initialWorkspaceIdentity: bootstrap?.initialWorkspaceIdentity,
       initialWorkspacePurpose: bootstrap?.initialWorkspacePurpose,
       unavailableWorkspacePath: bootstrap?.unavailableWorkspacePath,
       windowKind: bootstrap?.windowKind,

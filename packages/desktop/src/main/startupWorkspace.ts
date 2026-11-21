@@ -42,6 +42,7 @@ const STARTUP_AGENT_WARMUP_LIMIT = 3;
 export interface StartupWindowBootstrap {
   restoreSession?: boolean;
   initialWorkspacePath?: string;
+  initialWorkspaceIdentity?: string;
   initialWorkspacePurpose?: WorkspacePurpose;
   unavailableWorkspacePath?: string;
   agentWarmupTargets?: StartupWorkspaceWarmupTarget[];
@@ -99,11 +100,21 @@ function resolveStartupAgentWarmupTargets(
   return targets;
 }
 
-export function createOpenWorkspaceStartupBootstrap(workspacePath: string): StartupWindowBootstrap {
+export function createOpenWorkspaceStartupBootstrap(
+  workspacePath: string,
+  workspaceIdentity?: string,
+): StartupWindowBootstrap {
+  const normalizedIdentity = workspaceIdentity?.trim();
   return {
     initialWorkspacePath: workspacePath,
+    ...(normalizedIdentity ? { initialWorkspaceIdentity: normalizedIdentity } : {}),
     initialWorkspacePurpose: "project",
-    agentWarmupTargets: [{ workspacePath }],
+    agentWarmupTargets: [
+      {
+        workspacePath,
+        ...(normalizedIdentity ? { workspaceIdentity: normalizedIdentity } : {}),
+      },
+    ],
   };
 }
 
@@ -118,7 +129,10 @@ export async function resolveStartupWindowBootstrap({
 }): Promise<StartupWindowBootstrap> {
   const forcedWorkspacePath = process.env.ZCODE_LINGDONG_WORKSPACE_PATH?.trim();
   if (forcedWorkspacePath) {
-    return createOpenWorkspaceStartupBootstrap(forcedWorkspacePath);
+    return createOpenWorkspaceStartupBootstrap(
+      forcedWorkspacePath,
+      process.env.ZCODE_LINGDONG_WORKSPACE_IDENTITY,
+    );
   }
 
   const settings = await readStartupSettings(settingsFile, logger);

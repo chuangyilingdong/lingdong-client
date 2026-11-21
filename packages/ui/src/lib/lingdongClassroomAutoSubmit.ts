@@ -15,11 +15,12 @@ export type LingdongAutoSubmitRuntime = {
   readonly listTasks: () => Promise<readonly LingdongAutoSubmitTask[]>;
   readonly readTaskEntryPaths: (
     taskId: string,
-    options: { sinceMs?: number },
+    options: { sinceMs?: number; preserveExternalPaths?: boolean },
   ) => Promise<readonly string[]>;
   readonly scanWorkspaceFiles: (options: {
     taskId: string;
     taskFilePaths: readonly string[];
+    taskStartedAtMs: number;
   }) => Promise<ClassroomWorkspaceScan>;
   readonly submitWork: (payload: {
     copyrightConfirmed: false;
@@ -95,20 +96,17 @@ export async function runLingdongClassroomAutoSubmit(
       break;
     }
 
-    let entryPaths: readonly string[];
+    let entryPaths: readonly string[] = [];
+    let entryReadFailed = false;
+    let entryReadFailureMessage: string | undefined;
     try {
-      entryPaths = await runtime.readTaskEntryPaths(
-        task.taskId,
-        task.createdAt >= runtime.startedAtMs ? {} : { sinceMs: runtime.startedAtMs },
-      );
+      entryPaths = await runtime.readTaskEntryPaths(task.taskId, {
+        ...(task.createdAt >= runtime.startedAtMs ? {} : { sinceMs: runtime.startedAtMs }),
+        preserveExternalPaths: true,
+      });
     } catch (error) {
-      state.failed += 1;
-      stopMessage = error instanceof Error ? error.message : String(error);
-      continue;
-    }
-    if (entryPaths.length === 0) {
-      state.skipped += 1;
-      continue;
+      entryReadFailed = true;
+      entryReadFailureMessage = error instanceof Error ? error.message : String(error);
     }
 
     let scan: ClassroomWorkspaceScan;
@@ -116,6 +114,7 @@ export async function runLingdongClassroomAutoSubmit(
       scan = await runtime.scanWorkspaceFiles({
         taskId: task.taskId,
         taskFilePaths: entryPaths,
+        taskStartedAtMs: task.createdAt,
       });
     } catch {
       state.failed += 1;
@@ -123,7 +122,12 @@ export async function runLingdongClassroomAutoSubmit(
     }
     const preview = scan.ok ? scan.preview : undefined;
     if (!preview) {
-      state.skipped += 1;
+      if (entryReadFailed) {
+        state.failed += 1;
+        stopMessage = entryReadFailureMessage;
+      } else {
+        state.skipped += 1;
+      }
       continue;
     }
     // 本地指纹和平台历史都通过 preview.lastSubmittedAt 投影；存在即说明该任务入口已交过。

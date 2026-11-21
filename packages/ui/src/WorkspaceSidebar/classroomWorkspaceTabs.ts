@@ -3,6 +3,7 @@ export function filterWorkspaceTabsForClassroom<
   T extends {
     readonly workspacePath: string;
     readonly workspaceIdentity?: string;
+    readonly workspacePurpose?: "project" | "conversation";
   },
 >(options: {
   readonly tabs: readonly T[];
@@ -11,9 +12,19 @@ export function filterWorkspaceTabsForClassroom<
   readonly workspaceIdentity?: string;
 }): T[] {
   if (!options.classroomMode) return [...options.tabs];
-  return options.tabs.filter(
-    (tab) =>
-      tab.workspacePath === options.workspacePath &&
-      (!options.workspaceIdentity || tab.workspaceIdentity === options.workspaceIdentity),
-  );
+  return options.tabs
+    .filter(
+      (tab) =>
+        tab.workspacePath === options.workspacePath &&
+        (!options.workspaceIdentity || tab.workspaceIdentity === options.workspaceIdentity),
+    )
+    .map((tab) => ({ ...tab, workspacePurpose: "project" as const }) as T);
+}
+
+/** 课堂模式没有默认会话工作区入口，任务区只保留项目区。 */
+export function filterClassroomPurposeSections<T extends string>(
+  sections: readonly T[],
+  classroomMode: boolean,
+): T[] {
+  return classroomMode ? sections.filter((section) => section !== "conversations") : [...sections];
 }

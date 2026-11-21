@@ -6,7 +6,11 @@ import { createReadStream } from "node:fs";
 import { mkdir, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { createLingdongQuotaLedger, getAppConfigDir } from "@zcode/services/node";
+import {
+  createLingdongQuotaLedger,
+  getAppConfigDir,
+  getConversationWorkspaceDir,
+} from "@zcode/services/node";
 import { atomicWritePrivateTextFile } from "@zcode/shared/node";
 import { PERSONAL_PROVIDER_CONFIG_FILE_NAME } from "@zcode/provider-node";
 import { logger } from "./logger.js";
@@ -19,6 +23,7 @@ import {
   buildLingdongSubmissionRecordKey,
   LINGDONG_MAX_TASK_ID_LENGTH,
   LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS,
+  selectLingdongEntryCandidate,
   toLingdongWorkspaceRelativePath,
   type ClassroomEndedAutoSubmitCompletion,
   type ClassroomEndedAutoSubmitRequest,
@@ -580,6 +585,45 @@ function normalizeTaskFilePaths(workspacePath: string, value: unknown): Readonly
   return paths;
 }
 
+/**
+ * 课堂作品只允许来自当前课堂工作区或客户端自有的默认会话工作区。
+ * 后者用于兼容历史任务在登录课堂前由 conversation backing workspace 执行的路径偏差；
+ * 不允许扩大到用户其他项目或任意磁盘目录。
+ */
+function workspacePathKey(value: string): string {
+  return resolve(value).replaceAll("\\", "/").replace(/\/+$/u, "").toLowerCase();
+}
+
+async function resolveSubmissionWorkspaceRoots(): Promise<string[]> {
+  const candidates = [activeState?.workspacePath, getConversationWorkspaceDir()].filter(
+    (value): value is string => Boolean(value?.trim()),
+  );
+  const roots: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of candidates) {
+    const root = await realpath(candidate).catch(() => candidate);
+    const key = workspacePathKey(root);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    roots.push(root);
+  }
+  return roots;
+}
+
+function resolveTaskFileScope(
+  roots: readonly string[],
+  value: unknown,
+): { root: string; paths: ReadonlySet<string> } | null {
+  if (!Array.isArray(value)) return null;
+  for (const root of roots) {
+    const paths = normalizeTaskFilePaths(root, value);
+    if (paths && paths.size > 0) return { root, paths };
+  }
+  const activeRoot = activeState?.workspacePath;
+  const paths = activeRoot ? normalizeTaskFilePaths(activeRoot, value) : null;
+  return activeRoot && paths ? { root: activeRoot, paths } : null;
+}
+
 function submissionStatePath(workspaceIdentity: string): string {
   const key = createHash("sha256").update(workspaceIdentity).digest("hex");
   return join(getAppConfigDir(), "runtime", "lingdong-submissions", `${key}.json`);
@@ -769,10 +813,28 @@ async function scanLingdongWorkspaceFiles(input?: unknown): Promise<unknown> {
       files: [],
     };
   }
+  const workspaceRoots = taskId
+    ? await resolveSubmissionWorkspaceRoots()
+    : [activeState.workspacePath];
+  const taskFileScope = taskId ? resolveTaskFileScope(workspaceRoots, options.taskFilePaths) : null;
   const taskFilePaths = taskId
-    ? normalizeTaskFilePaths(activeState.workspacePath, options.taskFilePaths)
+    ? (taskFileScope?.paths ??
+      normalizeTaskFilePaths(activeState.workspacePath, options.taskFilePaths))
     : null;
-  const root = activeState.workspacePath;
+  const taskStartedAtMs =
+    typeof options.taskStartedAtMs === "number" &&
+    Number.isSafeInteger(options.taskStartedAtMs) &&
+    options.taskStartedAtMs > 0
+      ? options.taskStartedAtMs
+      : null;
+  const root = taskFileScope?.root ?? activeState.workspacePath;
+  if (taskId && workspacePathKey(root) !== workspacePathKey(activeState.workspacePath)) {
+    logger.warn("[lingdong-gate] 任务作品位于默认会话工作区，使用受控根目录扫描", {
+      taskId,
+      classroomWorkspacePath: activeState.workspacePath,
+      taskWorkspacePath: root,
+    });
+  }
   // 与作品提交白名单共用一份：以前这里只列图片和文档，
   // 视频/音频/CSS/JS 在提交对话框里根本看不到（学生以为客户端「识别不到视频」）。
   const allowed = WORK_ALLOWED_EXTENSIONS;
@@ -823,11 +885,20 @@ async function scanLingdongWorkspaceFiles(input?: unknown): Promise<unknown> {
   const entryCandidates = files.filter((file) =>
     LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS.has(extname(file.relativePath).toLowerCase()),
   );
-  const scopedEntryCandidates =
-    taskId && taskFilePaths
-      ? entryCandidates.filter((file) => taskFilePaths.has(file.relativePath.toLowerCase()))
-      : entryCandidates;
-  const entry = scopedEntryCandidates[0];
+  const entrySelection = selectLingdongEntryCandidate(entryCandidates, {
+    taskId,
+    taskFilePaths,
+    taskStartedAtMs,
+  });
+  const entry = entrySelection?.entry;
+  const entrySource = entrySelection?.source;
+  if (taskId && entrySource === "taskStartedAt" && entry) {
+    logger.warn("[lingdong-gate] task fileChanges 未命中，使用任务时间窗作品入口", {
+      taskId,
+      entry: entry.relativePath,
+      taskStartedAtMs,
+    });
+  }
   let preview: ClassroomWorkspaceSubmitPreview | undefined;
   let previewError: string | undefined =
     taskId && taskFilePaths && !entry ? "当前任务还没有可提交的作品文件。" : undefined;
@@ -877,6 +948,7 @@ async function scanLingdongWorkspaceFiles(input?: unknown): Promise<unknown> {
     files,
     preview,
     previewError,
+    ...(entrySource ? { entrySource } : {}),
     workspacePath: root,
     workspaceIdentity: activeState.workspaceIdentity,
   };
@@ -1119,25 +1191,29 @@ function workPlanRevision(files: readonly WorkFilePlan[]): string {
  */
 async function resolveSubmitPlan(items: readonly SubmitItem[]): Promise<WorkSubmitPlan> {
   if (!activeState) throw new Error("平台登录尚未完成。");
-  const root = await realpath(activeState.workspacePath);
+  const workspaceRoots = await resolveSubmissionWorkspaceRoots();
 
   // 先解析勾选项并锁定入口文件：素材名要按「入口文件所在目录」计算，
   // 才能和 HTML 里写的相对引用逐字一致（平台按字面匹配后改写预览地址）。
-  const candidates: Array<{ absolute: string; extension: string }> = [];
+  const candidates: Array<{ absolute: string; extension: string; root: string }> = [];
   const seenPaths = new Set<string>();
   for (const item of items.slice(0, MAX_WORK_FILES)) {
     const rawPath = typeof item.path === "string" ? item.path.trim() : "";
-    if (!rawPath || !pathInside(root, rawPath)) continue;
+    if (!rawPath) continue;
+    const root = workspaceRoots.find((candidate) => pathInside(candidate, rawPath));
+    if (!root) continue;
     const absolute = await realpath(rawPath).catch(() => "");
     if (!absolute || !pathInside(root, absolute) || seenPaths.has(absolute)) continue;
     const info = await stat(absolute).catch(() => null);
     if (!info?.isFile()) continue;
     seenPaths.add(absolute);
-    candidates.push({ absolute, extension: extname(absolute).toLowerCase() });
+    candidates.push({ absolute, extension: extname(absolute).toLowerCase(), root });
   }
   if (candidates.length === 0) throw new Error("没有找到可以提交的作品文件。");
+  const root = candidates[0]!.root;
+  const scopedCandidates = candidates.filter((candidate) => candidate.root === root);
 
-  const entryCandidate = candidates.find((candidate) =>
+  const entryCandidate = scopedCandidates.find((candidate) =>
     LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS.has(candidate.extension),
   );
   if (!entryCandidate) throw new Error("请选择一个 HTML、PPT、Word 或 Excel 作为主作品文件。");
@@ -1185,7 +1261,7 @@ async function resolveSubmitPlan(items: readonly SubmitItem[]): Promise<WorkSubm
 
   // 入口先落进 files，保证 files[0] 与顶层 name 指向主产物。
   await addFile(entryCandidate.absolute, entryName, false);
-  for (const candidate of candidates) {
+  for (const candidate of scopedCandidates) {
     if (candidate.absolute === entryCandidate.absolute) continue;
     const name = toEntryRelativeName(entryDir, candidate.absolute) ?? basename(candidate.absolute);
     await addFile(candidate.absolute, name, false);

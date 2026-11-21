@@ -39,14 +39,26 @@ function preview(path: string, submittedAt?: string): ClassroomWorkspaceScan {
 function runtime(overrides: Partial<LingdongAutoSubmitRuntime> = {}): {
   runtime: LingdongAutoSubmitRuntime;
   calls: {
-    reads: Array<{ taskId: string; sinceMs?: number }>;
-    scans: Array<{ taskId: string; taskFilePaths: readonly string[] }>;
+    reads: Array<{ taskId: string; sinceMs?: number; preserveExternalPaths?: boolean }>;
+    scans: Array<{
+      taskId: string;
+      taskFilePaths: readonly string[];
+      taskStartedAtMs: number;
+    }>;
     submits: string[];
   };
 } {
   const calls = {
-    reads: [] as Array<{ taskId: string; sinceMs?: number }>,
-    scans: [] as Array<{ taskId: string; taskFilePaths: readonly string[] }>,
+    reads: [] as Array<{
+      taskId: string;
+      sinceMs?: number;
+      preserveExternalPaths?: boolean;
+    }>,
+    scans: [] as Array<{
+      taskId: string;
+      taskFilePaths: readonly string[];
+      taskStartedAtMs: number;
+    }>,
     submits: [] as string[],
   };
   const base: LingdongAutoSubmitRuntime = {
@@ -57,7 +69,11 @@ function runtime(overrides: Partial<LingdongAutoSubmitRuntime> = {}): {
     now: () => 1_500,
     listTasks: async () => [task("new", 1_100), task("old", 100, 1_200), task("before", 100)],
     readTaskEntryPaths: async (taskId, options) => {
-      calls.reads.push({ taskId, ...(options.sinceMs ? { sinceMs: options.sinceMs } : {}) });
+      calls.reads.push({
+        taskId,
+        ...(options.sinceMs ? { sinceMs: options.sinceMs } : {}),
+        ...(options.preserveExternalPaths ? { preserveExternalPaths: true } : {}),
+      });
       if (taskId === "before") return [];
       return [`${taskId}.html`];
     },
@@ -81,10 +97,13 @@ test("只处理本课任务，旧任务只取课堂开始后的 fileChanges，�
   const result = await runLingdongClassroomAutoSubmit(input);
 
   assert.deepEqual(result, { submitted: 1, skipped: 1, failed: 0 });
-  assert.deepEqual(calls.reads, [{ taskId: "old", sinceMs: 1_000 }, { taskId: "new" }]);
+  assert.deepEqual(calls.reads, [
+    { taskId: "old", sinceMs: 1_000, preserveExternalPaths: true },
+    { taskId: "new", preserveExternalPaths: true },
+  ]);
   assert.deepEqual(calls.scans, [
-    { taskId: "old", taskFilePaths: ["old.html"] },
-    { taskId: "new", taskFilePaths: ["new.html"] },
+    { taskId: "old", taskFilePaths: ["old.html"], taskStartedAtMs: 100 },
+    { taskId: "new", taskFilePaths: ["new.html"], taskStartedAtMs: 1_100 },
   ]);
   assert.deepEqual(calls.submits, ["new"]);
 });
@@ -108,6 +127,49 @@ test("网络失败重试一次后成功", async () => {
 
   assert.deepEqual(result, { submitted: 1, skipped: 0, failed: 0 });
   assert.equal(attempts, 2);
+});
+
+test("任务 fileChanges 为空时仍按任务开始时间扫描并提交", async () => {
+  const { runtime: base, calls } = runtime();
+  const input: LingdongAutoSubmitRuntime = {
+    ...base,
+    listTasks: async () => [task("fallback", 1_100)],
+    readTaskEntryPaths: async () => [],
+    scanWorkspaceFiles: async (options) => {
+      calls.scans.push(options);
+      return preview("index.html");
+    },
+  };
+
+  const result = await runLingdongClassroomAutoSubmit(input);
+
+  assert.deepEqual(result, { submitted: 1, skipped: 0, failed: 0 });
+  assert.deepEqual(calls.scans, [
+    { taskId: "fallback", taskFilePaths: [], taskStartedAtMs: 1_100 },
+  ]);
+  assert.deepEqual(calls.submits, ["fallback"]);
+});
+
+test("任务文件记录读取失败时仍尝试任务时间窗兜底", async () => {
+  const { runtime: base, calls } = runtime();
+  const input: LingdongAutoSubmitRuntime = {
+    ...base,
+    listTasks: async () => [task("fallback", 1_100)],
+    readTaskEntryPaths: async () => {
+      throw new Error("conversation projection unavailable");
+    },
+    scanWorkspaceFiles: async (options) => {
+      calls.scans.push(options);
+      return preview("index.html");
+    },
+  };
+
+  const result = await runLingdongClassroomAutoSubmit(input);
+
+  assert.deepEqual(result, { submitted: 1, skipped: 0, failed: 0 });
+  assert.deepEqual(calls.scans, [
+    { taskId: "fallback", taskFilePaths: [], taskStartedAtMs: 1_100 },
+  ]);
 });
 
 test("窗口关闭错误立即停止后续任务", async () => {

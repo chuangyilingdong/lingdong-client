@@ -87,6 +87,7 @@ export function LingdongWorksDialog({
   const [scan, setScan] = useState<ClassroomWorkspaceScan | null>(null);
   const [taskTitle, setTaskTitle] = useState("");
   const [taskFilePaths, setTaskFilePaths] = useState<readonly string[] | undefined>();
+  const [taskStartedAtMs, setTaskStartedAtMs] = useState<number | undefined>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [works, setWorks] = useState<ClassroomWorkSummary[]>([]);
@@ -109,6 +110,7 @@ export function LingdongWorksDialog({
       setWorksLlmAvailable(Boolean(snapshot?.worksLlmAvailable));
       let nextTaskTitle = "";
       let nextTaskFilePaths: string[] | undefined;
+      let nextTaskStartedAtMs: number | undefined;
       let scanOptions: Parameters<typeof classroom.scanWorkspaceFiles>[0];
       if (activeTaskId) {
         if (!workspacePath) throw new Error("当前任务缺少工作区信息，无法提交作品。");
@@ -120,29 +122,48 @@ export function LingdongWorksDialog({
         });
         if (!snapshot) throw new Error("无法读取当前任务，请重新打开对话框后再试。");
         nextTaskTitle = snapshot.meta.title.trim();
+        nextTaskStartedAtMs = snapshot.meta.createdAt;
         const transport = createAgentConversationTransport(workspaceServices.zcodeAgentService, {
           workspacePath,
           workspaceIdentity,
         });
-        nextTaskFilePaths = await readLingdongTaskEntryPaths(
-          transport,
-          activeTaskId,
-          workspacePath,
-        );
+        try {
+          nextTaskFilePaths = await readLingdongTaskEntryPaths(
+            transport,
+            activeTaskId,
+            workspacePath,
+            { preserveExternalPaths: true },
+          );
+        } catch (error) {
+          // 任务投影读取失败时仍可用任务开始时间从工作区找到本次产出；
+          // 失败本身不冒充空作品，Main 会在没有候选时继续给出明确空状态。
+          nextTaskFilePaths = [];
+          logger.lifecycle.warn("[LingdongWorks] task entry projection unavailable", {
+            message: error instanceof Error ? error.message : String(error),
+            taskId: activeTaskId,
+          });
+        }
         scanOptions = {
           taskId: activeTaskId,
           taskFilePaths: nextTaskFilePaths,
+          ...(nextTaskStartedAtMs !== undefined &&
+          Number.isSafeInteger(nextTaskStartedAtMs) &&
+          nextTaskStartedAtMs > 0
+            ? { taskStartedAtMs: nextTaskStartedAtMs }
+            : {}),
         };
       }
       const result = await classroom.scanWorkspaceFiles(scanOptions);
       if (!result?.ok) throw new Error(result.message || "无法扫描课堂工作区。");
       setTaskTitle(nextTaskTitle);
       setTaskFilePaths(nextTaskFilePaths);
+      setTaskStartedAtMs(nextTaskStartedAtMs);
       setScan(result);
     } catch (error) {
       setScan(null);
       setTaskTitle("");
       setTaskFilePaths(undefined);
+      setTaskStartedAtMs(undefined);
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
@@ -224,7 +245,13 @@ export function LingdongWorksDialog({
       }
       try {
         const nextScan = await classroom.scanWorkspaceFiles(
-          preview.taskId && taskFilePaths ? { taskId: preview.taskId, taskFilePaths } : undefined,
+          preview.taskId
+            ? {
+                taskId: preview.taskId,
+                ...(taskFilePaths ? { taskFilePaths } : {}),
+                ...(taskStartedAtMs ? { taskStartedAtMs } : {}),
+              }
+            : undefined,
         );
         if (nextScan?.ok) setScan(nextScan);
       } catch {

@@ -73,6 +73,17 @@ test("课堂 Provider 经真实 Personal schema 校验且保留自配 Provider",
     providerId: LINGDONG_PROVIDER_ID,
     modelId: "classroom-model",
   });
+  const raw = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual(
+    raw.config.modelConfigRules.providerModelRules.find(
+      (rule: { providerId: string; modelId: string }) =>
+        rule.providerId === LINGDONG_PROVIDER_ID && rule.modelId === "classroom-model",
+    )?.config.optionSpecs.reasoningLevel,
+    {
+      values: ["disabled", "low", "high", "max"],
+      defaultLevel: "low",
+    },
+  );
   await binding.dispose();
   const restored = await decoded(file);
   assert.equal(restored.providers.has(LINGDONG_PROVIDER_ID), false);

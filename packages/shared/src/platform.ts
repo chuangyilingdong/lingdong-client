@@ -621,6 +621,8 @@ export interface ClassroomWorkspaceScan {
   readonly files: readonly ClassroomWorkspaceFile[];
   readonly workspacePath?: string;
   readonly workspaceIdentity?: string;
+  /** 当前入口来自任务记录、任务时间窗还是草稿态工作区最近文件。 */
+  readonly entrySource?: "taskChanges" | "taskStartedAt" | "workspaceLatest";
   /** 唯一主作品及自动带入素材的权威预览；无入口时缺省。 */
   readonly preview?: ClassroomWorkspaceSubmitPreview;
   readonly previewError?: string;
@@ -629,8 +631,10 @@ export interface ClassroomWorkspaceScan {
 /** 任务态扫描上下文；草稿态不传，保持工作区最近入口的旧行为。 */
 export interface ClassroomWorkspaceScanOptions {
   readonly taskId?: string;
-  /** 当前任务 fileChanges 中 applied 的可提交工作区相对路径。 */
+  /** 当前任务 fileChanges 中 applied 的入口；通常是课堂工作区相对路径，也允许默认会话工作区绝对路径。 */
   readonly taskFilePaths?: readonly string[];
+  /** 当前任务创建时间；任务记录缺失时用于限定入口文件时间窗。 */
+  readonly taskStartedAtMs?: number;
 }
 
 export interface ClassroomWorkItem {

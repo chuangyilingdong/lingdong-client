@@ -67,7 +67,15 @@ export function createLingdongProviderBinding(filePath: string) {
           providerModelRules: ids.map((id) => ({
             providerId: LINGDONG_PROVIDER_ID,
             modelId: id,
-            config: { enabled: true },
+            config: {
+              enabled: true,
+              optionSpecs: {
+                reasoningLevel: {
+                  values: ["disabled", "low", "high", "max"],
+                  defaultLevel: "low",
+                },
+              },
+            },
           })),
           manualProviderModelRules: [],
         },

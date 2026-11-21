@@ -26,7 +26,7 @@ export async function readLingdongTaskEntryPaths(
   transport: ConversationTransport,
   taskId: string,
   workspacePath: string,
-  options: { sinceMs?: number } = {},
+  options: { sinceMs?: number; preserveExternalPaths?: boolean } = {},
 ): Promise<string[]> {
   const rows = new Map<
     number,
@@ -69,5 +69,7 @@ export async function readLingdongTaskEntryPaths(
     if (result.state === "reverted") continue;
     for (const item of result.items) filePaths.push(item.path);
   }
-  return normalizeLingdongEntryPaths(filePaths, workspacePath);
+  return normalizeLingdongEntryPaths(filePaths, workspacePath, {
+    allowExternalAbsolutePaths: options.preserveExternalPaths === true,
+  });
 }

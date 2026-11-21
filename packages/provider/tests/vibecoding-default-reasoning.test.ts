@@ -26,6 +26,12 @@ test("VibeCoding DeepSeek defaults to low while keeping max explicit", async () 
     "max",
   ]);
   assert.equal(rule.config.optionSpecs.reasoningLevel.defaultLevel, "low");
+  const v41Rule = release.config.modelConfigRules.modelRules.find(
+    (candidate: { modelMatch: string }) =>
+      candidate.modelMatch === ".*deepseek-v4[.-]1-flash(?:[.\\-:/\\[].*)?",
+  );
+  assert.ok(v41Rule);
+  assert.equal(v41Rule.config.optionSpecs.reasoningLevel.defaultLevel, "low");
 
   const registry = {
     providers: [

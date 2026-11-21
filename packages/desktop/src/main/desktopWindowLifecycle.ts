@@ -76,6 +76,7 @@ export function createWindow(options: {
       restoreSession: options.bootstrap?.restoreSession ?? true,
       supportsSettings: options.bootstrap?.supportsSettings ?? true,
       initialWorkspacePath: options.bootstrap?.initialWorkspacePath,
+      initialWorkspaceIdentity: options.bootstrap?.initialWorkspaceIdentity,
       initialWorkspacePurpose: options.bootstrap?.initialWorkspacePurpose,
       unavailableWorkspacePath: options.bootstrap?.unavailableWorkspacePath,
     },

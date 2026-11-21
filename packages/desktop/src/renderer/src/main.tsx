@@ -129,6 +129,7 @@ function readStringFlag(name: string): string | undefined {
 const restoreSession = readBooleanFlag("restoreSession", true);
 const supportsSettings = readBooleanFlag("supportsSettings", true);
 const initialWorkspaceAbsPath = readStringFlag("initialWorkspacePath");
+const initialWorkspaceIdentity = readStringFlag("initialWorkspaceIdentity");
 const initialWorkspacePurpose = readStringFlag("initialWorkspacePurpose");
 const unavailableWorkspacePath = readStringFlag("unavailableWorkspacePath");
 const windowKind = readStringFlag("windowKind");
@@ -341,6 +342,7 @@ function initializeBusinessRoot(port: MessagePort): void {
           restoreSession={restoreSession}
           supportsSettings={supportsSettings}
           initialWorkspaceAbsPath={initialWorkspaceAbsPath}
+          initialWorkspaceIdentity={initialWorkspaceIdentity}
           initialWorkspacePurpose={
             initialWorkspacePurpose === "conversation" ? "conversation" : "project"
           }

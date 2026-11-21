@@ -248,8 +248,14 @@ export {
   buildLingdongSubmissionRecordKey,
   LINGDONG_MAX_TASK_ID_LENGTH,
   LINGDONG_SUBMITTABLE_ENTRY_EXTENSIONS,
+  LINGDONG_TASK_ENTRY_MTIME_SKEW_MS,
   normalizeLingdongEntryPaths,
+  selectLingdongEntryCandidate,
   toLingdongWorkspaceRelativePath,
+} from "./lingdong-work-submission.js";
+export type {
+  LingdongEntrySelection,
+  LingdongEntrySelectionSource,
 } from "./lingdong-work-submission.js";
 export type {
   CuaAccessibilitySettingsResult,

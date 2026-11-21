@@ -26,6 +26,8 @@ export interface V4ComposerDraft {
   modelSelection?: ModelSelection;
   /** 首次分享导入等待公共新任务初始化；不能由空 Session snapshot 抢先填充。 */
   initializeFromNewTask?: true;
+  /** 课堂新任务默认值已应用到哪个 draft focus 版本。 */
+  classroomDefaultsFocusVersion?: number;
   updatedAt: number;
 }
 
@@ -135,6 +137,10 @@ function readDraft(value: unknown): V4ComposerDraft | null {
     ...(modelSelection ? { modelSelection } : {}),
     ...(value.initializeFromNewTask === true && !mode.success
       ? { initializeFromNewTask: true as const }
+      : {}),
+    ...(typeof value.classroomDefaultsFocusVersion === "number" &&
+    Number.isSafeInteger(value.classroomDefaultsFocusVersion)
+      ? { classroomDefaultsFocusVersion: value.classroomDefaultsFocusVersion }
       : {}),
     updatedAt:
       typeof value.updatedAt === "number" && Number.isFinite(value.updatedAt) ? value.updatedAt : 0,

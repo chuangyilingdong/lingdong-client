@@ -1957,6 +1957,7 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
     bootstrap: {
       restoreSession: startupBootstrap.restoreSession,
       initialWorkspacePath: startupBootstrap.initialWorkspacePath,
+      initialWorkspaceIdentity: startupBootstrap.initialWorkspaceIdentity,
       initialWorkspacePurpose: startupBootstrap.initialWorkspacePurpose,
       unavailableWorkspacePath: startupBootstrap.unavailableWorkspacePath,
     },

@@ -129,7 +129,10 @@ import {
   type SidebarTaskGroupTogglePresentation,
 } from "@/WorkspaceSidebar/taskGroupTogglePresentation.js";
 import { WorkspacePurposeSection } from "@/WorkspaceSidebar/WorkspacePurposeSection.js";
-import { filterWorkspaceTabsForClassroom } from "@/WorkspaceSidebar/classroomWorkspaceTabs.js";
+import {
+  filterClassroomPurposeSections,
+  filterWorkspaceTabsForClassroom,
+} from "@/WorkspaceSidebar/classroomWorkspaceTabs.js";
 import { cn } from "@/components/lib/utils.js";
 import { useCodingPlanUpgradeDialog } from "@/settings/CodingPlanUpgradeDialogProvider.js";
 import {
@@ -412,6 +415,10 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
   );
   const [purposeSectionPreferences, setPurposeSectionPreferences] = useState(
     readSidebarPurposeSectionPreferences,
+  );
+  const visiblePurposeSectionOrder = useMemo(
+    () => filterClassroomPurposeSections(purposeSectionPreferences.sectionOrder, classroomMode),
+    [classroomMode, purposeSectionPreferences.sectionOrder],
   );
   const [workspaceTaskOrganizeBy, setWorkspaceTaskOrganizeBy] = useState<
     Extract<TaskOrganizeBy, "project" | "chronological">
@@ -1437,11 +1444,11 @@ export const WorkspaceSidebar = memo(function WorkspaceSidebarComponent({
                     onDragEnd={handlePurposeSectionDragEnd}
                   >
                     <SortableContext
-                      items={purposeSectionPreferences.sectionOrder}
+                      items={visiblePurposeSectionOrder}
                       strategy={verticalListSortingStrategy}
                     >
                       <div data-purpose-section-list="true">
-                        {purposeSectionPreferences.sectionOrder.map((sectionId) =>
+                        {visiblePurposeSectionOrder.map((sectionId) =>
                           sectionId === "projects" ? (
                             <WorkspacePurposeSection
                               key={sectionId}

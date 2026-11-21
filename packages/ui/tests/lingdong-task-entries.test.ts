@@ -91,3 +91,36 @@ test("课堂内新任务不传 sinceMs 时读取全部有效轮次", async () =>
   assert.deepEqual(requested, [1, 2]);
   assert.deepEqual(paths, ["turn-1.html", "turn-2.html"]);
 });
+
+test("任务入口位于默认会话工作区时保留绝对路径供宿主校验", async () => {
+  const externalPath =
+    "C:\\Users\\student\\AppData\\Roaming\\灵动ai创作客户端\\zcode\\workspace\\default\\index.html";
+  const transport = {
+    rowsRange: async () => ({
+      rows: [
+        {
+          rowId: 1,
+          kind: "turnHeader",
+          entityId: "turn-1",
+          startedAt: 100,
+          endedAt: 200,
+          fileChanges: { files: 1 },
+        },
+      ],
+      hasMore: false,
+      atRevision: 1,
+      atLogEpoch: "epoch-1",
+    }),
+    fileChanges: async () => ({
+      state: "active",
+      items: [{ path: externalPath }],
+    }),
+  } as unknown as ConversationTransport;
+
+  assert.deepEqual(
+    await readLingdongTaskEntryPaths(transport, "task-1", workspacePath, {
+      preserveExternalPaths: true,
+    }),
+    [externalPath],
+  );
+});

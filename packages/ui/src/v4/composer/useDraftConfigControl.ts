@@ -25,7 +25,9 @@ import { submissionModeSchema } from "@zcode/shared/zcode-protocol-v4";
 import { prepareWorkspaceWithZCodeSessionService } from "@/hooks/useWorkspacePrepare.js";
 import { useZCodeSessionService } from "@/hooks/useZCodeSessionService.js";
 import { useSettings } from "@/hooks/useSettingService.js";
+import { usePlatform } from "@/hooks/usePlatform.js";
 import { parseModelPickerValue } from "@/lib/zcodeSessionProjection.js";
+import { applyClassroomComposerDefaults } from "@/v4/composer/classroomComposerDefaults.js";
 import { initializeNewTaskDraft } from "@/v4/composer/newTaskDraft.js";
 import {
   clearV4ComposerDraft,
@@ -122,6 +124,10 @@ export function useDraftConfigControl(params: {
   } = params;
   const workspaceKey = workspaceIdentity?.trim() || workspacePath;
   const displayProvider = provider ?? ZCODE_AGENT_PROVIDER;
+  const classroomMode = Boolean(usePlatform().classroom);
+  const draftFocusVersion = useZCodeSessionStore(
+    (state) => state.getWorkspaceState(workspacePath, workspaceIdentity).draftFocusVersion,
+  );
   const zcodeSessionService = useZCodeSessionService(workspacePath, null, workspaceIdentity);
   const { settings: sharedSettings } = useSettings();
   const appFollowupMode = resolveAppFollowupMode(sharedSettings);
@@ -165,6 +171,9 @@ export function useDraftConfigControl(params: {
             planEnabled: resolveExecutionState(sessionConfig ?? {}).planEnabled,
             modelSelection: sessionConfig?.modelSelection,
           };
+  }
+  if (classroomMode && sessionId === null && modelSelectionView) {
+    draft = applyClassroomComposerDefaults(draft, draftFocusVersion, modelSelectionView);
   }
   if (sessionConfig) {
     draft = applyComposerPlanTransition(draft, sessionConfig.planTransition);

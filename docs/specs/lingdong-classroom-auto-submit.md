@@ -40,6 +40,10 @@ multipart 回退时入口文件和素材分别放在 `file:0`、`file:1` … par
    - 或该任务的 V4 `turnHeader` / `fileChanges` 有课堂开始后的变化。
 5. 每个任务只提交一个入口：从课堂开始后产生变化的可提交文件（`.html/.htm/.docx/.xlsx/.pptx`）中，
    按工作区文件更新时间选择最新入口；素材继续由宿主 `resolveSubmitPlan` 自动打包。
+   - 任务 `fileChanges` 优先；记录为空或读取失败时，使用任务 `createdAt` 之后修改的入口兜底。
+   - 入口可能位于当前课堂工作区或客户端自有的默认会话工作区
+     `{dataBaseDir}/.zcode/workspace/default`。自动补交与手动提交共用同一根目录 allowlist，
+     不扫描用户其他项目或任意磁盘目录。
 6. 以下任务跳过：
    - 没有课堂开始后的可提交入口；
    - 现有 `scanWorkspaceFiles({ taskId, taskFilePaths })` 返回的 `preview.lastSubmittedAt` 存在。
@@ -72,7 +76,7 @@ Renderer 匹配 workspacePath/workspaceIdentity
   -> claim(requestId)
   -> 列出 workspace tasks
   -> 读取 task.createdAt + V4 turnHeader/fileChanges
-  -> 逐任务 scanWorkspaceFiles(taskId, taskFilePaths)
+  -> 逐任务 scanWorkspaceFiles(taskId, taskFilePaths, taskStartedAtMs)
   -> 跳过已提交/无入口
   -> submitWork(autoSubmit=true, sessionId, copyrightConfirmed=false)
   -> 网络失败重试一次

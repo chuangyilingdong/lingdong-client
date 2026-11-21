@@ -2098,7 +2098,8 @@
             },
             "optionSpecs": {
               "reasoningLevel": {
-                "values": ["disabled", "low", "high", "max"]
+                "values": ["disabled", "low", "high", "max"],
+                "defaultLevel": "low"
               },
               "maxOutputTokens": {
                 "max": 384000
