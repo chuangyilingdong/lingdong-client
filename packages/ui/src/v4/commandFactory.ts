@@ -47,6 +47,28 @@ interface CreateCommandEnvelopeInput<T extends CommandType> {
   baseLogEpoch?: string;
 }
 
+/**
+ * createSession 的 workspace 双事实：
+ * - workspaceId 继续承担隔离键职责；
+ * - workspacePath 专供文件操作与子进程 cwd。
+ *
+ * 课堂本地 identity 含冒号，绝不能把它反推成目录。
+ */
+export function buildCreateSessionWorkspacePayload(params: {
+  workspacePath: string;
+  workspaceIdentity?: string;
+}): Pick<CommandPayloadMap["createSession"], "workspaceId" | "workspacePath"> {
+  const workspacePath = params.workspacePath.trim();
+  if (!workspacePath) {
+    throw new Error("createSession workspacePath must not be empty");
+  }
+  const workspaceIdentity = params.workspaceIdentity?.trim();
+  return {
+    workspaceId: workspaceIdentity || workspacePath,
+    workspacePath,
+  };
+}
+
 /** 构造命令信封；CAS 命令缺 baseRevision 直接抛（客户端编程错误就地暴露）。 */
 export function createCommandEnvelope<T extends CommandType>(
   input: CreateCommandEnvelopeInput<T>,

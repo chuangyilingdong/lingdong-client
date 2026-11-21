@@ -44,7 +44,10 @@ const createSessionRequestedConfigSchema = z.object({
 export const commandPayloadSchemas = {
   // firstInput 缺省 → phase=draft 空会话；携带 → 直接 turnHeader+userInput rows。
   createSession: z.object({
+    // 隔离键：workspaceIdentity 优先，普通本地工作区退化为路径。
     workspaceId: z.string(),
+    // 文件操作与子进程 cwd。课堂本地 identity 含冒号，不能反推为真实目录。
+    workspacePath: z.string().trim().min(1).optional(),
     firstInput: z
       .object({
         text: z.string(),

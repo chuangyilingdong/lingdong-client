@@ -231,6 +231,8 @@ export interface V4CommandCoreHost {
    */
   createSessionRecord?(params: {
     workspaceId: string;
+    /** 文件操作、命令 cwd 与 Git 的真实目录；不得由本地 identity 推断。 */
+    workspacePath?: string;
     mcpServers?: CommandPayloadMap["createSession"]["mcpServers"];
     /** host 判定的 Off-Peak 工具面门禁；缺省不注册工具。 */
     offPeakToolEnabled?: boolean;

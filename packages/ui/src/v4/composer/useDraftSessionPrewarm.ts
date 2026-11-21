@@ -14,6 +14,7 @@
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { CommandAck, CommandType, SessionConfigState } from "@zcode/shared/zcode-protocol-v4";
 import { logger } from "@/logger.js";
+import { buildCreateSessionWorkspacePayload } from "@/v4/commandFactory.js";
 
 type DispatchCommand = (
   type: CommandType,
@@ -38,6 +39,8 @@ interface DraftPrewarmController {
 /** 预热生命周期纯控制器：创建 → onReady 上抛 → dispose 决策清理。 */
 function startDraftSessionPrewarm(params: {
   workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
   dispatchCommand: DispatchCommand;
   onReady: (sessionId: string) => void;
   /** single-flight owner 用于等待不可取消的 createSession 收口；无论成功失败都只调用一次。 */
@@ -45,7 +48,15 @@ function startDraftSessionPrewarm(params: {
   /** 预热会话初始 config（全局「上次选择」，同步解析）；让投影首帧即全局、不闪。 */
   resolveInitialConfig?: () => Partial<SessionConfigState> | undefined;
 }): DraftPrewarmController {
-  const { workspaceKey, dispatchCommand, onReady, onSettled, resolveInitialConfig } = params;
+  const {
+    workspaceKey,
+    workspacePath,
+    workspaceIdentity,
+    dispatchCommand,
+    onReady,
+    onSettled,
+    resolveInitialConfig,
+  } = params;
   let disposed = false;
   let promotionState: "draft" | "pending" | "promoted" | "discarded" = "draft";
   let createdSessionId: string | null = null;
@@ -67,7 +78,10 @@ function startDraftSessionPrewarm(params: {
   };
 
   const createPayload = () => {
-    const createPayload: Record<string, unknown> = { workspaceId: workspaceKey };
+    const createPayload: Record<string, unknown> = buildCreateSessionWorkspacePayload({
+      workspacePath,
+      workspaceIdentity,
+    });
     const initialConfig = resolveInitialConfig?.();
     if (initialConfig && Object.keys(initialConfig).length > 0) {
       // 预热会话首帧即用全局模型（CLI 归并 createSession.config），不闪 workspace 缺省。
@@ -204,6 +218,8 @@ class DraftSessionPrewarmCoordinator {
 
   constructor(
     private readonly workspaceKey: string,
+    private readonly workspacePath: string,
+    private readonly workspaceIdentity: string | undefined,
     dispatchCommand: DispatchCommand,
     resolveInitialConfig: (() => Partial<SessionConfigState> | undefined) | undefined,
     private readonly onEmpty: () => void,
@@ -320,6 +336,8 @@ class DraftSessionPrewarmCoordinator {
     let current!: DraftPrewarmCurrent;
     const controller = startDraftSessionPrewarm({
       workspaceKey: this.workspaceKey,
+      workspacePath: this.workspacePath,
+      workspaceIdentity: this.workspaceIdentity,
       dispatchCommand: (type, payload, targetSessionId) =>
         this.dispatchCommand(type, payload, targetSessionId),
       resolveInitialConfig: () => this.resolveInitialConfig?.(),
@@ -421,12 +439,14 @@ const draftPrewarmCoordinatorsByTransport = new Map<
   Map<string, DraftSessionPrewarmCoordinator>
 >();
 
-function logicalDraftOwnerKey(workspaceKey: string, paneId: string): string {
-  return JSON.stringify([workspaceKey, paneId]);
+function logicalDraftOwnerKey(workspaceKey: string, workspacePath: string, paneId: string): string {
+  return JSON.stringify([workspaceKey, workspacePath, paneId]);
 }
 
 function getDraftSessionPrewarmCoordinator(params: {
   workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
   paneId: string;
   transportIdentity: unknown;
   dispatchCommand: DispatchCommand;
@@ -437,11 +457,13 @@ function getDraftSessionPrewarmCoordinator(params: {
     transportCoordinators = new Map();
     draftPrewarmCoordinatorsByTransport.set(params.transportIdentity, transportCoordinators);
   }
-  const ownerKey = logicalDraftOwnerKey(params.workspaceKey, params.paneId);
+  const ownerKey = logicalDraftOwnerKey(params.workspaceKey, params.workspacePath, params.paneId);
   let coordinator = transportCoordinators.get(ownerKey);
   if (!coordinator) {
     coordinator = new DraftSessionPrewarmCoordinator(
       params.workspaceKey,
+      params.workspacePath,
+      params.workspaceIdentity,
       params.dispatchCommand,
       params.resolveInitialConfig,
       () => {
@@ -463,6 +485,8 @@ export function useDraftSessionPrewarm(params: {
   /** pane 未绑定会话（sessionId===null）时启用。 */
   enabled: boolean;
   workspaceKey: string;
+  workspacePath: string;
+  workspaceIdentity?: string;
   /** 同一 workspace 内的逻辑 pane 身份；同步重挂必须保持稳定。 */
   paneId: string;
   /** 外部能力变化时递增；仅用于回收并重建尚未提升的草稿预热会话。 */
@@ -476,6 +500,8 @@ export function useDraftSessionPrewarm(params: {
   const {
     enabled,
     workspaceKey,
+    workspacePath,
+    workspaceIdentity,
     paneId,
     transportIdentity,
     invalidationVersion = 0,
@@ -485,13 +511,15 @@ export function useDraftSessionPrewarm(params: {
   // workspace/pane/transport 共同定义逻辑 owner：同 owner 重挂复用 single-flight，transport
   // 换代仍生成新 coordinator，确保旧 session 的清理不会误走新 transport。
   const owner = useMemo(
-    () => ({ workspaceKey, paneId, transportIdentity }),
-    [paneId, transportIdentity, workspaceKey],
+    () => ({ workspaceKey, workspacePath, workspaceIdentity, paneId, transportIdentity }),
+    [paneId, transportIdentity, workspaceIdentity, workspaceKey, workspacePath],
   );
   const coordinator = useMemo(
     () =>
       getDraftSessionPrewarmCoordinator({
         workspaceKey,
+        workspacePath,
+        workspaceIdentity,
         paneId,
         transportIdentity,
         dispatchCommand,

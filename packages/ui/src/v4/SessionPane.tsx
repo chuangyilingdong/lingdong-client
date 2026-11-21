@@ -201,7 +201,7 @@ import {
   isSessionPluginCatalogReady,
 } from "@/v4/pluginReferenceIconProjection.js";
 import { shouldResyncForStaleAuthority } from "@/v4/staleAuthorityRecovery.js";
-import { createCommandEnvelope } from "@/v4/commandFactory.js";
+import { buildCreateSessionWorkspacePayload, createCommandEnvelope } from "@/v4/commandFactory.js";
 import { createConfigCommandBarrier } from "@/v4/configCommandBarrier.js";
 import { recordV4CommandAck } from "@/v4/commandAckObservability.js";
 import { pendingCommandRegistry } from "@/v4/pendingCommandRegistry.js";
@@ -2281,6 +2281,8 @@ export function SessionPane({
   const { binding: prewarmBinding } = useDraftSessionPrewarm({
     enabled: sessionId === null && draftAgentStartupAllowed,
     workspaceKey,
+    workspacePath,
+    workspaceIdentity,
     paneId,
     invalidationVersion: draftRuntimeInvalidationVersion,
     // SessionDataLayer 来自 workspace connection registry：同 transport generation 的 pane/remount
@@ -2710,7 +2712,10 @@ export function SessionPane({
         );
         const createAck = await dispatchSubmissionCommand(
           "createSession",
-          { workspaceId: workspaceKey, ...draftConfigPayload },
+          {
+            ...buildCreateSessionWorkspacePayload({ workspacePath, workspaceIdentity }),
+            ...draftConfigPayload,
+          },
           null,
         );
         if (createAck.status !== "accepted") {
@@ -2793,7 +2798,7 @@ export function SessionPane({
           const ack = await dispatchSubmissionCommand(
             "createSession",
             {
-              workspaceId: workspaceKey,
+              ...buildCreateSessionWorkspacePayload({ workspacePath, workspaceIdentity }),
               firstInput: { text: effectiveText, ...submission },
               ...draftConfigPayload,
             },
@@ -2824,7 +2829,10 @@ export function SessionPane({
         // 不做任何附件上传，也不会让非 ready 附件绕过 composer 门禁。
         const createAck = await dispatchSubmissionCommand(
           "createSession",
-          { workspaceId: workspaceKey, ...draftConfigPayload },
+          {
+            ...buildCreateSessionWorkspacePayload({ workspacePath, workspaceIdentity }),
+            ...draftConfigPayload,
+          },
           null,
         );
         if (createAck.status !== "accepted") {

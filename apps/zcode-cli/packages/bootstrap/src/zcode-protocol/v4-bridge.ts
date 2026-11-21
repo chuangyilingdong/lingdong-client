@@ -1104,6 +1104,7 @@ export function createConversationV4Gateway(
     // 语义决策（draft persistence / firstInput 走原生 prompt turn）在原生 handler。
     createSessionRecord: async ({
       workspaceId,
+      workspacePath,
       mcpServers,
       offPeakToolEnabled,
       dynamicWorkflowEnabled,
@@ -1118,7 +1119,7 @@ export function createConversationV4Gateway(
       // shared parser 统一兼容 WSL legacy 与显式 user identity；非远程格式继续按
       // 本地 workspacePath 处理。
       const created = await createSessionRecordForV4(context, {
-        workspace: resolveWorkspaceRefFromId(workspaceId),
+        workspace: resolveWorkspaceRefFromId(workspaceId, { workspacePath }),
         // 一律 deferred（draft 不进 sqlite）；提升时机归原生 prompt-turn。
         persistence: "deferred",
         // MCP 是 runtime 创建期配置；v4 createSession 必须与 legacy
