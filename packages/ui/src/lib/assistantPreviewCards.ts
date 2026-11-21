@@ -2,6 +2,7 @@ import {
   buildConversationPreviewArtifactCandidatesFromReferences,
   CONVERSATION_PREVIEW_CARD_CANDIDATE_LIMIT,
   CONVERSATION_PREVIEW_CARD_VISIBLE_LIMIT,
+  isRemoteWorkspaceIdentity,
 } from "@zcode/shared";
 import {
   cleanAssistantFilePathCandidate,
@@ -140,10 +141,11 @@ export function shouldOpenAssistantHtmlInBrowser(params: {
   workspaceIdentity?: string;
   workspaceRemoteSessionId?: string;
 }): boolean {
+  const workspaceIdentity = params.workspaceIdentity?.trim();
   return (
     isAssistantPreviewHtmlPath(params.path) &&
-    !params.workspaceIdentity?.trim() &&
-    !params.workspaceRemoteSessionId
+    !params.workspaceRemoteSessionId &&
+    !(workspaceIdentity && isRemoteWorkspaceIdentity(workspaceIdentity))
   );
 }
 

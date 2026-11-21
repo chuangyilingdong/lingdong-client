@@ -33,6 +33,8 @@ node_repl MCP 和 Browser Use 启动子进程时统一报
    不得把隔离键当作目录继续启动子进程。
 6. 旧客户端未携带 `workspacePath` 时保留绝对本地路径和合法远程 identity 的兼容路径；
    非法本地 identity 返回明确错误，而不是误导性的 `bash.exe ENOENT`。
+7. 本地课堂 identity 不表示远程工作区。HTML 预览仍应进入内嵌浏览器并展开右侧面板；
+   只有 `remote:*` identity 或真实 `remoteSessionId` 才阻止本地 HTML 内嵌预览。
 
 ## 事件顺序
 
@@ -63,3 +65,5 @@ Renderer workspace scope
 4. 本地 identity 无路径时不创建会话，并返回明确协议错误。
 5. 远程 identity 继续解析为远端路径；显式路径优先。
 6. 课堂 E2E 中 Bash 可启动、node_repl/Browser Use 可连接，预览侧栏能收到自动展开事件。
+7. 本地课堂 HTML 链接使用内嵌浏览器，不进入代码查看器；canonical remote identity
+   保持代码查看器/非内嵌语义。
