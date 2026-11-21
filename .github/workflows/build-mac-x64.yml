@@ -65,9 +65,32 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Build unsigned macOS DMG/ZIP
+        id: build
+        continue-on-error: true
         run: |
           set -o pipefail
           pnpm --filter @zcode/desktop run bundle -- --os mac --arch x64 2>&1 | tee mac-x64-build.log
+
+      - name: Recover Intel DMG when dmgbuild cannot detach
+        if: steps.build.outcome == 'failure'
+        run: |
+          set -euo pipefail
+          app="$(find dist/mac-x64 -type d -name '*.app' -print -quit)"
+          test -n "$app"
+          version="${{ steps.package.outputs.version }}"
+          dmg="dist/mac-x64/lingdong-client-${version}-mac-x64.dmg"
+          staging="$(mktemp -d "${RUNNER_TEMP}/lingdong-dmg.XXXXXX")"
+          ditto "$app" "${staging}/$(basename "$app")"
+          ln -s /Applications "${staging}/Applications"
+          rm -f "$dmg"
+          hdiutil create \
+            -volname "灵动ai创作客户端 ${version}" \
+            -srcfolder "$staging" \
+            -ov \
+            -format UDZO \
+            "$dmg"
+          rm -rf "$staging"
+          test -f "$dmg"
 
       - name: Smoke launch macOS app
         run: |

@@ -1,4 +1,5 @@
 # Release trigger: export the 0.2.26 macOS Intel artifact for the current commit.
+# Intel dmgbuild recovery: export the current commit after the workflow fallback.
 # Export the matching macOS Intel build artifact through the CI branch.
 name: Export current ZCode mac Intel artifact
 
