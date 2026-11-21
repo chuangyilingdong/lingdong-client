@@ -1,4 +1,4 @@
-# Release trigger: export the 0.2.26 macOS Intel artifact for the current commit.
+# Release trigger: export the 0.2.27 macOS Intel artifact for the current commit.
 # Intel dmgbuild recovery: export the current commit after the workflow fallback.
 # Intel DMG fallback detaches stale volumes before creating the image.
 # Export the matching macOS Intel build artifact through the CI branch.
